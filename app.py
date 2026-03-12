@@ -2,6 +2,8 @@ import pandas as pd
 import streamlit as st
 from parser.apartment_listing import parse_apartment_listing
 from datetime import datetime, timedelta
+from llm_helpers import parse_preferences_with_llm, generate_rationale_with_llm
+from ranking import rank_listings_with_ai
 
 
 st.set_page_config(page_title="Apartment Compare AI", layout="wide")
@@ -125,6 +127,12 @@ if "parsed_listing" not in st.session_state:
 if "comparison_rows" not in st.session_state:
     st.session_state.comparison_rows = []
 
+if "ai_prefs" not in st.session_state:
+    st.session_state.ai_prefs = None
+
+if "ai_rationale" not in st.session_state:
+    st.session_state.ai_rationale = ""
+
 
 st.title("Apartment Compare AI")
 st.write("Turn copied apartment listing text into structured comparison data.")
@@ -218,6 +226,94 @@ if st.session_state.comparison_rows:
     comparison_df["availability_dt"] = comparison_df["available_date"].apply(parse_availability_date)
     comparison_df["best_deal_score"] = comparison_df.apply(compute_best_deal_score, axis=1)
 
+    st.markdown("---")
+    st.subheader("AI Best Match")
+
+    ai_query = st.text_area(
+        "Describe what you want",
+        placeholder="Example: I want the best value studio under $2400 with as much space as possible and available soon",
+        height=100,
+    )
+
+    if st.button("Find Best Matches with AI"):
+        if not ai_query.strip():
+            st.warning("Please describe what you're looking for.")
+        else:
+            try:
+                prefs = parse_preferences_with_llm(ai_query)
+                st.session_state.ai_prefs = prefs
+
+                ai_ranked_df = rank_listings_with_ai(comparison_df, prefs)
+
+                if ai_ranked_df.empty:
+                    st.warning("No listings matched your AI search.")
+                    st.session_state.ai_rationale = ""
+                else:
+                    top_results = ai_ranked_df[
+                        [
+                            "property_title",
+                            "floorplan_name",
+                            "unit_label",
+                            "beds",
+                            "baths",
+                            "unit_price",
+                            "unit_sqft",
+                            "available_date",
+                            "rent_per_sqft",
+                            "best_deal_score",
+                            "ai_match_score",
+                        ]
+                    ].head(3).to_dict(orient="records")
+
+                    rationale = generate_rationale_with_llm(ai_query, prefs, top_results)
+                    st.session_state.ai_rationale = rationale
+
+            except Exception as e:
+                st.error(f"AI matching failed: {e}")
+
+    if st.session_state.ai_prefs:
+        with st.expander("Show parsed AI preferences"):
+            st.json(st.session_state.ai_prefs)
+
+        ai_ranked_df = rank_listings_with_ai(comparison_df, st.session_state.ai_prefs)
+
+        if not ai_ranked_df.empty:
+            ai_display_cols = [
+                "property_title",
+                "floorplan_name",
+                "unit_label",
+                "beds",
+                "baths",
+                "unit_price",
+                "unit_sqft",
+                "available_date",
+                "rent_per_sqft",
+                "best_deal_score",
+                "ai_match_score",
+            ]
+
+            ai_display_df = ai_ranked_df[ai_display_cols].copy()
+
+            ai_display_df["unit_price"] = ai_display_df["unit_price"].apply(
+                lambda x: f"${int(x):,}" if pd.notnull(x) else ""
+            )
+            ai_display_df["rent_per_sqft"] = ai_display_df["rent_per_sqft"].apply(
+                lambda x: f"${x:.2f}" if pd.notnull(x) else ""
+            )
+            ai_display_df["best_deal_score"] = ai_display_df["best_deal_score"].apply(
+                lambda x: f"{x:.1f}" if pd.notnull(x) else ""
+            )
+            ai_display_df["ai_match_score"] = ai_display_df["ai_match_score"].apply(
+                lambda x: f"{x:.1f}" if pd.notnull(x) else ""
+            )
+
+            st.markdown("### AI Top Matches")
+            st.dataframe(ai_display_df.head(10), use_container_width=True)
+
+            if st.session_state.ai_rationale:
+                st.markdown("### Why these ranked highly")
+                st.write(st.session_state.ai_rationale)
+    
     st.markdown("### Filter Listings")
 
     f1, f2, f3, f4 = st.columns(4)
