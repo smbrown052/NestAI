@@ -5,7 +5,10 @@ from datetime import datetime, timedelta
 from llm_helpers import parse_preferences_with_llm, generate_rationale_with_llm
 from ranking import rank_listings_with_ai
 
-st.set_page_config(page_title="Apartment Compare AI", layout="wide")
+st.set_page_config(page_title="NestAI", layout="wide")
+
+st.title("NestAI")
+st.markdown("### Find *your* nest.")
 
 
 def load_text_file(path: str) -> str:
