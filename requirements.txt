@@ -2,3 +2,4 @@ streamlit
 pandas
 python-docx
 altair==4.2.2
+openai>=1.0.0
