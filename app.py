@@ -34,6 +34,39 @@ def sqft_to_int(value):
         return None
 
 
+def format_list_for_display(values):
+    if not values:
+        return "N/A"
+    if isinstance(values, list):
+        return ", ".join(str(v) for v in values if v)
+    return str(values)
+
+
+def extract_floor_level(unit_label):
+    """
+    Determine floor level from the first digits of the unit number.
+
+    Examples:
+    1205 -> 12
+    703 -> 7
+    305 -> 3
+    """
+    if not unit_label:
+        return None
+
+    label = str(unit_label)
+    digits = "".join(c for c in label if c.isdigit())
+
+    if len(digits) >= 3:
+        return int(digits[:-2])
+    if len(digits) == 2:
+        return int(digits[0])
+    if len(digits) == 1:
+        return int(digits)
+
+    return None
+
+
 def build_comparison_rows(parsed_listing: dict):
     property_title = parsed_listing.get("property_title")
     floorplan_name = parsed_listing.get("floorplan_name")
@@ -41,10 +74,15 @@ def build_comparison_rows(parsed_listing: dict):
     baths = parsed_listing.get("baths")
     units = parsed_listing.get("units", [])
 
+    amenities = parsed_listing.get("amenities", [])
+    apartment_features = parsed_listing.get("apartment_features", [])
+    walkability = parsed_listing.get("walkability", {}) or {}
+
     rows = []
     for unit in units:
         rent = money_to_int(unit.get("unit_price"))
         sqft = sqft_to_int(unit.get("unit_sqft"))
+        floor_level = extract_floor_level(unit.get("unit_label"))
 
         rows.append(
             {
@@ -53,11 +91,20 @@ def build_comparison_rows(parsed_listing: dict):
                 "beds": beds,
                 "baths": baths,
                 "unit_label": unit.get("unit_label"),
+                "floor_level": floor_level,
                 "unit_price": rent,
                 "unit_sqft": sqft,
                 "available_date": unit.get("available_date"),
                 "row_text": unit.get("row_text"),
                 "rent_per_sqft": round(rent / sqft, 2) if rent and sqft else None,
+                "amenities": ", ".join(amenities) if amenities else None,
+                "apartment_features": ", ".join(apartment_features) if apartment_features else None,
+                "walk_score": walkability.get("walk_score"),
+                "transit_score": walkability.get("transit_score"),
+                "bike_score": walkability.get("bike_score"),
+                "walk_label": walkability.get("walk_label"),
+                "transit_label": walkability.get("transit_label"),
+                "bike_label": walkability.get("bike_label"),
             }
         )
     return rows
@@ -119,9 +166,6 @@ def compute_best_deal_score(row):
     return round(score, 2)
 
 
-# -----------------------
-# Session state
-# -----------------------
 if "raw_text" not in st.session_state:
     st.session_state.raw_text = ""
 
@@ -200,6 +244,30 @@ with right_col:
         st.write(f"**Floorplan Sq Ft Range:** {parsed_listing.get('floorplan_sqft_range') or 'N/A'}")
         st.write(f"**Has Den:** {'Yes' if parsed_listing.get('floorplan_has_den') else 'No'}")
 
+        st.markdown("### Amenities")
+        st.write(format_list_for_display(parsed_listing.get("amenities", [])))
+
+        st.markdown("### Apartment Features")
+        st.write(format_list_for_display(parsed_listing.get("apartment_features", [])))
+
+        st.markdown("### Walkability")
+        walkability = parsed_listing.get("walkability", {}) or {}
+        st.write(
+            f"**Walk Score:** "
+            f"{walkability.get('walk_score') if walkability.get('walk_score') is not None else 'N/A'}"
+            f"{f' ({walkability.get('walk_label')})' if walkability.get('walk_label') else ''}"
+        )
+        st.write(
+            f"**Transit Score:** "
+            f"{walkability.get('transit_score') if walkability.get('transit_score') is not None else 'N/A'}"
+            f"{f' ({walkability.get('transit_label')})' if walkability.get('transit_label') else ''}"
+        )
+        st.write(
+            f"**Bike Score:** "
+            f"{walkability.get('bike_score') if walkability.get('bike_score') is not None else 'N/A'}"
+            f"{f' ({walkability.get('bike_label')})' if walkability.get('bike_label') else ''}"
+        )
+
         units = parsed_listing.get("units", [])
         st.write(f"**Units Parsed:** {len(units)}")
 
@@ -262,6 +330,7 @@ if st.session_state.comparison_rows:
                             "property_title",
                             "floorplan_name",
                             "unit_label",
+                            "floor_level",
                             "beds",
                             "baths",
                             "unit_price",
@@ -270,6 +339,11 @@ if st.session_state.comparison_rows:
                             "rent_per_sqft",
                             "best_deal_score",
                             "ai_match_score",
+                            "walk_score",
+                            "transit_score",
+                            "bike_score",
+                            "amenities",
+                            "apartment_features",
                         ]
                     ].head(3).to_dict(orient="records")
 
@@ -290,6 +364,7 @@ if st.session_state.comparison_rows:
                 "property_title",
                 "floorplan_name",
                 "unit_label",
+                "floor_level",
                 "beds",
                 "baths",
                 "unit_price",
@@ -298,6 +373,11 @@ if st.session_state.comparison_rows:
                 "rent_per_sqft",
                 "best_deal_score",
                 "ai_match_score",
+                "walk_score",
+                "transit_score",
+                "bike_score",
+                "amenities",
+                "apartment_features",
             ]
 
             ai_display_df = ai_ranked_df[ai_display_cols].copy()
@@ -322,12 +402,9 @@ if st.session_state.comparison_rows:
                 st.markdown("### Why these ranked highly")
                 st.write(st.session_state.ai_rationale)
 
-    # -----------------------
-    # Manual filters
-    # -----------------------
     st.markdown("### Filter Listings")
 
-    f1, f2, f3, f4 = st.columns(4)
+    f1, f2, f3, f4, f5 = st.columns(5)
 
     with f1:
         availability_filter = st.selectbox(
@@ -359,6 +436,15 @@ if st.session_state.comparison_rows:
         )
 
     with f4:
+        min_floor = st.slider(
+            "Minimum Floor",
+            min_value=1,
+            max_value=40,
+            value=1,
+            step=1,
+        )
+
+    with f5:
         sort_option = st.selectbox(
             "Sort By",
             [
@@ -367,6 +453,8 @@ if st.session_state.comparison_rows:
                 "Lowest Price",
                 "Largest Unit",
                 "Soonest Available",
+                "Highest Floor",
+                "Best Walk Score",
             ],
         )
 
@@ -376,17 +464,18 @@ if st.session_state.comparison_rows:
     seven_days = today + timedelta(days=7)
     thirty_days = today + timedelta(days=30)
 
-    # Budget filter
     filtered_df = filtered_df[
         filtered_df["unit_price"].isna() | (filtered_df["unit_price"] <= max_budget)
     ]
 
-    # Square footage filter
     filtered_df = filtered_df[
         filtered_df["unit_sqft"].isna() | (filtered_df["unit_sqft"] >= min_sqft)
     ]
 
-    # Availability filter
+    filtered_df = filtered_df[
+        filtered_df["floor_level"].isna() | (filtered_df["floor_level"] >= min_floor)
+    ]
+
     if availability_filter == "Now / Immediately":
         filtered_df = filtered_df[
             filtered_df["available_date"].astype(str).str.lower().isin(["now", "immediately"])
@@ -402,7 +491,6 @@ if st.session_state.comparison_rows:
             & (filtered_df["availability_dt"] <= thirty_days)
         ]
 
-    # Sorting
     if sort_option == "Best Deal Score":
         filtered_df = filtered_df.sort_values("best_deal_score", ascending=False)
     elif sort_option == "Price per Sq Ft":
@@ -413,35 +501,47 @@ if st.session_state.comparison_rows:
         filtered_df = filtered_df.sort_values("unit_sqft", ascending=False)
     elif sort_option == "Soonest Available":
         filtered_df = filtered_df.sort_values("availability_dt", ascending=True)
+    elif sort_option == "Highest Floor":
+        filtered_df = filtered_df.sort_values("floor_level", ascending=False)
+    elif sort_option == "Best Walk Score":
+        filtered_df = filtered_df.sort_values("walk_score", ascending=False)
 
     display_cols = [
         "property_title",
         "floorplan_name",
         "unit_label",
+        "floor_level",
         "unit_price",
         "unit_sqft",
         "available_date",
         "rent_per_sqft",
         "best_deal_score",
+        "walk_score",
+        "transit_score",
+        "bike_score",
+        "amenities",
+        "apartment_features",
     ]
 
     display_df = filtered_df[display_cols].copy()
 
-    display_df["unit_price"] = display_df["unit_price"].apply(
-        lambda x: f"${int(x):,}" if pd.notnull(x) else ""
-    )
-    display_df["rent_per_sqft"] = display_df["rent_per_sqft"].apply(
-        lambda x: f"${x:.2f}" if pd.notnull(x) else ""
-    )
-    display_df["best_deal_score"] = display_df["best_deal_score"].apply(
-        lambda x: f"{x:.1f}" if pd.notnull(x) else ""
-    )
+    if "unit_price" in display_df.columns:
+        display_df["unit_price"] = display_df["unit_price"].apply(
+            lambda x: f"${int(x):,}" if pd.notnull(x) else ""
+        )
+
+    if "rent_per_sqft" in display_df.columns:
+        display_df["rent_per_sqft"] = display_df["rent_per_sqft"].apply(
+            lambda x: f"${x:.2f}" if pd.notnull(x) else ""
+        )
+
+    if "best_deal_score" in display_df.columns:
+        display_df["best_deal_score"] = display_df["best_deal_score"].apply(
+            lambda x: f"{x:.1f}" if pd.notnull(x) else ""
+        )
 
     st.dataframe(display_df, use_container_width=True)
 
-    # -----------------------
-    # Insights
-    # -----------------------
     c1, c2, c3 = st.columns(3)
 
     valid_rent = filtered_df.dropna(subset=["unit_price"])
