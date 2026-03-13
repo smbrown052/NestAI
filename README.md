@@ -12,7 +12,7 @@ User Instructions:
 - Once both are in the comparison table, you can adjust filters
 - There is an LLM powered search tool that will give you the top 3 units based on your specifications, and explain why they are ordered as such
 
-I am looking for apartments and so I created an app to automate and simplify the tedious tasks of manually prsing through apartment listings. This is an AI-powered tool that converts unstructured apartment listing text into structured data and ranks units based on user preferences.
+I am looking for apartments and so I created an app to automate and simplify the tedious tasks of manually parsing through apartment listings. This is an AI-powered tool that converts unstructured apartment listing text into structured data and ranks units based on user preferences.
 
 The application helps renters quickly evaluate multiple apartments by extracting pricing, square footage, availability, amenities, and walkability information from copied listing pages and presenting them in a searchable comparison interface.
 
