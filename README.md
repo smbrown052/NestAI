@@ -2,6 +2,15 @@
 
 **Live App:** (https://apartment-comparison-and-recommendation.streamlit.app/)
 
+User Instructions:
+- You can paste text copied from apartments.com (web scraping is not acceptable per apartment.com terms so it must be pasted manually into the app)
+- I have pre-loaded 2 sample texts that you can click on
+- Then, 'Extract Text' to see the unstructured data become structured
+- Click 'Add to comparison table'
+- Repeat for the second sample text
+- Once both are in the comparison table, you can adjust filters
+- There is an LLM powered search tool that will give you the top 3 units based on your specifications, and explain why they are ordered as such
+
 AI-powered tool that converts unstructured apartment listing text into structured data and ranks units based on user preferences.
 
 The application helps renters quickly evaluate multiple apartments by extracting pricing, square footage, availability, amenities, and walkability information from copied listing pages and presenting them in a searchable comparison interface.
