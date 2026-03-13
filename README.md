@@ -3,8 +3,9 @@
 **Live App:** (https://apartment-comparison-and-recommendation.streamlit.app/)
 
 User Instructions:
-- You can paste text copied from apartments.com (web scraping is not acceptable per apartment.com terms so it must be pasted manually into the app)
+- You may paste text copied from apartments.com (web scraping is not acceptable per apartment.com terms so it must be pasted manually into the app)
 - I have pre-loaded 2 sample texts that you can click on
+- Click on 'Sample Text 1'
 - Then, 'Extract Text' to see the unstructured data become structured
 - Click 'Add to comparison table'
 - Repeat for the second sample text
