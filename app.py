@@ -188,9 +188,8 @@ if "ai_rationale" not in st.session_state:
 # -----------------------
 # Header
 # -----------------------
-st.title("Apartment Compare AI")
 st.write("Turn copied apartment listing text into structured comparison data.")
-st.caption("Built for comparing apartment listings copied from restricted websites.")
+st.caption("Built to save time and automate manual parsing of comparing apartment listings copied from restricted websites.")
 
 
 # -----------------------
