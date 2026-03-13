@@ -1,6 +1,6 @@
 # Apartment Compare AI
 
-**Live App:** [https://your-app-url-here](https://apartment-comparison-and-recommendation.streamlit.app/)
+**Live App:** (https://apartment-comparison-and-recommendation.streamlit.app/)
 
 AI-powered tool that converts unstructured apartment listing text into structured data and ranks units based on user preferences.
 
