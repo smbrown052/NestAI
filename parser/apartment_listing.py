@@ -335,7 +335,9 @@ def parse_unit_records(unit_text):
         )
 
     return matches
-
+print("UNIT TEXT START")
+print(unit_text[:3000])
+print("UNIT TEXT END")
 def parse_apartment_listing(raw_text: str) -> dict:
     """
     Parse one pasted apartment listing text block and return:
