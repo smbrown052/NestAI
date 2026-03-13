@@ -33,6 +33,255 @@ def extract_available_units_section(lines):
     return lines[start_idx:]
 
 
+def clean_list(items):
+    seen = set()
+    cleaned = []
+
+    for item in items or []:
+        if not item:
+            continue
+        value = re.sub(r"\s+", " ", str(item)).strip(" ,;:-")
+        if not value:
+            continue
+
+        key = value.lower()
+        if key not in seen:
+            seen.add(key)
+            cleaned.append(value)
+
+    return cleaned
+
+
+def split_feature_items(raw_text):
+    if not raw_text:
+        return []
+
+    text = str(raw_text)
+
+    text = text.replace("•", "\n")
+    text = text.replace("|", "\n")
+    text = text.replace("·", "\n")
+    text = text.replace(";", "\n")
+
+    parts = []
+    for chunk in text.split("\n"):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+
+        subparts = [p.strip() for p in re.split(r",(?=\s*[A-Za-z])", chunk) if p.strip()]
+        parts.extend(subparts)
+
+    return clean_list(parts)
+
+
+def extract_section_items(text, section_names, stop_names=None):
+    if stop_names is None:
+        stop_names = []
+
+    all_stops = section_names + stop_names + [
+        "available units",
+        "floor plan",
+        "pricing",
+        "price range",
+        "unit details",
+        "pet policy",
+        "schools",
+        "neighborhood",
+        "lease terms",
+        "application fee",
+    ]
+
+    section_pattern = r"(?im)^\s*(?:%s)\s*$" % "|".join(re.escape(name) for name in section_names)
+    stop_pattern = r"(?im)^\s*(?:%s)\s*$" % "|".join(re.escape(name) for name in all_stops)
+
+    matches = list(re.finditer(section_pattern, text))
+    if not matches:
+        return []
+
+    items = []
+
+    for match in matches:
+        start = match.end()
+        following_text = text[start:]
+
+        stop_match = re.search(stop_pattern, following_text)
+        block = following_text[:stop_match.start()] if stop_match else following_text
+
+        lines = [line.strip() for line in block.splitlines() if line.strip()]
+        if not lines:
+            continue
+
+        block_text = "\n".join(lines)
+        items.extend(split_feature_items(block_text))
+
+    return clean_list(items)
+
+
+def infer_amenities(text):
+    keywords = [
+        "Pool",
+        "Fitness Center",
+        "Gym",
+        "Clubhouse",
+        "Business Center",
+        "Coworking",
+        "Concierge",
+        "Package Service",
+        "Package Locker",
+        "Elevator",
+        "Garage",
+        "Covered Parking",
+        "Parking",
+        "EV Charging",
+        "Roof Deck",
+        "Rooftop",
+        "Sundeck",
+        "Courtyard",
+        "Grill",
+        "Picnic Area",
+        "Pet Spa",
+        "Dog Park",
+        "Bike Storage",
+        "Bike Room",
+        "Storage",
+        "Laundry Facilities",
+        "On-Site Maintenance",
+        "On-Site Management",
+        "Doorman",
+        "Media Room",
+        "Resident Lounge",
+        "Conference Room",
+        "Playground",
+        "Tennis Court",
+        "Basketball Court",
+        "Spa",
+        "Sauna",
+        "Hot Tub",
+    ]
+
+    found = []
+    for keyword in keywords:
+        if re.search(rf"\b{re.escape(keyword)}\b", text, re.IGNORECASE):
+            found.append(keyword)
+
+    return clean_list(found)
+
+
+def infer_apartment_features(text):
+    keywords = [
+        "Washer/Dryer",
+        "In Unit Washer & Dryer",
+        "Dishwasher",
+        "Air Conditioning",
+        "Balcony",
+        "Patio",
+        "Hardwood Floors",
+        "Walk-In Closets",
+        "Stainless Steel Appliances",
+        "Microwave",
+        "Refrigerator",
+        "Ceiling Fan",
+        "Fireplace",
+        "Double Vanity",
+        "High Ceilings",
+        "Island Kitchen",
+        "Granite Countertops",
+        "Quartz Countertops",
+        "Loft Layout",
+        "Den",
+        "Wheelchair Accessible",
+        "Cable Ready",
+        "Smoke Free",
+    ]
+
+    found = []
+    for keyword in keywords:
+        if re.search(rf"\b{re.escape(keyword)}\b", text, re.IGNORECASE):
+            found.append(keyword)
+
+    return clean_list(found)
+
+
+def extract_amenities(text):
+    items = extract_section_items(
+        text,
+        section_names=[
+            "Amenities",
+            "Community Amenities",
+            "Property Amenities",
+            "Building Amenities",
+        ],
+        stop_names=[
+            "Apartment Features",
+            "Unit Features",
+            "Interior Features",
+            "Walkability",
+            "Neighborhood",
+        ],
+    )
+
+    if not items:
+        items = infer_amenities(text)
+
+    return clean_list(items)
+
+
+def extract_apartment_features(text):
+    items = extract_section_items(
+        text,
+        section_names=[
+            "Apartment Features",
+            "Unit Features",
+            "Interior Features",
+            "Home Features",
+            "Apartment Amenities",
+        ],
+        stop_names=[
+            "Amenities",
+            "Community Amenities",
+            "Walkability",
+            "Neighborhood",
+        ],
+    )
+
+    if not items:
+        items = infer_apartment_features(text)
+
+    return clean_list(items)
+
+
+def extract_walkability(text):
+    walk_score = extract_field(r"\bWalk Score\b[:\s-]*(\d{1,3})", text, re.IGNORECASE)
+    transit_score = extract_field(r"\bTransit Score\b[:\s-]*(\d{1,3})", text, re.IGNORECASE)
+    bike_score = extract_field(r"\bBike Score\b[:\s-]*(\d{1,3})", text, re.IGNORECASE)
+
+    walk_label = extract_field(
+        r"\bWalk Score\b[:\s-]*\d{1,3}\s*[\-\u2013\u2014]?\s*([A-Za-z][A-Za-z ]+)",
+        text,
+        re.IGNORECASE,
+    )
+    transit_label = extract_field(
+        r"\bTransit Score\b[:\s-]*\d{1,3}\s*[\-\u2013\u2014]?\s*([A-Za-z][A-Za-z ]+)",
+        text,
+        re.IGNORECASE,
+    )
+    bike_label = extract_field(
+        r"\bBike Score\b[:\s-]*\d{1,3}\s*[\-\u2013\u2014]?\s*([A-Za-z][A-Za-z ]+)",
+        text,
+        re.IGNORECASE,
+    )
+
+    return {
+        "walk_score": int(walk_score) if walk_score else None,
+        "transit_score": int(transit_score) if transit_score else None,
+        "bike_score": int(bike_score) if bike_score else None,
+        "walk_label": walk_label,
+        "transit_label": transit_label,
+        "bike_label": bike_label,
+    }
+
+
 def parse_unit_records(unit_text):
     pattern = re.compile(
         r"Unit\s*(?P<unit>[A-Za-z]?\d{2,4}[A-Za-z]?)"
@@ -73,6 +322,9 @@ def parse_apartment_listing(raw_text: str) -> dict:
     """
     Parse one pasted apartment listing text block and return:
     - property-level fields
+    - amenities
+    - apartment features
+    - walkability
     - a list of unit records
     """
     if not raw_text or not raw_text.strip():
@@ -84,6 +336,16 @@ def parse_apartment_listing(raw_text: str) -> dict:
             "floorplan_price_range": None,
             "floorplan_sqft_range": None,
             "floorplan_has_den": False,
+            "amenities": [],
+            "apartment_features": [],
+            "walkability": {
+                "walk_score": None,
+                "transit_score": None,
+                "bike_score": None,
+                "walk_label": None,
+                "transit_label": None,
+                "bike_label": None,
+            },
             "units": [],
         }
 
@@ -101,12 +363,15 @@ def parse_apartment_listing(raw_text: str) -> dict:
     )
     floorplan_has_den = bool(re.search(r"\bDen\b", text, re.IGNORECASE))
 
+    amenities = extract_amenities(text)
+    apartment_features = extract_apartment_features(text)
+    walkability = extract_walkability(text)
+
     unit_lines = extract_available_units_section(lines)
     unit_lines = [
         line
         for line in unit_lines
-        if line.lower()
-        not in {"unit", "base price", "sq ft", "availability", "unit details"}
+        if line.lower() not in {"unit", "base price", "sq ft", "availability", "unit details"}
     ]
 
     unit_text = "\n".join(unit_lines)
@@ -120,5 +385,8 @@ def parse_apartment_listing(raw_text: str) -> dict:
         "floorplan_price_range": floorplan_price_range,
         "floorplan_sqft_range": floorplan_sqft_range,
         "floorplan_has_den": floorplan_has_den,
+        "amenities": amenities,
+        "apartment_features": apartment_features,
+        "walkability": walkability,
         "units": unit_records,
     }
