@@ -50,12 +50,11 @@ video_left, video_right = st.columns([0.45, 0.55])
 
 with video_left:
     st.markdown("### 🎥 Quick Demo")
-    if os.path.exists("/demo.mp4"):
-        st.video("/demo.mp4")
-else:
-    st.caption("Demo video not found.")
+
+    if os.path.exists("assets/demo.mp4"):
+        st.video("assets/demo.mp4")
     else:
-        st.caption("Add `demo.mp4` to this project folder to show your screen recording here.")
+        st.caption("Demo video not found. Add `demo.mp4` inside the `assets` folder.")
 
 with video_right:
     st.markdown("### What it does")
