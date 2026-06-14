@@ -23,7 +23,6 @@ for key, default in {
 
 st.markdown("""
 <div class="hero">
-    <h1>🏠 Nest AI</h1>
     <p>
     Find your next apartment in seconds. Compare floor plans, pricing,
     square footage, metro access, and amenities without building spreadsheets.
