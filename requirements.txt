@@ -1,12 +1,2 @@
 streamlit
-requests
-beautifulsoup4
 pandas
-<<<<<<< HEAD
-openai
-python-dotenv
-=======
-python-docx
-altair==4.2.2
-openai>=1.0.0
->>>>>>> e31cefd3d47d57828e1a4c17f8347ee6c06648b7
