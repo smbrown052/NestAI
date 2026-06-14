@@ -3,57 +3,6 @@ import streamlit as st
 import pandas as pd
 from text_parser import parse_apartment_text, filter_units_by_request
 
-st.title("Nest AI")
-
-st.markdown("""
-<style>
-.block-container {
-    padding-top: 2rem;
-    padding-bottom: 3rem;
-}
-.hero {
-    background: linear-gradient(135deg, #fffaf4 0%, #e9f1e6 100%);
-    padding: 2rem;
-    border-radius: 24px;
-    border: 1px solid #e3ddd4;
-    margin-bottom: 1rem;
-    box-shadow: 0 8px 24px rgba(80, 70, 60, 0.08);
-}
-.hero h1 {
-    font-size: 3.2rem;
-    margin-bottom: 0.25rem;
-    color: #2f3a2f;
-}
-.hero p {
-    font-size: 1.1rem;
-    color: #6c6258;
-}
-.section-card {
-    background-color: white;
-    padding: 1.5rem;
-    border-radius: 20px;
-    border: 1px solid #e7e0d8;
-    margin-top: 1rem;
-    box-shadow: 0 4px 14px rgba(80, 70, 60, 0.05);
-}
-.stButton > button {
-    background-color: #50624f;
-    color: white;
-    border-radius: 999px;
-    border: none;
-    padding: 0.65rem 1.4rem;
-    font-weight: 600;
-}
-.stButton > button:hover {
-    background-color: #39483a;
-    color: white;
-}
-.small-muted {
-    color: #7a7168;
-    font-size: 0.95rem;
-}
-</style>
-""", unsafe_allow_html=True)
 st.set_page_config(page_title="NestAI", layout="wide")
 
 st.title("NestAI")
@@ -848,7 +797,7 @@ Fitness
 Add a Commute
 Neighborhood
 
-In many ways, Arlington’s Clarendon/Courthouse neighborhood leads a double life. On the one hand, the mix of upscale single-family homes and swanky apartments combined with the super-convenient access to Washington (just a mile away and served by multiple Metro stops) make this an ideal location for DC-area commuters seeking a more suburban home environment. The abundance of parks and playgrounds reflects the family-friendly nature of the community, and the local public schools are among the best in the region. Parts of the neighborhood also contain several corporate high-rises, giving many folks the option of walking to work.
+In many ways, Arlingtons Clarendon/Courthouse neighborhood leads a double life. On the one hand, the mix of upscale single-family homes and swanky apartments combined with the super-convenient access to Washington (just a mile away and served by multiple Metro stops) make this an ideal location for DC-area commuters seeking a more suburban home environment. The abundance of parks and playgrounds reflects the family-friendly nature of the community, and the local public schools are among the best in the region. Parts of the neighborhood also contain several corporate high-rises, giving many folks the option of walking to work.
 
 However, Clarendon/Courthouse also has a lively, fun side. The neighborhood is generally known as the nightlife capital of Arlington – the robust bar and club scene along Clarendon Avenue attracts partiers from across the DC area on weekends.
 
@@ -1254,11 +1203,13 @@ st.info("""
 Go to an Apartments.com listing, press **Ctrl + A**, then **Ctrl + C**, paste everything below, and let the magic happen.
 """)
 
+ 
 video_left, video_right = st.columns([0.45, 0.55])
 with video_left:
     st.markdown("### 🎥 Quick Demo")
     if os.path.exists("C:\\Users\\smbro\\Videos\\Recording 2026-06-14 145634.mp4"):
         st.video("C:\\Users\\smbro\\Videos\\Recording 2026-06-14 145634.mp4")
+
 def compute_best_deal_score(row):
     """
     Higher score = better deal.
