@@ -44,16 +44,6 @@ st.info("""
 Go to an Apartments.com listing, press **Ctrl + A**, then **Ctrl + C**, paste everything below, and let the magic happen.
 """)
 
-video_left, video_right = st.columns([0.45, 0.55])
-
-with video_left:
-    st.markdown("### 🎥 Quick Demo")
-
-    if os.path.exists("assets/demo.mp4"):
-        st.video("assets/demo.mp4")
-    else:
-        st.caption("Demo video not found. Add `demo.mp4` inside the `assets` folder.")
-
 with video_right:
     st.markdown("### What it does")
     st.write("""
