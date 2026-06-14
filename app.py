@@ -3,8 +3,6 @@ import streamlit as st
 import pandas as pd
 from text_parser import parse_apartment_text, filter_units_by_request
 
-st.set_page_config(page_title="NestAI", layout="wide")
-
 st.title("🏠 NestAI")
 st.markdown("### Find *your* nest.")
 
