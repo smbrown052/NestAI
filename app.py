@@ -50,8 +50,8 @@ video_left, video_right = st.columns([0.45, 0.55])
 
 with video_left:
     st.markdown("### 🎥 Quick Demo")
-    if os.path.exists("demo.mp4"):
-        st.video("demo.mp4")
+    if os.path.exists("C:\\Users\\smbro\\Videos\\Recording 2026-06-14 145634.mp4"):
+        st.video("C:\\Users\\smbro\\Videos\\Recording 2026-06-14 145634.mp4")
     else:
         st.caption("Add `demo.mp4` to this project folder to show your screen recording here.")
 
@@ -88,7 +88,909 @@ with left:
         "Apartment listing text",
         key="listing_text",
         height=420,
-        placeholder="Paste copied Apartments.com listing text here..."
+        placeholder="
+Map
+ English
+Apartments.com Logo
+Manage Rentals     
+Sign Up
+/
+Sign In
+
+ 
+ 
+39 Photos
+2 Virtual Tours
+Contact This Property
+Tour Options: Self-Guided 
+
+
+(301) 778-2961
+
+ Language: English
+
+ Open 9am - 7pm Today
+
+View All Hours
+
+Virginia  Arlington County  Arlington  Clarendon/Courthouse 
+Avalon Courthouse Place
+1320 N Veitch St, Arlington, VA 22201
+2.5
+Renter Rating
+13 Reviews
+Verified Listing
+Today
+
+
+
+Property Management Company Logo
+Total Monthly Price
+
+$2,321 - $4,061
+
+Bedrooms
+
+1 - 2 bd
+
+Bathrooms
+
+1 - 2 ba
+
+Square Feet
+
+525 - 1,265 sq ft
+
+Move-in Special
+
+* Apply by 6/18 for 1 month off! * Terms and conditions apply.
+
+Highlights
+Walker's Paradise
+Furnished Units Available
+Pool
+Walk-In Closets
+Patio
+Business Center
+Pricing & Floor Plans
+filter results by bedrooms
+Matches
+All
+1 Bedroom
+2 Bedrooms
+Cost Calculator: Estimate your monthly and one-time fees. 
+650
+$2,378 – $2,379
+1 Bed
+1 Bath
+650 Sq Ft
+$300 Deposit
+View 650Floor Plan Details
+Tour Floor Plan
+2 Available units
+Unit
+Base Price
+Sq Ft
+Availability
+Unit Details
+Unit
+0535
+price
+$2,378
+square feet
+650
+availibilityJun 15
+Unit
+1235
+price
+$2,379
+square feet
+650
+availibilityJun 28
+724-b
+$2,470 – $2,535
+1 Bed
+1 Bath
+724 Sq Ft
+$300 Deposit
+View 724-bFloor Plan Details
+Tour Floor Plan
+6 Available units
+Unit
+Base Price
+Sq Ft
+Availability
+Unit Details
+Unit
+1110
+price
+$2,525
+square feet
+724
+availibilityJun 15
+Unit
+1009
+price
+$2,505
+square feet
+724
+availibilityJun 28
+Unit
+1208
+price
+$2,515
+square feet
+724
+availibilityJul 31
+Show More Units (3)
+
+665
+$2,490 – $2,760
+1 Bed
+1 Bath
+665 Sq Ft
+$300 Deposit
+View 665Floor Plan Details
+Tour Floor Plan
+4 Available units
+Unit
+Base Price
+Sq Ft
+Availability
+Unit Details
+Unit
+1720
+price
+$2,490
+square feet
+665
+availibilityJun 15
+Unit
+0520
+price
+$2,509
+square feet
+665
+availibilityJun 15
+Unit
+0620
+price
+$2,550
+square feet
+665
+availibilityJul 8
+Show More Units (1)
+
+740-a
+$2,496 – $2,591
+1 Bed
+1 Bath
+740 Sq Ft
+$300 Deposit
+View 740-aFloor Plan Details
+Tour Floor Plan
+4 Available units
+Unit
+Base Price
+Sq Ft
+Availability
+Unit Details
+Unit
+1506
+price
+$2,496
+square feet
+740
+availibilityJun 15
+Unit
+2006
+price
+$2,533
+square feet
+740
+availibilityJun 15
+Unit
+1634
+price
+$2,591
+square feet
+740
+availibilityJul 7
+Show More Units (1)
+
+724-a
+$2,525 – $2,605
+1 Bed
+1 Bath
+724 Sq Ft
+$300 Deposit
+View 724-aFloor Plan Details
+Tour Floor Plan
+2 Available units
+Unit
+Base Price
+Sq Ft
+Availability
+Unit Details
+Unit
+1104
+price
+$2,525
+square feet
+724
+availibilityJun 15
+Unit
+1406
+price
+$2,605
+square feet
+724
+availibilityJun 15
+755
+$2,531 – $2,676
+1 Bed
+1 Bath
+755 Sq Ft
+$300 Deposit
+View 755Floor Plan Details
+Tour Floor Plan
+4 Available units
+Unit
+Base Price
+Sq Ft
+Availability
+Unit Details
+Unit
+0927
+price
+$2,531
+square feet
+755
+availibilityJun 15
+Unit
+1913
+price
+$2,613
+square feet
+755
+availibilityJun 16
+Unit
+1127
+price
+$2,561
+square feet
+755
+availibilityJun 27
+Show More Units (1)
+
+745
+$2,570
+1 Bed
+1 Bath
+745 Sq Ft
+$300 Deposit
+View 745Floor Plan Details
+Tour Floor Plan
+1 Available unit
+Unit
+Base Price
+Sq Ft
+Availability
+Unit Details
+Unit
+1622
+price
+$2,570
+square feet
+745
+availibilityJun 15
+740sf-b
+$2,633 – $2,686
+1 Bed
+1 Bath
+740 Sq Ft
+$300 Deposit
+View 740sf-bFloor Plan Details
+Tour Floor Plan
+2 Available units
+Unit
+Base Price
+Sq Ft
+Availability
+Unit Details
+Unit
+1808
+price
+$2,686
+square feet
+740
+availibilityJun 15
+Unit
+2032
+price
+$2,633
+square feet
+740
+availibilityAug 21
+800
+$2,675 – $2,685
+1 Bed
+1 Bath
+800 Sq Ft
+$300 Deposit
+View 800Floor Plan Details
+Tour Floor Plan
+1 Available unit
+Unit
+Base Price
+Sq Ft
+Availability
+Unit Details
+Unit
+1433
+price
+$2,685
+square feet
+800
+availibilityJun 15
+615
+$2,335 – $2,365
+1 Bed
+1 Bath
+615 Sq Ft
+$300 Deposit
+View 615Floor Plan Details
+Tour Floor Plan
+2 Available units
+Unit
+Base Price
+Sq Ft
+Availability
+Unit Details
+Unit
+1518
+price
+$2,350
+square feet
+615
+availibilityJul 17
+Unit
+0318
+price
+$2,335
+square feet
+615
+availibilityJul 28
+870-a
+$2,807
+1 Bed
+1 Bath
+870 Sq Ft
+$300 Deposit
+View 870-aFloor Plan Details
+Tour Floor Plan
+1 Available unit
+Unit
+Base Price
+Sq Ft
+Availability
+Unit Details
+Unit
+0438
+price
+$2,807
+square feet
+870
+availibilityJul 25
+525
+$2,240
+1 Bed
+1 Bath
+525 Sq Ft
+$300 Deposit
+View 525Floor Plan Details
+Tour Floor Plan
+1 Available unit
+Unit
+Base Price
+Sq Ft
+Availability
+Unit Details
+Unit
+0405
+price
+$2,240
+square feet
+525
+availibilityJul 27
+730
+$2,540
+1 Bed
+1 Bath
+730 Sq Ft
+$300 Deposit
+View 730Floor Plan Details
+Tour Floor Plan
+1 Available unit
+Unit
+Base Price
+Sq Ft
+Availability
+Unit Details
+Unit
+0328
+price
+$2,540
+square feet
+730
+availibilityAug 19
+855
+$2,824 – $2,875
+1 Bed
+1 Bath
+855 Sq Ft
+$300 Deposit
+View 855Floor Plan Details
+Tour Floor Plan
+3 Available units
+Unit
+Base Price
+Sq Ft
+Availability
+Unit Details
+Unit
+0916
+price
+$2,872
+square feet
+855
+availibilityAug 21
+Unit
+1624
+price
+$2,875
+square feet
+855
+availibilityAug 21
+Unit
+0524
+price
+$2,824
+square feet
+855
+availibilityAug 22
+870-b
+$2,801
+1 Bed
+1 Bath
+870 Sq Ft
+$300 Deposit
+View 870-bFloor Plan Details
+Tour Floor Plan
+1 Available unit
+Unit
+Base Price
+Sq Ft
+Availability
+Unit Details
+Unit
+0503
+price
+$2,801
+square feet
+870
+availibilityAug 25
+* Price shown is total price based on community-supplied monthly required fees. Excludes user-selected optional fees and variable or usage-based fees and required charges due at or prior to move-in or at move-out.View Fees and Policies for details. Price, availability, fees, and any applicable rent special are subject to change without notice.
+* Square footage definitions vary. Displayed square footage is approximate.
+Fees and Policies
+The fees listed below are community-provided and may exclude utilities or add-ons. All payments are made directly to the property and are non-refundable unless otherwise specified. Use the Cost Calculator to determine costs based on your needs.
+
+Required Fees Pets Parking Storage
+Utilities & Essentials
+Technology Connect
+$81 / mo
+One-Time Basics
+Due at Application
+Application Fees
+$50
+Due at Move-In
+Security Deposit
+$300
+Common Area/Amenities
+$500
+Property Fee Disclaimer: Based on community-supplied data and independent market research. Subject to change without notice. May exclude fees for mandatory or optional services and usage-based utilities.
+
+Details
+Utilities Included
+Trash Removal
+Lease Options
+2 - 12 Month Leases
+Short term lease
+Property Information
+Built in 1999
+564 units/20 stories
+Furnished Units Available
+Matterport 3D Tours
+Interior
+
+1BR Vacant
+1/2
+
+About Avalon Courthouse Place
+Avalon Courthouse Place, a short walk to the Courthouse Metro, offers spacious furnished and unfurnished one and two bedroom Arlington apartments with excellent amenities like private patios, large walk-in closets, plush wall-to-wall carpeting, separate dining rooms and deluxe kitchens. Our Furnished+ homes come outfitted with essential stylish furniture plus all utilities, including cable and WiFi, are included in your rent. Superb community facilities include a split-level pool, a high-tech business center, a library, the sports club and much more. The combination of amazing features and a professional on-site staff makes Avalon Courthouse Place the ideal choice.
+
+Avalon Courthouse Place is an apartment community located in Arlington County and the 22201 ZIP Code. This area is served by the Arlington County Public Schools attendance zone.
+
+Unique Features
+
+$500 Amenity Fee
+Tech Package W/ High-speed Wifi And More
+Contact
+(301) 778-2961
+View Property Website
+Language: English
+Open 9am - 7pm Today
+View All HoursView All Hours
+Property Management Company Logo
+Community Amenities
+Furnished Units Available
+Business Center
+Pool
+Apartment Features
+Washer/Dryer
+
+Air Conditioning
+
+Walk-In Closets
+
+Microwave
+
+Wi-Fi
+Washer/Dryer
+Air Conditioning
+Cable Ready
+Disposal
+Kitchen
+Microwave
+Dining Room
+Walk-In Closets
+Furnished
+Patio
+Location
+1320 N Veitch St, Arlington, VA 22201
+ Get Directions
+Schools
+Restaurants
+Groceries
+Coffee
+Banks
+Shops
+Fitness
+Add a Commute
+Neighborhood
+
+In many ways, Arlington’s Clarendon/Courthouse neighborhood leads a double life. On the one hand, the mix of upscale single-family homes and swanky apartments combined with the super-convenient access to Washington (just a mile away and served by multiple Metro stops) make this an ideal location for DC-area commuters seeking a more suburban home environment. The abundance of parks and playgrounds reflects the family-friendly nature of the community, and the local public schools are among the best in the region. Parts of the neighborhood also contain several corporate high-rises, giving many folks the option of walking to work.
+
+However, Clarendon/Courthouse also has a lively, fun side. The neighborhood is generally known as the nightlife capital of Arlington – the robust bar and club scene along Clarendon Avenue attracts partiers from across the DC area on weekends.
+
+Learn more about living in Clarendon/Courthouse  
+Average Prices by Area
+Compare neighborhood and city base rent averages by bedroom.
+
+Clarendon/Courthouse	Arlington, VA
+Studio	$2,333	$2,031
+1 Bedroom	$2,593	$2,378
+2 Bedrooms	$3,749	$3,151
+3 Bedrooms	$4,579	$4,151
+Education
+Colleges & Universities			Distance
+George Mason Univ., Arlington
+Drive:	4 min	1.2 mi
+Georgetown University
+Drive:	7 min	2.8 mi
+GWU, Foggy Bottom
+Drive:	6 min	3.1 mi
+GWU, Mount Vernon
+Drive:	8 min	3.7 mi
+Avalon Courthouse Place is within 4 minutes or 1.2 miles from George Mason Univ., Arlington. It is also near Georgetown University and GWU, Foggy Bottom.
+Schools
+Public Schools Private Schools
+Escuela Key Elementary
+Public Elementary School
+Grades PK-5
+618 Students
+ Nearby
+
+Arlington Science Focus School
+Public Elementary School
+Grades PK-5
+549 Students
+ Attendance Zone
+
+Jefferson Middle
+Public Middle School
+Grades 6-8
+1,053 Students
+ Nearby
+
+Dorothy Hamm Middle
+Public Middle School
+Grades 6-8
+899 Students
+ Attendance Zone
+
+Yorktown High School
+Public High School
+Grades 9-12
+2,577 Students
+ Attendance Zone
+
+School data provided by  
+Transportation
+Transportation options available in Arlington include Court House, Orange,Silver Line Center Platform, located 0.2 mile from Avalon Courthouse Place. Avalon Courthouse Place is near Ronald Reagan Washington Ntl, located 5.8 miles or 11 minutes away, and Washington Dulles International, located 24.4 miles or 40 minutes away.
+
+Transit / Subway			Distance
+Court House, Orange,Silver Line Center Platform	Walk:	3 min	0.2 mi
+Clarendon  	Walk:	12 min	0.6 mi
+Virginia Square-Gmu  	Drive:	4 min	1.5 mi
+Rosslyn   	Drive:	3 min	1.6 mi
+Arlington Cemetery 	Drive:	4 min	2.1 mi
+ 
+Commuter Rail			Distance
+4	Drive:	8 min	4.2 mi
+Lead	Drive:	10 min	5.3 mi
+Union Station      	Drive:	11 min	5.5 mi
+1	Drive:	16 min	6.7 mi
+Alexandria	Drive:	16 min	6.8 mi
+ 
+Airports			Distance
+Ronald Reagan Washington Ntl	Drive:	11 min	5.8 mi
+Washington Dulles International	Drive:	40 min	24.4 mi
+Getting Around
+Exceptionally Walkable
+Walkability
+90
+/ 100
+Good Public Transit
+Transit
+70
+/ 100
+Fairly Drivable
+Drivability
+50
+/ 100
+Moderately Bikeable
+Bikeability
+70
+/ 100
+Scores provided by
+
+
+Active
+Soundscore™
+69
+/ 100
+Traffic
+
+Active
+Airport
+
+Calm
+Businesses
+
+Busy
+Scores provided by
+
+HowLoud
+Points of Interest
+Time and distance from Avalon Courthouse Place.
+
+Shopping Centers			Distance
+The Crossing Clarendon
+Walk:	8 min	0.4 mi
+Colonial Village Shopping Center
+Walk:	12 min	0.6 mi
+Avalon Courthouse Place has 2 shopping centers within 0.6 mile, which is about a 12-minute walk. The miles and minutes will be for the farthest away property.
+Parks and Recreation			Distance
+Fort Bennett Park and Palisades Trail
+Drive:	3 min	1.1 mi
+David M. Brown Planetarium
+Drive:	5 min	1.7 mi
+Cherry Valley Park
+Drive:	5 min	1.9 mi
+Fort C.F. Smith Park & Historic Site
+Drive:	5 min	2.0 mi
+Theodore Roosevelt Island Park
+Drive:	7 min	3.6 mi
+Avalon Courthouse Place has 5 parks within 3.6 miles, including Fort Bennett Park and Palisades Trail, David M. Brown Planetarium, and Fort C.F. Smith Park & Historic Site.
+Hospitals			Distance
+Capital Hospice
+Drive:	6 min	2.4 mi
+Virginia Hospital Center
+Drive:	7 min	2.8 mi
+MedStar Georgetown University Hospital
+Drive:	8 min	3.0 mi
+Avalon Courthouse Place has 3 hospitals within 3.0 miles, the nearest is Capital Hospice which is 2.4 miles away and a 6 minute drive.
+Military Bases			Distance
+Fort Myer
+Drive:	5 min	2.3 mi
+The Pentagon
+Drive:	5 min	2.8 mi
+Naval Observatory
+Drive:	9 min	4.8 mi
+Avalon Courthouse Place has 3 military bases within 4.8 miles, the nearest is Fort Myer which is 2.3 miles away and a 5 minute drive.
+ 
+ 
+Reviews for Avalon Courthouse Place
+2.5
+Renter Rating
+5 Stars
+1
+4 Stars
+4
+3 Stars
+1
+2 Stars
+2
+1 Star
+5
+Share details of your own experience with this property
+Renter Reviews 13 Reviews
+Avalon Courthouse Place Photos
+
+Renovated Package II kitchen with white cabinetry, grey quartz countertops, grey subway tile backsplash, stainless steel appliances, and hard surface flooring
+
+
+1BR Vacant
+
+Renovated Package II kitchen and living room with hard surface flooring
+
+Renovated Package II living room with hard surface flooring
+
+Renovated Package II bedroom with hard surface flooring
+
+Walk-in closet
+
+Renovated Package II bath with white cabinetry, grey quartz countertops, and hard surface flooring
+
+Renovated Package I kitchen with white cabinetry, granite countertops, stainless steel appliances, and hard surface flooring
+
+Renovated Package I kitchen with white cabinetry, granite countertops, stainless steel appliances, and hard surface flooring
+
+Models
+
+Nearby Apartments
+Within 50 Miles of Avalon Courthouse Place
+
+Avalon Potomac Yard
+
+731 Seaton Ave
+
+Alexandria, VA 22305
+
+$2,416 - $4,337
+Total Monthly Price
+
+1-2 Br
+12 Month Lease
+4.5 mi
+
+Avalon Towson
+
+2 E Joppa Rd
+
+Towson, MD 21286
+
+$1,810 - $3,020
+
+1-2 Br
+43.9 mi
+
+Avalon Hunt Valley and Hunt Valley West
+
+100 Shawan Rd
+
+Cockeysville, MD 21030
+
+$1,885 - $3,345
+
+1-3 Br
+48.1 mi
+
+Frequently Asked Questions
+Does Avalon Courthouse Place have in-unit laundry?
+Avalon Courthouse Place has units with in‑unit washers and dryers, making laundry day simple for residents.
+
+What utilities are included in rent at Avalon Courthouse Place?
+Avalon Courthouse Place includes trash removal in rent. Residents are responsible for any other utilities not listed.
+
+Is parking available at Avalon Courthouse Place?
+Parking is available at Avalon Courthouse Place for $110 - $120 / mo. Contact this property for details.
+
+Which floor plans are available, and what are the price ranges?
+Avalon Courthouse Place has one to two-bedrooms with rent ranges from $2,240/mo. to $3,980/mo.
+
+Is Avalon Courthouse Place pet-friendly?
+Yes, Avalon Courthouse Place welcomes pets. Breed restrictions, weight limits, and additional fees may apply. View this property's pet policy.
+
+How much income do I need to rent at Avalon Courthouse Place?
+A good rule of thumb is to spend no more than 30% of your gross income on rent. Based on the lowest available rent of $2,240 for a one-bedroom, you would need to earn about $89,600 per year to qualify. Want to double-check your budget? Calculate how much rent you can afford with our Rent Affordability Calculator.
+
+Does Avalon Courthouse Place have move-in specials?
+Avalon Courthouse Place is offering Specials for eligible applicants, with rental rates starting at $2,240.
+
+Does Avalon Courthouse Place offer Matterport 3D tours?
+Yes! Avalon Courthouse Place offers 2 Matterport 3D Tours. Explore different floor plans and see unit level details, all without leaving home.
+
+Report an Issue  Print  Get Directions 
+Try These Popular Nearby Searches
+Cities
+
+Rosslyn Rentals
+Seven Corners Rentals
+Bailey's Crossroads Rentals
+Lake Barcroft Rentals
+Falls Church Rentals
+ 
+Search by Bedrooms
+
+Studio Apartments in Arlington
+1 Bedroom Apartments in Arlington
+2 Bedroom Apartments in Arlington
+3 Bedroom Apartments in Arlington
+Rooms for Rent in Arlington
+Other Rental Types
+
+Arlington Lofts for Rent
+Arlington Houses for Rent
+Arlington Condos for Rent
+Arlington Townhomes for Rent
+Private Landlord Rentals Arlington
+Arlington Duplex Rentals
+22201 Houses for Rent
+22201 Condos for Rent
+22201 Townhomes for Rent
+ 
+Stay on Budget
+
+Arlington Apartments Under $900
+Arlington Apartments Under $1,000
+Arlington Apartments Under $1,100
+Arlington Apartments Under $1,200
+Arlington Apartments Under $1,300
+Arlington Apartments Under $1,400
+Arlington Apartments Under $1,500
+Arlington Apartments Under $2,000
+ 
+Filter by Popular Amenities
+
+Pet Friendly Apartments in Arlington
+Furnished Apartments in Arlington
+Apartments with Washer & Dryer in Arlington
+Wheelchair Accessible Apartments in Arlington
+Apartments with EV Charging in Arlington
+Apartments with Balcony in Arlington
+Apartments with Air Conditioning in Arlington
+Arlington Apartments with Virtual Tours
+ 
+Find Specialty Housing
+
+Student Housing in Arlington
+Arlington Low Income Housing
+Senior Housing in Arlington
+Short Term Rentals in Arlington
+Luxury Apartments in Arlington
+Cheap Apartments in Arlington
+Corporate Housing in Arlington
+Move-In Specials in Arlington
+New Apartments in Arlington
+About Us Advertise Legal Notices Privacy Notice Avoid Scams Accessibility Calculate Rent Affordability Renterverse Sitemap
+apartments.com
+© 2026 CoStar Group, Inc.
+Equal Housing Opportunity
+
+Apartments.com Ai
+"
     )
 
     analyze = st.button("✨ Analyze Apartment", use_container_width=True)
