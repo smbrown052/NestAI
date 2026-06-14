@@ -3,6 +3,7 @@ import streamlit as st
 import pandas as pd
 from text_parser import parse_apartment_text, filter_units_by_request
 
+<<<<<<< HEAD
 st.set_page_config(page_title="Nest AI", page_icon="🏠", layout="wide")
 
 st.markdown("""
@@ -54,6 +55,12 @@ st.markdown("""
 }
 </style>
 """, unsafe_allow_html=True)
+=======
+st.set_page_config(page_title="NestAI", layout="wide")
+
+st.title("NestAI")
+st.markdown("### Find *your* nest.")
+>>>>>>> e31cefd3d47d57828e1a4c17f8347ee6c06648b7
 
 
 def format_travel(mode, minutes):
@@ -1250,11 +1257,164 @@ st.info("""
 Go to an Apartments.com listing, press **Ctrl + A**, then **Ctrl + C**, paste everything below, and let the magic happen.
 """)
 
+<<<<<<< HEAD
 video_left, video_right = st.columns([0.45, 0.55])
 with video_left:
     st.markdown("### 🎥 Quick Demo")
     if os.path.exists("C:\\Users\\smbro\\Videos\\Recording 2026-06-14 145634.mp4"):
         st.video("C:\\Users\\smbro\\Videos\\Recording 2026-06-14 145634.mp4")
+=======
+def compute_best_deal_score(row):
+    """
+    Higher score = better deal.
+    Simple MVP logic:
+    - lower rent is better
+    - higher square footage is better
+    - sooner availability is better
+    """
+    rent = row.get("unit_price")
+    sqft = row.get("unit_sqft")
+    availability_dt = row.get("availability_dt")
+
+    if pd.isna(rent) or pd.isna(sqft) or rent == 0:
+        return None
+
+    score = 0
+
+    # Value from space relative to price
+    score += (sqft / rent) * 10000
+
+    # Bonus for sooner availability
+    if pd.notna(availability_dt):
+        days_until_available = (availability_dt - datetime.today()).days
+        if days_until_available <= 0:
+            score += 15
+        elif days_until_available <= 7:
+            score += 10
+        elif days_until_available <= 30:
+            score += 5
+
+    return round(score, 2)
+
+
+if "raw_text" not in st.session_state:
+    st.session_state.raw_text = ""
+
+if "parsed_listing" not in st.session_state:
+    st.session_state.parsed_listing = None
+
+if "comparison_rows" not in st.session_state:
+    st.session_state.comparison_rows = []
+
+if "ai_prefs" not in st.session_state:
+    st.session_state.ai_prefs = None
+
+if "ai_rationale" not in st.session_state:
+    st.session_state.ai_rationale = ""
+
+
+# -----------------------
+# Header
+# -----------------------
+st.write("Turn copied apartment listing text into structured comparison data.")
+st.caption("Built to save time and automate manual parsing of comparing apartment listings copied from restricted websites.")
+
+
+# -----------------------
+# Input / Parsed output
+# -----------------------
+left_col, right_col = st.columns([1, 1])
+
+with left_col:
+    st.subheader("Paste Listing Text")
+
+    btn1, btn2, btn3 = st.columns(3)
+
+    with btn1:
+        if st.button("Load Sample 1"):
+            st.session_state.raw_text = load_text_file("data/app_listing_1.txt")
+            st.session_state.parsed_listing = None
+
+    with btn2:
+        if st.button("Load Sample 2"):
+            st.session_state.raw_text = load_text_file("data/app_listing_2.txt")
+            st.session_state.parsed_listing = None
+
+    with btn3:
+        if st.button("Clear Text"):
+            st.session_state.raw_text = ""
+            st.session_state.parsed_listing = None
+
+    raw_text = st.text_area(
+        "Paste apartment listing text here",
+        value=st.session_state.raw_text,
+        height=320,
+        placeholder="Paste copied apartment listing text here...",
+    )
+
+    if st.button("Extract Data", type="primary"):
+        if raw_text.strip():
+            parsed = parse_apartment_listing(raw_text)
+            st.session_state.parsed_listing = parsed
+            st.session_state.raw_text = raw_text
+        else:
+            st.warning("Please paste text or load a sample listing first.")
+
+with right_col:
+    st.subheader("Extracted Listing Details")
+
+    parsed_listing = st.session_state.parsed_listing
+
+    if parsed_listing:
+        st.write(f"**Property Title:** {parsed_listing.get('property_title') or 'N/A'}")
+        st.write(f"**Floorplan Name:** {parsed_listing.get('floorplan_name') or 'N/A'}")
+        st.write(f"**Beds:** {parsed_listing.get('beds') or 'N/A'}")
+        st.write(f"**Baths:** {parsed_listing.get('baths') or 'N/A'}")
+        st.write(f"**Floorplan Price Range:** {parsed_listing.get('floorplan_price_range') or 'N/A'}")
+        st.write(f"**Floorplan Sq Ft Range:** {parsed_listing.get('floorplan_sqft_range') or 'N/A'}")
+        st.write(f"**Has Den:** {'Yes' if parsed_listing.get('floorplan_has_den') else 'No'}")
+
+        st.markdown("### Amenities")
+        st.write(format_list_for_display(parsed_listing.get("amenities", [])))
+
+        st.markdown("### Apartment Features")
+        st.write(format_list_for_display(parsed_listing.get("apartment_features", [])))
+
+        st.markdown("### Walkability")
+        walkability = parsed_listing.get("walkability", {}) or {}
+        st.write(
+            f"**Walk Score:** "
+            f"{walkability.get('walk_score') if walkability.get('walk_score') is not None else 'N/A'}"
+            f"{f' ({walkability.get('walk_label')})' if walkability.get('walk_label') else ''}"
+        )
+        st.write(
+            f"**Transit Score:** "
+            f"{walkability.get('transit_score') if walkability.get('transit_score') is not None else 'N/A'}"
+            f"{f' ({walkability.get('transit_label')})' if walkability.get('transit_label') else ''}"
+        )
+        st.write(
+            f"**Bike Score:** "
+            f"{walkability.get('bike_score') if walkability.get('bike_score') is not None else 'N/A'}"
+            f"{f' ({walkability.get('bike_label')})' if walkability.get('bike_label') else ''}"
+        )
+
+        units = parsed_listing.get("units", [])
+        st.write(f"**Units Parsed:** {len(units)}")
+
+        if units:
+            unit_df = pd.DataFrame(units)
+            st.dataframe(unit_df, use_container_width=True)
+
+            if st.button("Add Units to Comparison Table"):
+                rows = build_comparison_rows(parsed_listing)
+                st.session_state.comparison_rows.extend(rows)
+                st.success(f"Added {len(rows)} unit rows to comparison table.")
+        else:
+            st.warning("No unit rows were parsed from this listing.")
+
+        with st.expander("Show parsed JSON"):
+            st.json(parsed_listing)
+>>>>>>> e31cefd3d47d57828e1a4c17f8347ee6c06648b7
     else:
         st.caption("Add `demo.mp4` to this project folder to show your screen recording here.")
 
