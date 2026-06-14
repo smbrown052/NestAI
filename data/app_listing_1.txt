@@ -1,68 +1,4 @@
-import os
-import streamlit as st
-import pandas as pd
-from text_parser import parse_apartment_text, filter_units_by_request
 
-st.set_page_config(page_title="Nest AI", page_icon="🏠", layout="wide")
-
-st.markdown("""
-<style>
-.block-container {
-    padding-top: 2rem;
-    padding-bottom: 3rem;
-}
-.hero {
-    background: linear-gradient(135deg, #fffaf4 0%, #e9f1e6 100%);
-    padding: 2rem;
-    border-radius: 24px;
-    border: 1px solid #e3ddd4;
-    margin-bottom: 1rem;
-    box-shadow: 0 8px 24px rgba(80, 70, 60, 0.08);
-}
-.hero h1 {
-    font-size: 3.2rem;
-    margin-bottom: 0.25rem;
-    color: #2f3a2f;
-}
-.hero p {
-    font-size: 1.1rem;
-    color: #6c6258;
-}
-.section-card {
-    background-color: white;
-    padding: 1.5rem;
-    border-radius: 20px;
-    border: 1px solid #e7e0d8;
-    margin-top: 1rem;
-    box-shadow: 0 4px 14px rgba(80, 70, 60, 0.05);
-}
-.stButton > button {
-    background-color: #50624f;
-    color: white;
-    border-radius: 999px;
-    border: none;
-    padding: 0.65rem 1.4rem;
-    font-weight: 600;
-}
-.stButton > button:hover {
-    background-color: #39483a;
-    color: white;
-}
-.small-muted {
-    color: #7a7168;
-    font-size: 0.95rem;
-}
-</style>
-""", unsafe_allow_html=True)
-
-
-def format_travel(mode, minutes):
-    if mode and minutes:
-        return f"{mode.title()} · {minutes} min"
-    return "—"
-
-
-AVALON_EXAMPLE = """
 Map
  English
 Apartments.com Logo
@@ -70,8 +6,6 @@ Manage Rentals
 Sign Up
 /
 Sign In
-Prevto previous listing
-Nextto next listing
 
  
  
@@ -130,13 +64,13 @@ Patio
 Business Center
 Pricing & Floor Plans
 filter results by bedrooms
+Matches
 All
 1 Bedroom
 2 Bedrooms
 Cost Calculator: Estimate your monthly and one-time fees. 
 650
-$2,459 – $2,460
-Total Monthly Price
+$2,378 – $2,379
 1 Bed
 1 Bath
 650 Sq Ft
@@ -145,27 +79,26 @@ View 650Floor Plan Details
 Tour Floor Plan
 2 Available units
 Unit
-Total Price
+Base Price
 Sq Ft
 Availability
 Unit Details
 Unit
 0535
 price
-$2,459
+$2,378
 square feet
 650
 availibilityJun 15
 Unit
 1235
 price
-$2,460
+$2,379
 square feet
 650
 availibilityJun 28
 724-b
-$2,576 – $2,616
-Total Monthly Price
+$2,470 – $2,535
 1 Bed
 1 Bath
 724 Sq Ft
@@ -174,36 +107,35 @@ View 724-bFloor Plan Details
 Tour Floor Plan
 6 Available units
 Unit
-Total Price
+Base Price
 Sq Ft
 Availability
 Unit Details
 Unit
 1110
 price
-$2,606
+$2,525
 square feet
 724
 availibilityJun 15
 Unit
 1009
 price
-$2,586
+$2,505
 square feet
 724
 availibilityJun 28
 Unit
 1208
 price
-$2,596
+$2,515
 square feet
 724
 availibilityJul 31
 Show More Units (3)
 
 665
-$2,571 – $2,841
-Total Monthly Price
+$2,490 – $2,760
 1 Bed
 1 Bath
 665 Sq Ft
@@ -212,36 +144,35 @@ View 665Floor Plan Details
 Tour Floor Plan
 4 Available units
 Unit
-Total Price
+Base Price
 Sq Ft
 Availability
 Unit Details
 Unit
 1720
 price
-$2,571
+$2,490
 square feet
 665
 availibilityJun 15
 Unit
 0520
 price
-$2,590
+$2,509
 square feet
 665
 availibilityJun 15
 Unit
 0620
 price
-$2,631
+$2,550
 square feet
 665
 availibilityJul 8
 Show More Units (1)
 
 740-a
-$2,577 – $2,672
-Total Monthly Price
+$2,496 – $2,591
 1 Bed
 1 Bath
 740 Sq Ft
@@ -250,36 +181,35 @@ View 740-aFloor Plan Details
 Tour Floor Plan
 4 Available units
 Unit
-Total Price
+Base Price
 Sq Ft
 Availability
 Unit Details
 Unit
 1506
 price
-$2,577
+$2,496
 square feet
 740
 availibilityJun 15
 Unit
 2006
 price
-$2,614
+$2,533
 square feet
 740
 availibilityJun 15
 Unit
 1634
 price
-$2,672
+$2,591
 square feet
 740
 availibilityJul 7
 Show More Units (1)
 
 724-a
-$2,606 – $2,686
-Total Monthly Price
+$2,525 – $2,605
 1 Bed
 1 Bath
 724 Sq Ft
@@ -288,27 +218,26 @@ View 724-aFloor Plan Details
 Tour Floor Plan
 2 Available units
 Unit
-Total Price
+Base Price
 Sq Ft
 Availability
 Unit Details
 Unit
 1104
 price
-$2,606
+$2,525
 square feet
 724
 availibilityJun 15
 Unit
 1406
 price
-$2,686
+$2,605
 square feet
 724
 availibilityJun 15
 755
-$2,612 – $2,757
-Total Monthly Price
+$2,531 – $2,676
 1 Bed
 1 Bath
 755 Sq Ft
@@ -317,36 +246,35 @@ View 755Floor Plan Details
 Tour Floor Plan
 4 Available units
 Unit
-Total Price
+Base Price
 Sq Ft
 Availability
 Unit Details
 Unit
 0927
 price
-$2,612
+$2,531
 square feet
 755
 availibilityJun 15
 Unit
 1913
 price
-$2,694
+$2,613
 square feet
 755
 availibilityJun 16
 Unit
 1127
 price
-$2,642
+$2,561
 square feet
 755
 availibilityJun 27
 Show More Units (1)
 
 745
-$2,651
-Total Monthly Price
+$2,570
 1 Bed
 1 Bath
 745 Sq Ft
@@ -355,20 +283,19 @@ View 745Floor Plan Details
 Tour Floor Plan
 1 Available unit
 Unit
-Total Price
+Base Price
 Sq Ft
 Availability
 Unit Details
 Unit
 1622
 price
-$2,651
+$2,570
 square feet
 745
 availibilityJun 15
 740sf-b
-$2,714 – $2,767
-Total Monthly Price
+$2,633 – $2,686
 1 Bed
 1 Bath
 740 Sq Ft
@@ -377,27 +304,26 @@ View 740sf-bFloor Plan Details
 Tour Floor Plan
 2 Available units
 Unit
-Total Price
+Base Price
 Sq Ft
 Availability
 Unit Details
 Unit
 1808
 price
-$2,767
+$2,686
 square feet
 740
 availibilityJun 15
 Unit
 2032
 price
-$2,714
+$2,633
 square feet
 740
 availibilityAug 21
 800
-$2,766
-Total Monthly Price
+$2,675 – $2,685
 1 Bed
 1 Bath
 800 Sq Ft
@@ -406,20 +332,19 @@ View 800Floor Plan Details
 Tour Floor Plan
 1 Available unit
 Unit
-Total Price
+Base Price
 Sq Ft
 Availability
 Unit Details
 Unit
 1433
 price
-$2,766
+$2,685
 square feet
 800
 availibilityJun 15
 615
-$2,416 – $2,431
-Total Monthly Price
+$2,335 – $2,365
 1 Bed
 1 Bath
 615 Sq Ft
@@ -428,27 +353,26 @@ View 615Floor Plan Details
 Tour Floor Plan
 2 Available units
 Unit
-Total Price
+Base Price
 Sq Ft
 Availability
 Unit Details
 Unit
 1518
 price
-$2,431
+$2,350
 square feet
 615
 availibilityJul 17
 Unit
 0318
 price
-$2,416
+$2,335
 square feet
 615
 availibilityJul 28
 870-a
-$2,888
-Total Monthly Price
+$2,807
 1 Bed
 1 Bath
 870 Sq Ft
@@ -457,20 +381,19 @@ View 870-aFloor Plan Details
 Tour Floor Plan
 1 Available unit
 Unit
-Total Price
+Base Price
 Sq Ft
 Availability
 Unit Details
 Unit
 0438
 price
-$2,888
+$2,807
 square feet
 870
 availibilityJul 25
 525
-$2,321
-Total Monthly Price
+$2,240
 1 Bed
 1 Bath
 525 Sq Ft
@@ -479,20 +402,19 @@ View 525Floor Plan Details
 Tour Floor Plan
 1 Available unit
 Unit
-Total Price
+Base Price
 Sq Ft
 Availability
 Unit Details
 Unit
 0405
 price
-$2,321
+$2,240
 square feet
 525
 availibilityJul 27
 730
-$2,621
-Total Monthly Price
+$2,540
 1 Bed
 1 Bath
 730 Sq Ft
@@ -501,20 +423,19 @@ View 730Floor Plan Details
 Tour Floor Plan
 1 Available unit
 Unit
-Total Price
+Base Price
 Sq Ft
 Availability
 Unit Details
 Unit
 0328
 price
-$2,621
+$2,540
 square feet
 730
 availibilityAug 19
 855
-$2,905 – $2,956
-Total Monthly Price
+$2,824 – $2,875
 1 Bed
 1 Bath
 855 Sq Ft
@@ -523,34 +444,33 @@ View 855Floor Plan Details
 Tour Floor Plan
 3 Available units
 Unit
-Total Price
+Base Price
 Sq Ft
 Availability
 Unit Details
 Unit
 0916
 price
-$2,953
+$2,872
 square feet
 855
 availibilityAug 21
 Unit
 1624
 price
-$2,956
+$2,875
 square feet
 855
 availibilityAug 21
 Unit
 0524
 price
-$2,905
+$2,824
 square feet
 855
 availibilityAug 22
 870-b
-$2,882
-Total Monthly Price
+$2,801
 1 Bed
 1 Bath
 870 Sq Ft
@@ -559,202 +479,17 @@ View 870-bFloor Plan Details
 Tour Floor Plan
 1 Available unit
 Unit
-Total Price
+Base Price
 Sq Ft
 Availability
 Unit Details
 Unit
 0503
 price
-$2,882
+$2,801
 square feet
 870
 availibilityAug 25
-1075
-$3,690 – $3,782
-Total Monthly Price
-2 Beds
-2 Baths
-1,075 Sq Ft
-$300 Deposit
-View 1075Floor Plan Details
-Tour Floor Plan
-2 Available units
-Unit
-Total Price
-Sq Ft
-Availability
-Unit Details
-Unit
-1503
-price
-$3,690
-square feet
-1,075
-availibilityJun 15
-Unit
-1437
-price
-$3,782
-square feet
-1,075
-availibilityJul 17
-1125
-$3,945
-Total Monthly Price
-2 Beds
-2 Baths
-1,125 Sq Ft
-$300 Deposit
-View 1125Floor Plan Details
-Tour Floor Plan
-1 Available unit
-Unit
-Total Price
-Sq Ft
-Availability
-Unit Details
-Unit
-1438
-price
-$3,945
-square feet
-1,125
-availibilityJun 15
-1070
-$3,772 – $3,922
-Total Monthly Price
-2 Beds
-2 Baths
-1,070 Sq Ft
-$300 Deposit
-View 1070Floor Plan Details
-Tour Floor Plan
-3 Available units
-Unit
-Total Price
-Sq Ft
-Availability
-Unit Details
-Unit
-1101
-price
-$3,772
-square feet
-1,070
-availibilityJun 23
-Unit
-1001
-price
-$3,890
-square feet
-1,070
-availibilityJul 15
-Unit
-1201
-price
-$3,922
-square feet
-1,070
-availibilityAug 20
-1030
-$3,679 – $3,883
-Total Monthly Price
-2 Beds
-2 Baths
-1,030 Sq Ft
-$300 Deposit
-View 1030Floor Plan Details
-Tour Floor Plan
-5 Available units
-Unit
-Total Price
-Sq Ft
-Availability
-Unit Details
-Unit
-0528
-price
-$3,808
-square feet
-1,030
-availibilityJul 2
-Unit
-1612
-price
-$3,727
-square feet
-1,030
-availibilityJul 14
-Unit
-1228
-price
-$3,883
-square feet
-1,030
-availibilityJul 30
-Show More Units (2)
-
-1060
-$3,911
-Total Monthly Price
-2 Beds
-2 Baths
-1,060 Sq Ft
-$300 Deposit
-View 1060Floor Plan Details
-Tour Floor Plan
-1 Available unit
-Unit
-Total Price
-Sq Ft
-Availability
-Unit Details
-Unit
-1926
-price
-$3,911
-square feet
-1,060
-availibilityJul 11
-1265
-$3,811 – $4,061
-Total Monthly Price
-2 Beds
-2 Baths
-1,265 Sq Ft
-$300 Deposit
-View 1265Floor Plan Details
-Tour Floor Plan
-4 Available units
-Unit
-Total Price
-Sq Ft
-Availability
-Unit Details
-Unit
-0921
-price
-$4,061
-square feet
-1,265
-availibilityJul 24
-Unit
-0721
-price
-$3,811
-square feet
-1,265
-availibilityJul 29
-Unit
-0621
-price
-$4,036
-square feet
-1,265
-availibilityJul 30
-Show More Units (1)
-
 * Price shown is total price based on community-supplied monthly required fees. Excludes user-selected optional fees and variable or usage-based fees and required charges due at or prior to move-in or at move-out.View Fees and Policies for details. Price, availability, fees, and any applicable rent special are subject to change without notice.
 * Square footage definitions vary. Displayed square footage is approximate.
 Fees and Policies
@@ -853,10 +588,10 @@ Average Prices by Area
 Compare neighborhood and city base rent averages by bedroom.
 
 Clarendon/Courthouse	Arlington, VA
-Studio	$2,333	$2,027
-1 Bedroom	$2,593	$2,377
-2 Bedrooms	$3,749	$3,149
-3 Bedrooms	$4,579	$4,145
+Studio	$2,333	$2,031
+1 Bedroom	$2,593	$2,378
+2 Bedrooms	$3,749	$3,151
+3 Bedrooms	$4,579	$4,151
 Education
 Colleges & Universities			Distance
 George Mason Univ., Arlington
@@ -1034,44 +769,8 @@ Renovated Package I kitchen with white cabinetry, granite countertops, stainless
 
 Models
 
-1 Bedroom
-
-1 Bedroom
-
-1 Bedroom
-
-1 Bedroom
-
-1 Bedroom
-
-1 Bedroom
-
 Nearby Apartments
 Within 50 Miles of Avalon Courthouse Place
-
-View More Communities
-Avalon at Arlington Square
-
-2350 26th Ct
-
-Arlington, VA 22206
-
-$2,022 - $3,672
-Total Monthly Price
-
-1-3 Br
-3.0 mi
-
-Avalon at Foxhall
-
-4100 Massachusetts Ave NW
-
-Washington, DC 20016
-
-$2,115 - $3,429
-
-1-2 Br
-3.1 mi
 
 Avalon Potomac Yard
 
@@ -1086,39 +785,27 @@ Total Monthly Price
 12 Month Lease
 4.5 mi
 
-Avalon Falls Church
+Avalon Towson
 
-6600 Colton Crawford Cir
+2 E Joppa Rd
 
-Falls Church, VA 22042
+Towson, MD 21286
 
-$2,352 - $5,047
-Total Monthly Price
+$1,810 - $3,020
 
-1-3 Br
-4.6 mi
+1-2 Br
+43.9 mi
 
-AVA Wheaton
+Avalon Hunt Valley and Hunt Valley West
 
-2425 Blueridge Ave
+100 Shawan Rd
 
-Silver Spring, MD 20902
+Cockeysville, MD 21030
 
-$1,625 - $3,020
-
-1-3 Br
-10.8 mi
-
-Avalon at Traville
-
-14240 Alta Oaks Dr
-
-Rockville, MD 20850
-
-$1,880 - $3,641
+$1,885 - $3,345
 
 1-3 Br
-15.3 mi
+48.1 mi
 
 Frequently Asked Questions
 Does Avalon Courthouse Place have in-unit laundry?
@@ -1131,16 +818,16 @@ Is parking available at Avalon Courthouse Place?
 Parking is available at Avalon Courthouse Place for $110 - $120 / mo. Contact this property for details.
 
 Which floor plans are available, and what are the price ranges?
-Avalon Courthouse Place has one to two-bedrooms with rent ranges from $2,321/mo. to $4,061/mo.
+Avalon Courthouse Place has one to two-bedrooms with rent ranges from $2,240/mo. to $3,980/mo.
 
 Is Avalon Courthouse Place pet-friendly?
 Yes, Avalon Courthouse Place welcomes pets. Breed restrictions, weight limits, and additional fees may apply. View this property's pet policy.
 
 How much income do I need to rent at Avalon Courthouse Place?
-A good rule of thumb is to spend no more than 30% of your gross income on rent. Based on the lowest available rent of $2,321 for a one-bedroom, you would need to earn about $92,840 per year to qualify. Want to double-check your budget? Calculate how much rent you can afford with our Rent Affordability Calculator.
+A good rule of thumb is to spend no more than 30% of your gross income on rent. Based on the lowest available rent of $2,240 for a one-bedroom, you would need to earn about $89,600 per year to qualify. Want to double-check your budget? Calculate how much rent you can afford with our Rent Affordability Calculator.
 
 Does Avalon Courthouse Place have move-in specials?
-Avalon Courthouse Place is offering Specials for eligible applicants, with rental rates starting at $2,321.
+Avalon Courthouse Place is offering Specials for eligible applicants, with rental rates starting at $2,240.
 
 Does Avalon Courthouse Place offer Matterport 3D tours?
 Yes! Avalon Courthouse Place offers 2 Matterport 3D Tours. Explore different floor plans and see unit level details, all without leaving home.
@@ -1213,5 +900,3 @@ apartments.com
 Equal Housing Opportunity
 
 Apartments.com Ai
-
-"""
