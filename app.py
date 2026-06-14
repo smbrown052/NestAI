@@ -54,7 +54,6 @@ st.markdown("""
 }
 </style>
 """, unsafe_allow_html=True)
-=======
 st.set_page_config(page_title="NestAI", layout="wide")
 
 st.title("NestAI")
@@ -1260,7 +1259,6 @@ with video_left:
     st.markdown("### 🎥 Quick Demo")
     if os.path.exists("C:\\Users\\smbro\\Videos\\Recording 2026-06-14 145634.mp4"):
         st.video("C:\\Users\\smbro\\Videos\\Recording 2026-06-14 145634.mp4")
-=======
 def compute_best_deal_score(row):
     """
     Higher score = better deal.
