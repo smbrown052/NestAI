@@ -1,588 +1,1450 @@
-import pandas as pd
+import os
 import streamlit as st
-from parser.apartment_listing import parse_apartment_listing
-from datetime import datetime, timedelta
-from llm_helpers import parse_preferences_with_llm, generate_rationale_with_llm
-from ranking import rank_listings_with_ai
+import pandas as pd
+from text_parser import parse_apartment_text, filter_units_by_request
 
-st.set_page_config(page_title="Apartment Compare AI", layout="wide")
+st.set_page_config(page_title="Nest AI", page_icon="🏠", layout="wide")
 
-
-def load_text_file(path: str) -> str:
-    try:
-        with open(path, "r", encoding="utf-8") as file:
-            return file.read()
-    except Exception as e:
-        return f"Error loading file: {e}"
-
-
-def money_to_int(value):
-    if not value:
-        return None
-    try:
-        return int(str(value).replace("$", "").replace(",", "").strip())
-    except Exception:
-        return None
-
-
-def sqft_to_int(value):
-    if not value:
-        return None
-    try:
-        return int(str(value).replace(",", "").strip())
-    except Exception:
-        return None
-
-
-def format_list_for_display(values):
-    if not values:
-        return "N/A"
-    if isinstance(values, list):
-        return ", ".join(str(v) for v in values if v)
-    return str(values)
-
-
-def extract_floor_level(unit_label):
-    """
-    Determine floor level from the first digits of the unit number.
-
-    Examples:
-    1205 -> 12
-    703 -> 7
-    305 -> 3
-    """
-    if not unit_label:
-        return None
-
-    label = str(unit_label)
-    digits = "".join(c for c in label if c.isdigit())
-
-    if len(digits) >= 3:
-        return int(digits[:-2])
-    if len(digits) == 2:
-        return int(digits[0])
-    if len(digits) == 1:
-        return int(digits)
-
-    return None
+st.markdown("""
+<style>
+.block-container {
+    padding-top: 2rem;
+    padding-bottom: 3rem;
+}
+.hero {
+    background: linear-gradient(135deg, #fffaf4 0%, #e9f1e6 100%);
+    padding: 2rem;
+    border-radius: 24px;
+    border: 1px solid #e3ddd4;
+    margin-bottom: 1rem;
+    box-shadow: 0 8px 24px rgba(80, 70, 60, 0.08);
+}
+.hero h1 {
+    font-size: 3.2rem;
+    margin-bottom: 0.25rem;
+    color: #2f3a2f;
+}
+.hero p {
+    font-size: 1.1rem;
+    color: #6c6258;
+}
+.section-card {
+    background-color: white;
+    padding: 1.5rem;
+    border-radius: 20px;
+    border: 1px solid #e7e0d8;
+    margin-top: 1rem;
+    box-shadow: 0 4px 14px rgba(80, 70, 60, 0.05);
+}
+.stButton > button {
+    background-color: #50624f;
+    color: white;
+    border-radius: 999px;
+    border: none;
+    padding: 0.65rem 1.4rem;
+    font-weight: 600;
+}
+.stButton > button:hover {
+    background-color: #39483a;
+    color: white;
+}
+.small-muted {
+    color: #7a7168;
+    font-size: 0.95rem;
+}
+</style>
+""", unsafe_allow_html=True)
 
 
-def build_comparison_rows(parsed_listing: dict):
-    property_title = parsed_listing.get("property_title")
-    floorplan_name = parsed_listing.get("floorplan_name")
-    beds = parsed_listing.get("beds")
-    baths = parsed_listing.get("baths")
-    units = parsed_listing.get("units", [])
-
-    amenities = parsed_listing.get("amenities", [])
-    apartment_features = parsed_listing.get("apartment_features", [])
-    walkability = parsed_listing.get("walkability", {}) or {}
-
-    rows = []
-    for unit in units:
-        rent = money_to_int(unit.get("unit_price"))
-        sqft = sqft_to_int(unit.get("unit_sqft"))
-        floor_level = extract_floor_level(unit.get("unit_label"))
-
-        rows.append(
-            {
-                "property_title": property_title,
-                "floorplan_name": floorplan_name,
-                "beds": beds,
-                "baths": baths,
-                "unit_label": unit.get("unit_label"),
-                "floor_level": floor_level,
-                "unit_price": rent,
-                "unit_sqft": sqft,
-                "available_date": unit.get("available_date"),
-                "row_text": unit.get("row_text"),
-                "rent_per_sqft": round(rent / sqft, 2) if rent and sqft else None,
-                "amenities": ", ".join(amenities) if amenities else None,
-                "apartment_features": ", ".join(apartment_features) if apartment_features else None,
-                "walk_score": walkability.get("walk_score"),
-                "transit_score": walkability.get("transit_score"),
-                "bike_score": walkability.get("bike_score"),
-                "walk_label": walkability.get("walk_label"),
-                "transit_label": walkability.get("transit_label"),
-                "bike_label": walkability.get("bike_label"),
-            }
-        )
-    return rows
+def format_travel(mode, minutes):
+    if mode and minutes:
+        return f"{mode.title()} · {minutes} min"
+    return "—"
 
 
-def parse_availability_date(value):
-    """
-    Convert availability text like:
-    - Now
-    - Immediately
-    - Mar 26
-    - Apr 3
-    into a sortable datetime.
-    """
-    if not value:
-        return None
+AVALON_EXAMPLE = """
+Map
+ English
+Apartments.com Logo
+Manage Rentals     
+Sign Up
+/
+Sign In
+Prevto previous listing
+Nextto next listing
 
-    value = str(value).strip()
-
-    if value.lower() in {"now", "immediately"}:
-        return datetime.today()
-
-    try:
-        return datetime.strptime(f"{value} {datetime.today().year}", "%b %d %Y")
-    except ValueError:
-        return None
+ 
+ 
+39 Photos
+2 Virtual Tours
+Contact This Property
+Tour Options: Self-Guided 
 
 
-def compute_best_deal_score(row):
-    """
-    Higher score = better deal.
-    Simple MVP logic:
-    - lower rent is better
-    - higher square footage is better
-    - sooner availability is better
-    """
-    rent = row.get("unit_price")
-    sqft = row.get("unit_sqft")
-    availability_dt = row.get("availability_dt")
+(301) 778-2961
 
-    if pd.isna(rent) or pd.isna(sqft) or rent == 0:
-        return None
+ Language: English
 
-    score = 0
+ Open 9am - 7pm Today
 
-    # Value from space relative to price
-    score += (sqft / rent) * 10000
+View All Hours
 
-    # Bonus for sooner availability
-    if pd.notna(availability_dt):
-        days_until_available = (availability_dt - datetime.today()).days
-        if days_until_available <= 0:
-            score += 15
-        elif days_until_available <= 7:
-            score += 10
-        elif days_until_available <= 30:
-            score += 5
-
-    return round(score, 2)
+Virginia  Arlington County  Arlington  Clarendon/Courthouse 
+Avalon Courthouse Place
+1320 N Veitch St, Arlington, VA 22201
+2.5
+Renter Rating
+13 Reviews
+Verified Listing
+Today
 
 
-if "raw_text" not in st.session_state:
-    st.session_state.raw_text = ""
 
-if "parsed_listing" not in st.session_state:
-    st.session_state.parsed_listing = None
+Property Management Company Logo
+Total Monthly Price
 
-if "comparison_rows" not in st.session_state:
-    st.session_state.comparison_rows = []
+$2,321 - $4,061
 
-if "ai_prefs" not in st.session_state:
-    st.session_state.ai_prefs = None
+Bedrooms
 
-if "ai_rationale" not in st.session_state:
-    st.session_state.ai_rationale = ""
+1 - 2 bd
+
+Bathrooms
+
+1 - 2 ba
+
+Square Feet
+
+525 - 1,265 sq ft
+
+Move-in Special
+
+* Apply by 6/18 for 1 month off! * Terms and conditions apply.
+
+Highlights
+Walker's Paradise
+Furnished Units Available
+Pool
+Walk-In Closets
+Patio
+Business Center
+Pricing & Floor Plans
+filter results by bedrooms
+All
+1 Bedroom
+2 Bedrooms
+Cost Calculator: Estimate your monthly and one-time fees. 
+650
+$2,459 – $2,460
+Total Monthly Price
+1 Bed
+1 Bath
+650 Sq Ft
+$300 Deposit
+View 650Floor Plan Details
+Tour Floor Plan
+2 Available units
+Unit
+Total Price
+Sq Ft
+Availability
+Unit Details
+Unit
+0535
+price
+$2,459
+square feet
+650
+availibilityJun 15
+Unit
+1235
+price
+$2,460
+square feet
+650
+availibilityJun 28
+724-b
+$2,576 – $2,616
+Total Monthly Price
+1 Bed
+1 Bath
+724 Sq Ft
+$300 Deposit
+View 724-bFloor Plan Details
+Tour Floor Plan
+6 Available units
+Unit
+Total Price
+Sq Ft
+Availability
+Unit Details
+Unit
+1110
+price
+$2,606
+square feet
+724
+availibilityJun 15
+Unit
+1009
+price
+$2,586
+square feet
+724
+availibilityJun 28
+Unit
+1208
+price
+$2,596
+square feet
+724
+availibilityJul 31
+Show More Units (3)
+
+665
+$2,571 – $2,841
+Total Monthly Price
+1 Bed
+1 Bath
+665 Sq Ft
+$300 Deposit
+View 665Floor Plan Details
+Tour Floor Plan
+4 Available units
+Unit
+Total Price
+Sq Ft
+Availability
+Unit Details
+Unit
+1720
+price
+$2,571
+square feet
+665
+availibilityJun 15
+Unit
+0520
+price
+$2,590
+square feet
+665
+availibilityJun 15
+Unit
+0620
+price
+$2,631
+square feet
+665
+availibilityJul 8
+Show More Units (1)
+
+740-a
+$2,577 – $2,672
+Total Monthly Price
+1 Bed
+1 Bath
+740 Sq Ft
+$300 Deposit
+View 740-aFloor Plan Details
+Tour Floor Plan
+4 Available units
+Unit
+Total Price
+Sq Ft
+Availability
+Unit Details
+Unit
+1506
+price
+$2,577
+square feet
+740
+availibilityJun 15
+Unit
+2006
+price
+$2,614
+square feet
+740
+availibilityJun 15
+Unit
+1634
+price
+$2,672
+square feet
+740
+availibilityJul 7
+Show More Units (1)
+
+724-a
+$2,606 – $2,686
+Total Monthly Price
+1 Bed
+1 Bath
+724 Sq Ft
+$300 Deposit
+View 724-aFloor Plan Details
+Tour Floor Plan
+2 Available units
+Unit
+Total Price
+Sq Ft
+Availability
+Unit Details
+Unit
+1104
+price
+$2,606
+square feet
+724
+availibilityJun 15
+Unit
+1406
+price
+$2,686
+square feet
+724
+availibilityJun 15
+755
+$2,612 – $2,757
+Total Monthly Price
+1 Bed
+1 Bath
+755 Sq Ft
+$300 Deposit
+View 755Floor Plan Details
+Tour Floor Plan
+4 Available units
+Unit
+Total Price
+Sq Ft
+Availability
+Unit Details
+Unit
+0927
+price
+$2,612
+square feet
+755
+availibilityJun 15
+Unit
+1913
+price
+$2,694
+square feet
+755
+availibilityJun 16
+Unit
+1127
+price
+$2,642
+square feet
+755
+availibilityJun 27
+Show More Units (1)
+
+745
+$2,651
+Total Monthly Price
+1 Bed
+1 Bath
+745 Sq Ft
+$300 Deposit
+View 745Floor Plan Details
+Tour Floor Plan
+1 Available unit
+Unit
+Total Price
+Sq Ft
+Availability
+Unit Details
+Unit
+1622
+price
+$2,651
+square feet
+745
+availibilityJun 15
+740sf-b
+$2,714 – $2,767
+Total Monthly Price
+1 Bed
+1 Bath
+740 Sq Ft
+$300 Deposit
+View 740sf-bFloor Plan Details
+Tour Floor Plan
+2 Available units
+Unit
+Total Price
+Sq Ft
+Availability
+Unit Details
+Unit
+1808
+price
+$2,767
+square feet
+740
+availibilityJun 15
+Unit
+2032
+price
+$2,714
+square feet
+740
+availibilityAug 21
+800
+$2,766
+Total Monthly Price
+1 Bed
+1 Bath
+800 Sq Ft
+$300 Deposit
+View 800Floor Plan Details
+Tour Floor Plan
+1 Available unit
+Unit
+Total Price
+Sq Ft
+Availability
+Unit Details
+Unit
+1433
+price
+$2,766
+square feet
+800
+availibilityJun 15
+615
+$2,416 – $2,431
+Total Monthly Price
+1 Bed
+1 Bath
+615 Sq Ft
+$300 Deposit
+View 615Floor Plan Details
+Tour Floor Plan
+2 Available units
+Unit
+Total Price
+Sq Ft
+Availability
+Unit Details
+Unit
+1518
+price
+$2,431
+square feet
+615
+availibilityJul 17
+Unit
+0318
+price
+$2,416
+square feet
+615
+availibilityJul 28
+870-a
+$2,888
+Total Monthly Price
+1 Bed
+1 Bath
+870 Sq Ft
+$300 Deposit
+View 870-aFloor Plan Details
+Tour Floor Plan
+1 Available unit
+Unit
+Total Price
+Sq Ft
+Availability
+Unit Details
+Unit
+0438
+price
+$2,888
+square feet
+870
+availibilityJul 25
+525
+$2,321
+Total Monthly Price
+1 Bed
+1 Bath
+525 Sq Ft
+$300 Deposit
+View 525Floor Plan Details
+Tour Floor Plan
+1 Available unit
+Unit
+Total Price
+Sq Ft
+Availability
+Unit Details
+Unit
+0405
+price
+$2,321
+square feet
+525
+availibilityJul 27
+730
+$2,621
+Total Monthly Price
+1 Bed
+1 Bath
+730 Sq Ft
+$300 Deposit
+View 730Floor Plan Details
+Tour Floor Plan
+1 Available unit
+Unit
+Total Price
+Sq Ft
+Availability
+Unit Details
+Unit
+0328
+price
+$2,621
+square feet
+730
+availibilityAug 19
+855
+$2,905 – $2,956
+Total Monthly Price
+1 Bed
+1 Bath
+855 Sq Ft
+$300 Deposit
+View 855Floor Plan Details
+Tour Floor Plan
+3 Available units
+Unit
+Total Price
+Sq Ft
+Availability
+Unit Details
+Unit
+0916
+price
+$2,953
+square feet
+855
+availibilityAug 21
+Unit
+1624
+price
+$2,956
+square feet
+855
+availibilityAug 21
+Unit
+0524
+price
+$2,905
+square feet
+855
+availibilityAug 22
+870-b
+$2,882
+Total Monthly Price
+1 Bed
+1 Bath
+870 Sq Ft
+$300 Deposit
+View 870-bFloor Plan Details
+Tour Floor Plan
+1 Available unit
+Unit
+Total Price
+Sq Ft
+Availability
+Unit Details
+Unit
+0503
+price
+$2,882
+square feet
+870
+availibilityAug 25
+1075
+$3,690 – $3,782
+Total Monthly Price
+2 Beds
+2 Baths
+1,075 Sq Ft
+$300 Deposit
+View 1075Floor Plan Details
+Tour Floor Plan
+2 Available units
+Unit
+Total Price
+Sq Ft
+Availability
+Unit Details
+Unit
+1503
+price
+$3,690
+square feet
+1,075
+availibilityJun 15
+Unit
+1437
+price
+$3,782
+square feet
+1,075
+availibilityJul 17
+1125
+$3,945
+Total Monthly Price
+2 Beds
+2 Baths
+1,125 Sq Ft
+$300 Deposit
+View 1125Floor Plan Details
+Tour Floor Plan
+1 Available unit
+Unit
+Total Price
+Sq Ft
+Availability
+Unit Details
+Unit
+1438
+price
+$3,945
+square feet
+1,125
+availibilityJun 15
+1070
+$3,772 – $3,922
+Total Monthly Price
+2 Beds
+2 Baths
+1,070 Sq Ft
+$300 Deposit
+View 1070Floor Plan Details
+Tour Floor Plan
+3 Available units
+Unit
+Total Price
+Sq Ft
+Availability
+Unit Details
+Unit
+1101
+price
+$3,772
+square feet
+1,070
+availibilityJun 23
+Unit
+1001
+price
+$3,890
+square feet
+1,070
+availibilityJul 15
+Unit
+1201
+price
+$3,922
+square feet
+1,070
+availibilityAug 20
+1030
+$3,679 – $3,883
+Total Monthly Price
+2 Beds
+2 Baths
+1,030 Sq Ft
+$300 Deposit
+View 1030Floor Plan Details
+Tour Floor Plan
+5 Available units
+Unit
+Total Price
+Sq Ft
+Availability
+Unit Details
+Unit
+0528
+price
+$3,808
+square feet
+1,030
+availibilityJul 2
+Unit
+1612
+price
+$3,727
+square feet
+1,030
+availibilityJul 14
+Unit
+1228
+price
+$3,883
+square feet
+1,030
+availibilityJul 30
+Show More Units (2)
+
+1060
+$3,911
+Total Monthly Price
+2 Beds
+2 Baths
+1,060 Sq Ft
+$300 Deposit
+View 1060Floor Plan Details
+Tour Floor Plan
+1 Available unit
+Unit
+Total Price
+Sq Ft
+Availability
+Unit Details
+Unit
+1926
+price
+$3,911
+square feet
+1,060
+availibilityJul 11
+1265
+$3,811 – $4,061
+Total Monthly Price
+2 Beds
+2 Baths
+1,265 Sq Ft
+$300 Deposit
+View 1265Floor Plan Details
+Tour Floor Plan
+4 Available units
+Unit
+Total Price
+Sq Ft
+Availability
+Unit Details
+Unit
+0921
+price
+$4,061
+square feet
+1,265
+availibilityJul 24
+Unit
+0721
+price
+$3,811
+square feet
+1,265
+availibilityJul 29
+Unit
+0621
+price
+$4,036
+square feet
+1,265
+availibilityJul 30
+Show More Units (1)
+
+* Price shown is total price based on community-supplied monthly required fees. Excludes user-selected optional fees and variable or usage-based fees and required charges due at or prior to move-in or at move-out.View Fees and Policies for details. Price, availability, fees, and any applicable rent special are subject to change without notice.
+* Square footage definitions vary. Displayed square footage is approximate.
+Fees and Policies
+The fees listed below are community-provided and may exclude utilities or add-ons. All payments are made directly to the property and are non-refundable unless otherwise specified. Use the Cost Calculator to determine costs based on your needs.
+
+Required Fees Pets Parking Storage
+Utilities & Essentials
+Technology Connect
+$81 / mo
+One-Time Basics
+Due at Application
+Application Fees
+$50
+Due at Move-In
+Security Deposit
+$300
+Common Area/Amenities
+$500
+Property Fee Disclaimer: Based on community-supplied data and independent market research. Subject to change without notice. May exclude fees for mandatory or optional services and usage-based utilities.
+
+Details
+Utilities Included
+Trash Removal
+Lease Options
+2 - 12 Month Leases
+Short term lease
+Property Information
+Built in 1999
+564 units/20 stories
+Furnished Units Available
+Matterport 3D Tours
+Interior
+
+1BR Vacant
+1/2
+
+About Avalon Courthouse Place
+Avalon Courthouse Place, a short walk to the Courthouse Metro, offers spacious furnished and unfurnished one and two bedroom Arlington apartments with excellent amenities like private patios, large walk-in closets, plush wall-to-wall carpeting, separate dining rooms and deluxe kitchens. Our Furnished+ homes come outfitted with essential stylish furniture plus all utilities, including cable and WiFi, are included in your rent. Superb community facilities include a split-level pool, a high-tech business center, a library, the sports club and much more. The combination of amazing features and a professional on-site staff makes Avalon Courthouse Place the ideal choice.
+
+Avalon Courthouse Place is an apartment community located in Arlington County and the 22201 ZIP Code. This area is served by the Arlington County Public Schools attendance zone.
+
+Unique Features
+
+$500 Amenity Fee
+Tech Package W/ High-speed Wifi And More
+Contact
+(301) 778-2961
+View Property Website
+Language: English
+Open 9am - 7pm Today
+View All HoursView All Hours
+Property Management Company Logo
+Community Amenities
+Furnished Units Available
+Business Center
+Pool
+Apartment Features
+Washer/Dryer
+
+Air Conditioning
+
+Walk-In Closets
+
+Microwave
+
+Wi-Fi
+Washer/Dryer
+Air Conditioning
+Cable Ready
+Disposal
+Kitchen
+Microwave
+Dining Room
+Walk-In Closets
+Furnished
+Patio
+Location
+1320 N Veitch St, Arlington, VA 22201
+ Get Directions
+Schools
+Restaurants
+Groceries
+Coffee
+Banks
+Shops
+Fitness
+Add a Commute
+Neighborhood
+
+In many ways, Arlington’s Clarendon/Courthouse neighborhood leads a double life. On the one hand, the mix of upscale single-family homes and swanky apartments combined with the super-convenient access to Washington (just a mile away and served by multiple Metro stops) make this an ideal location for DC-area commuters seeking a more suburban home environment. The abundance of parks and playgrounds reflects the family-friendly nature of the community, and the local public schools are among the best in the region. Parts of the neighborhood also contain several corporate high-rises, giving many folks the option of walking to work.
+
+However, Clarendon/Courthouse also has a lively, fun side. The neighborhood is generally known as the nightlife capital of Arlington – the robust bar and club scene along Clarendon Avenue attracts partiers from across the DC area on weekends.
+
+Learn more about living in Clarendon/Courthouse  
+Average Prices by Area
+Compare neighborhood and city base rent averages by bedroom.
+
+Clarendon/Courthouse	Arlington, VA
+Studio	$2,333	$2,027
+1 Bedroom	$2,593	$2,377
+2 Bedrooms	$3,749	$3,149
+3 Bedrooms	$4,579	$4,145
+Education
+Colleges & Universities			Distance
+George Mason Univ., Arlington
+Drive:	4 min	1.2 mi
+Georgetown University
+Drive:	7 min	2.8 mi
+GWU, Foggy Bottom
+Drive:	6 min	3.1 mi
+GWU, Mount Vernon
+Drive:	8 min	3.7 mi
+Avalon Courthouse Place is within 4 minutes or 1.2 miles from George Mason Univ., Arlington. It is also near Georgetown University and GWU, Foggy Bottom.
+Schools
+Public Schools Private Schools
+Escuela Key Elementary
+Public Elementary School
+Grades PK-5
+618 Students
+ Nearby
+
+Arlington Science Focus School
+Public Elementary School
+Grades PK-5
+549 Students
+ Attendance Zone
+
+Jefferson Middle
+Public Middle School
+Grades 6-8
+1,053 Students
+ Nearby
+
+Dorothy Hamm Middle
+Public Middle School
+Grades 6-8
+899 Students
+ Attendance Zone
+
+Yorktown High School
+Public High School
+Grades 9-12
+2,577 Students
+ Attendance Zone
+
+School data provided by  
+Transportation
+Transportation options available in Arlington include Court House, Orange,Silver Line Center Platform, located 0.2 mile from Avalon Courthouse Place. Avalon Courthouse Place is near Ronald Reagan Washington Ntl, located 5.8 miles or 11 minutes away, and Washington Dulles International, located 24.4 miles or 40 minutes away.
+
+Transit / Subway			Distance
+Court House, Orange,Silver Line Center Platform	Walk:	3 min	0.2 mi
+Clarendon  	Walk:	12 min	0.6 mi
+Virginia Square-Gmu  	Drive:	4 min	1.5 mi
+Rosslyn   	Drive:	3 min	1.6 mi
+Arlington Cemetery 	Drive:	4 min	2.1 mi
+ 
+Commuter Rail			Distance
+4	Drive:	8 min	4.2 mi
+Lead	Drive:	10 min	5.3 mi
+Union Station      	Drive:	11 min	5.5 mi
+1	Drive:	16 min	6.7 mi
+Alexandria	Drive:	16 min	6.8 mi
+ 
+Airports			Distance
+Ronald Reagan Washington Ntl	Drive:	11 min	5.8 mi
+Washington Dulles International	Drive:	40 min	24.4 mi
+Getting Around
+Exceptionally Walkable
+Walkability
+90
+/ 100
+Good Public Transit
+Transit
+70
+/ 100
+Fairly Drivable
+Drivability
+50
+/ 100
+Moderately Bikeable
+Bikeability
+70
+/ 100
+Scores provided by
 
 
-# -----------------------
-# Header
-# -----------------------
-st.title("Apartment Compare AI")
-st.write("Turn copied apartment listing text into structured comparison data.")
-st.caption("Built for comparing apartment listings copied from restricted websites.")
+Active
+Soundscore™
+69
+/ 100
+Traffic
+
+Active
+Airport
+
+Calm
+Businesses
+
+Busy
+Scores provided by
+
+HowLoud
+Points of Interest
+Time and distance from Avalon Courthouse Place.
+
+Shopping Centers			Distance
+The Crossing Clarendon
+Walk:	8 min	0.4 mi
+Colonial Village Shopping Center
+Walk:	12 min	0.6 mi
+Avalon Courthouse Place has 2 shopping centers within 0.6 mile, which is about a 12-minute walk. The miles and minutes will be for the farthest away property.
+Parks and Recreation			Distance
+Fort Bennett Park and Palisades Trail
+Drive:	3 min	1.1 mi
+David M. Brown Planetarium
+Drive:	5 min	1.7 mi
+Cherry Valley Park
+Drive:	5 min	1.9 mi
+Fort C.F. Smith Park & Historic Site
+Drive:	5 min	2.0 mi
+Theodore Roosevelt Island Park
+Drive:	7 min	3.6 mi
+Avalon Courthouse Place has 5 parks within 3.6 miles, including Fort Bennett Park and Palisades Trail, David M. Brown Planetarium, and Fort C.F. Smith Park & Historic Site.
+Hospitals			Distance
+Capital Hospice
+Drive:	6 min	2.4 mi
+Virginia Hospital Center
+Drive:	7 min	2.8 mi
+MedStar Georgetown University Hospital
+Drive:	8 min	3.0 mi
+Avalon Courthouse Place has 3 hospitals within 3.0 miles, the nearest is Capital Hospice which is 2.4 miles away and a 6 minute drive.
+Military Bases			Distance
+Fort Myer
+Drive:	5 min	2.3 mi
+The Pentagon
+Drive:	5 min	2.8 mi
+Naval Observatory
+Drive:	9 min	4.8 mi
+Avalon Courthouse Place has 3 military bases within 4.8 miles, the nearest is Fort Myer which is 2.3 miles away and a 5 minute drive.
+ 
+ 
+Reviews for Avalon Courthouse Place
+2.5
+Renter Rating
+5 Stars
+1
+4 Stars
+4
+3 Stars
+1
+2 Stars
+2
+1 Star
+5
+Share details of your own experience with this property
+Renter Reviews 13 Reviews
+Avalon Courthouse Place Photos
+
+Renovated Package II kitchen with white cabinetry, grey quartz countertops, grey subway tile backsplash, stainless steel appliances, and hard surface flooring
 
 
-# -----------------------
-# Input / Parsed output
-# -----------------------
-left_col, right_col = st.columns([1, 1])
+1BR Vacant
 
-with left_col:
-    st.subheader("Paste Listing Text")
+Renovated Package II kitchen and living room with hard surface flooring
 
-    btn1, btn2, btn3 = st.columns(3)
+Renovated Package II living room with hard surface flooring
 
-    with btn1:
-        if st.button("Load Sample 1"):
-            st.session_state.raw_text = load_text_file("data/app_listing_1.txt")
-            st.session_state.parsed_listing = None
+Renovated Package II bedroom with hard surface flooring
 
-    with btn2:
-        if st.button("Load Sample 2"):
-            st.session_state.raw_text = load_text_file("data/app_listing_2.txt")
-            st.session_state.parsed_listing = None
+Walk-in closet
 
-    with btn3:
-        if st.button("Clear Text"):
-            st.session_state.raw_text = ""
-            st.session_state.parsed_listing = None
+Renovated Package II bath with white cabinetry, grey quartz countertops, and hard surface flooring
 
-    raw_text = st.text_area(
-        "Paste apartment listing text here",
-        value=st.session_state.raw_text,
-        height=320,
-        placeholder="Paste copied apartment listing text here...",
-    )
+Renovated Package I kitchen with white cabinetry, granite countertops, stainless steel appliances, and hard surface flooring
 
-    if st.button("Extract Data", type="primary"):
-        if raw_text.strip():
-            parsed = parse_apartment_listing(raw_text)
-            st.session_state.parsed_listing = parsed
-            st.session_state.raw_text = raw_text
-        else:
-            st.warning("Please paste text or load a sample listing first.")
+Renovated Package I kitchen with white cabinetry, granite countertops, stainless steel appliances, and hard surface flooring
 
-with right_col:
-    st.subheader("Extracted Listing Details")
+Models
 
-    parsed_listing = st.session_state.parsed_listing
+1 Bedroom
 
-    if parsed_listing:
-        st.write(f"**Property Title:** {parsed_listing.get('property_title') or 'N/A'}")
-        st.write(f"**Floorplan Name:** {parsed_listing.get('floorplan_name') or 'N/A'}")
-        st.write(f"**Beds:** {parsed_listing.get('beds') or 'N/A'}")
-        st.write(f"**Baths:** {parsed_listing.get('baths') or 'N/A'}")
-        st.write(f"**Floorplan Price Range:** {parsed_listing.get('floorplan_price_range') or 'N/A'}")
-        st.write(f"**Floorplan Sq Ft Range:** {parsed_listing.get('floorplan_sqft_range') or 'N/A'}")
-        st.write(f"**Has Den:** {'Yes' if parsed_listing.get('floorplan_has_den') else 'No'}")
+1 Bedroom
 
-        st.markdown("### Amenities")
-        st.write(format_list_for_display(parsed_listing.get("amenities", [])))
+1 Bedroom
 
-        st.markdown("### Apartment Features")
-        st.write(format_list_for_display(parsed_listing.get("apartment_features", [])))
+1 Bedroom
 
-        st.markdown("### Walkability")
-        walkability = parsed_listing.get("walkability", {}) or {}
-        st.write(
-            f"**Walk Score:** "
-            f"{walkability.get('walk_score') if walkability.get('walk_score') is not None else 'N/A'}"
-            f"{f' ({walkability.get('walk_label')})' if walkability.get('walk_label') else ''}"
-        )
-        st.write(
-            f"**Transit Score:** "
-            f"{walkability.get('transit_score') if walkability.get('transit_score') is not None else 'N/A'}"
-            f"{f' ({walkability.get('transit_label')})' if walkability.get('transit_label') else ''}"
-        )
-        st.write(
-            f"**Bike Score:** "
-            f"{walkability.get('bike_score') if walkability.get('bike_score') is not None else 'N/A'}"
-            f"{f' ({walkability.get('bike_label')})' if walkability.get('bike_label') else ''}"
-        )
+1 Bedroom
 
-        units = parsed_listing.get("units", [])
-        st.write(f"**Units Parsed:** {len(units)}")
+1 Bedroom
 
-        if units:
-            unit_df = pd.DataFrame(units)
-            st.dataframe(unit_df, use_container_width=True)
+Nearby Apartments
+Within 50 Miles of Avalon Courthouse Place
 
-            if st.button("Add Units to Comparison Table"):
-                rows = build_comparison_rows(parsed_listing)
-                st.session_state.comparison_rows.extend(rows)
-                st.success(f"Added {len(rows)} unit rows to comparison table.")
-        else:
-            st.warning("No unit rows were parsed from this listing.")
+View More Communities
+Avalon at Arlington Square
 
-        with st.expander("Show parsed JSON"):
-            st.json(parsed_listing)
+2350 26th Ct
+
+Arlington, VA 22206
+
+$2,022 - $3,672
+Total Monthly Price
+
+1-3 Br
+3.0 mi
+
+Avalon at Foxhall
+
+4100 Massachusetts Ave NW
+
+Washington, DC 20016
+
+$2,115 - $3,429
+
+1-2 Br
+3.1 mi
+
+Avalon Potomac Yard
+
+731 Seaton Ave
+
+Alexandria, VA 22305
+
+$2,416 - $4,337
+Total Monthly Price
+
+1-2 Br
+12 Month Lease
+4.5 mi
+
+Avalon Falls Church
+
+6600 Colton Crawford Cir
+
+Falls Church, VA 22042
+
+$2,352 - $5,047
+Total Monthly Price
+
+1-3 Br
+4.6 mi
+
+AVA Wheaton
+
+2425 Blueridge Ave
+
+Silver Spring, MD 20902
+
+$1,625 - $3,020
+
+1-3 Br
+10.8 mi
+
+Avalon at Traville
+
+14240 Alta Oaks Dr
+
+Rockville, MD 20850
+
+$1,880 - $3,641
+
+1-3 Br
+15.3 mi
+
+Frequently Asked Questions
+Does Avalon Courthouse Place have in-unit laundry?
+Avalon Courthouse Place has units with in‑unit washers and dryers, making laundry day simple for residents.
+
+What utilities are included in rent at Avalon Courthouse Place?
+Avalon Courthouse Place includes trash removal in rent. Residents are responsible for any other utilities not listed.
+
+Is parking available at Avalon Courthouse Place?
+Parking is available at Avalon Courthouse Place for $110 - $120 / mo. Contact this property for details.
+
+Which floor plans are available, and what are the price ranges?
+Avalon Courthouse Place has one to two-bedrooms with rent ranges from $2,321/mo. to $4,061/mo.
+
+Is Avalon Courthouse Place pet-friendly?
+Yes, Avalon Courthouse Place welcomes pets. Breed restrictions, weight limits, and additional fees may apply. View this property's pet policy.
+
+How much income do I need to rent at Avalon Courthouse Place?
+A good rule of thumb is to spend no more than 30% of your gross income on rent. Based on the lowest available rent of $2,321 for a one-bedroom, you would need to earn about $92,840 per year to qualify. Want to double-check your budget? Calculate how much rent you can afford with our Rent Affordability Calculator.
+
+Does Avalon Courthouse Place have move-in specials?
+Avalon Courthouse Place is offering Specials for eligible applicants, with rental rates starting at $2,321.
+
+Does Avalon Courthouse Place offer Matterport 3D tours?
+Yes! Avalon Courthouse Place offers 2 Matterport 3D Tours. Explore different floor plans and see unit level details, all without leaving home.
+
+Report an Issue  Print  Get Directions 
+Try These Popular Nearby Searches
+Cities
+
+Rosslyn Rentals
+Seven Corners Rentals
+Bailey's Crossroads Rentals
+Lake Barcroft Rentals
+Falls Church Rentals
+ 
+Search by Bedrooms
+
+Studio Apartments in Arlington
+1 Bedroom Apartments in Arlington
+2 Bedroom Apartments in Arlington
+3 Bedroom Apartments in Arlington
+Rooms for Rent in Arlington
+Other Rental Types
+
+Arlington Lofts for Rent
+Arlington Houses for Rent
+Arlington Condos for Rent
+Arlington Townhomes for Rent
+Private Landlord Rentals Arlington
+Arlington Duplex Rentals
+22201 Houses for Rent
+22201 Condos for Rent
+22201 Townhomes for Rent
+ 
+Stay on Budget
+
+Arlington Apartments Under $900
+Arlington Apartments Under $1,000
+Arlington Apartments Under $1,100
+Arlington Apartments Under $1,200
+Arlington Apartments Under $1,300
+Arlington Apartments Under $1,400
+Arlington Apartments Under $1,500
+Arlington Apartments Under $2,000
+ 
+Filter by Popular Amenities
+
+Pet Friendly Apartments in Arlington
+Furnished Apartments in Arlington
+Apartments with Washer & Dryer in Arlington
+Wheelchair Accessible Apartments in Arlington
+Apartments with EV Charging in Arlington
+Apartments with Balcony in Arlington
+Apartments with Air Conditioning in Arlington
+Arlington Apartments with Virtual Tours
+ 
+Find Specialty Housing
+
+Student Housing in Arlington
+Arlington Low Income Housing
+Senior Housing in Arlington
+Short Term Rentals in Arlington
+Luxury Apartments in Arlington
+Cheap Apartments in Arlington
+Corporate Housing in Arlington
+Move-In Specials in Arlington
+New Apartments in Arlington
+About Us Advertise Legal Notices Privacy Notice Avoid Scams Accessibility Calculate Rent Affordability Renterverse Sitemap
+apartments.com
+© 2026 CoStar Group, Inc.
+Equal Housing Opportunity
+
+Apartments.com Ai
+
+"""
+
+for key, default in {
+    "listing_text": "",
+    "filtered_df": pd.DataFrame(),
+    "comparison_df": pd.DataFrame(),
+    "parsed_df": pd.DataFrame(),
+    "last_result": None,
+}.items():
+    if key not in st.session_state:
+        st.session_state[key] = default
+
+
+st.markdown("""
+<div class="hero">
+    <h1>🏠 Nest AI</h1>
+    <p>
+    Find your next apartment in seconds. Compare floor plans, pricing,
+    square footage, metro access, and amenities without building spreadsheets.
+    </p>
+</div>
+""", unsafe_allow_html=True)
+
+with st.expander("Why Nest AI?", expanded=True):
+    st.write("""
+Apartment hunting often means comparing dozens of tabs, prices, floor plans, fees, locations, and availability dates manually.
+
+Nest AI turns unstructured Apartments.com listing text into structured, filterable, ranked recommendations — helping renters make faster, clearer decisions.
+""")
+
+st.info("""
+🚀 **Try an example or get your own.**
+
+Go to an Apartments.com listing, press **Ctrl + A**, then **Ctrl + C**, paste everything below, and let the magic happen.
+""")
+
+video_left, video_right = st.columns([0.45, 0.55])
+with video_left:
+    st.markdown("### 🎥 Quick Demo")
+    if os.path.exists("C:\\Users\\smbro\\Videos\\Recording 2026-06-14 145634.mp4"):
+        st.video("C:\\Users\\smbro\\Videos\\Recording 2026-06-14 145634.mp4")
     else:
-        st.info("No listing parsed yet.")
+        st.caption("Add `demo.mp4` to this project folder to show your screen recording here.")
 
+left, right = st.columns([1.15, 0.85], gap="large")
 
-# -----------------------
-# Comparison table
-# -----------------------
-st.subheader("Comparison Table")
+with left:
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.subheader("1. Paste Listing Text")
 
-if st.session_state.comparison_rows:
-    comparison_df = pd.DataFrame(st.session_state.comparison_rows)
-
-    comparison_df["availability_dt"] = comparison_df["available_date"].apply(parse_availability_date)
-    comparison_df["best_deal_score"] = comparison_df.apply(compute_best_deal_score, axis=1)
-
-    # -----------------------
-    # AI Best Match
-    # -----------------------
-    st.markdown("---")
-    st.subheader("AI Best Match")
-
-    ai_query = st.text_area(
-        "Describe what you want",
-        placeholder="Example: I want the best value studio under $2400 with as much space as possible and available soon",
-        height=100,
-    )
-
-    if st.button("Find Best Matches with AI"):
-        if not ai_query.strip():
-            st.warning("Please describe what you're looking for.")
-        else:
-            try:
-                prefs = parse_preferences_with_llm(ai_query)
-                st.session_state.ai_prefs = prefs
-
-                ai_ranked_df = rank_listings_with_ai(comparison_df, prefs)
-
-                if ai_ranked_df.empty:
-                    st.warning("No listings matched your AI search.")
-                    st.session_state.ai_rationale = ""
-                else:
-                    top_results = ai_ranked_df[
-                        [
-                            "property_title",
-                            "floorplan_name",
-                            "unit_label",
-                            "floor_level",
-                            "beds",
-                            "baths",
-                            "unit_price",
-                            "unit_sqft",
-                            "available_date",
-                            "rent_per_sqft",
-                            "best_deal_score",
-                            "ai_match_score",
-                            "walk_score",
-                            "transit_score",
-                            "bike_score",
-                            "amenities",
-                            "apartment_features",
-                        ]
-                    ].head(3).to_dict(orient="records")
-
-                    rationale = generate_rationale_with_llm(ai_query, prefs, top_results)
-                    st.session_state.ai_rationale = rationale
-
-            except Exception as e:
-                st.error(f"AI matching failed: {e}")
-
-    if st.session_state.ai_prefs:
-        with st.expander("Show parsed AI preferences"):
-            st.json(st.session_state.ai_prefs)
-
-        ai_ranked_df = rank_listings_with_ai(comparison_df, st.session_state.ai_prefs)
-
-        if not ai_ranked_df.empty:
-            ai_display_cols = [
-                "property_title",
-                "floorplan_name",
-                "unit_label",
-                "floor_level",
-                "beds",
-                "baths",
-                "unit_price",
-                "unit_sqft",
-                "available_date",
-                "rent_per_sqft",
-                "best_deal_score",
-                "ai_match_score",
-                "walk_score",
-                "transit_score",
-                "bike_score",
-                "amenities",
-                "apartment_features",
-            ]
-
-            ai_display_df = ai_ranked_df[ai_display_cols].copy()
-
-            ai_display_df["unit_price"] = ai_display_df["unit_price"].apply(
-                lambda x: f"${int(x):,}" if pd.notnull(x) else ""
-            )
-            ai_display_df["rent_per_sqft"] = ai_display_df["rent_per_sqft"].apply(
-                lambda x: f"${x:.2f}" if pd.notnull(x) else ""
-            )
-            ai_display_df["best_deal_score"] = ai_display_df["best_deal_score"].apply(
-                lambda x: f"{x:.1f}" if pd.notnull(x) else ""
-            )
-            ai_display_df["ai_match_score"] = ai_display_df["ai_match_score"].apply(
-                lambda x: f"{x:.1f}" if pd.notnull(x) else ""
-            )
-
-            st.markdown("### AI Top Matches")
-            st.dataframe(ai_display_df.head(10), use_container_width=True)
-
-            if st.session_state.ai_rationale:
-                st.markdown("### Why these ranked highly")
-                st.write(st.session_state.ai_rationale)
-
-    st.markdown("### Filter Listings")
-
-    f1, f2, f3, f4, f5 = st.columns(5)
-
-    with f1:
-        availability_filter = st.selectbox(
-            "Availability",
-            [
-                "All",
-                "Now / Immediately",
-                "Within 7 Days",
-                "Within 30 Days",
-            ],
-        )
-
-    with f2:
-        max_budget = st.slider(
-            "Max Budget ($)",
-            min_value=1000,
-            max_value=6000,
-            value=4000,
-            step=50,
-        )
-
-    with f3:
-        min_sqft = st.slider(
-            "Minimum Sq Ft",
-            min_value=300,
-            max_value=1500,
-            value=500,
-            step=25,
-        )
-
-    with f4:
-        min_floor = st.slider(
-            "Minimum Floor",
-            min_value=1,
-            max_value=40,
-            value=1,
-            step=1,
-        )
-
-    with f5:
-        sort_option = st.selectbox(
-            "Sort By",
-            [
-                "Best Deal Score",
-                "Price per Sq Ft",
-                "Lowest Price",
-                "Largest Unit",
-                "Soonest Available",
-                "Highest Floor",
-                "Best Walk Score",
-            ],
-        )
-
-    filtered_df = comparison_df.copy()
-
-    today = datetime.today()
-    seven_days = today + timedelta(days=7)
-    thirty_days = today + timedelta(days=30)
-
-    filtered_df = filtered_df[
-        filtered_df["unit_price"].isna() | (filtered_df["unit_price"] <= max_budget)
-    ]
-
-    filtered_df = filtered_df[
-        filtered_df["unit_sqft"].isna() | (filtered_df["unit_sqft"] >= min_sqft)
-    ]
-
-    filtered_df = filtered_df[
-        filtered_df["floor_level"].isna() | (filtered_df["floor_level"] >= min_floor)
-    ]
-
-    if availability_filter == "Now / Immediately":
-        filtered_df = filtered_df[
-            filtered_df["available_date"].astype(str).str.lower().isin(["now", "immediately"])
-        ]
-    elif availability_filter == "Within 7 Days":
-        filtered_df = filtered_df[
-            filtered_df["availability_dt"].notna()
-            & (filtered_df["availability_dt"] <= seven_days)
-        ]
-    elif availability_filter == "Within 30 Days":
-        filtered_df = filtered_df[
-            filtered_df["availability_dt"].notna()
-            & (filtered_df["availability_dt"] <= thirty_days)
-        ]
-
-    if sort_option == "Best Deal Score":
-        filtered_df = filtered_df.sort_values("best_deal_score", ascending=False)
-    elif sort_option == "Price per Sq Ft":
-        filtered_df = filtered_df.sort_values("rent_per_sqft", ascending=True)
-    elif sort_option == "Lowest Price":
-        filtered_df = filtered_df.sort_values("unit_price", ascending=True)
-    elif sort_option == "Largest Unit":
-        filtered_df = filtered_df.sort_values("unit_sqft", ascending=False)
-    elif sort_option == "Soonest Available":
-        filtered_df = filtered_df.sort_values("availability_dt", ascending=True)
-    elif sort_option == "Highest Floor":
-        filtered_df = filtered_df.sort_values("floor_level", ascending=False)
-    elif sort_option == "Best Walk Score":
-        filtered_df = filtered_df.sort_values("walk_score", ascending=False)
-
-    display_cols = [
-        "property_title",
-        "floorplan_name",
-        "unit_label",
-        "floor_level",
-        "unit_price",
-        "unit_sqft",
-        "available_date",
-        "rent_per_sqft",
-        "best_deal_score",
-        "walk_score",
-        "transit_score",
-        "bike_score",
-        "amenities",
-        "apartment_features",
-    ]
-
-    display_df = filtered_df[display_cols].copy()
-
-    if "unit_price" in display_df.columns:
-        display_df["unit_price"] = display_df["unit_price"].apply(
-            lambda x: f"${int(x):,}" if pd.notnull(x) else ""
-        )
-
-    if "rent_per_sqft" in display_df.columns:
-        display_df["rent_per_sqft"] = display_df["rent_per_sqft"].apply(
-            lambda x: f"${x:.2f}" if pd.notnull(x) else ""
-        )
-
-    if "best_deal_score" in display_df.columns:
-        display_df["best_deal_score"] = display_df["best_deal_score"].apply(
-            lambda x: f"{x:.1f}" if pd.notnull(x) else ""
-        )
-
-    st.dataframe(display_df, use_container_width=True)
-
-    c1, c2, c3 = st.columns(3)
-
-    valid_rent = filtered_df.dropna(subset=["unit_price"])
-    valid_sqft = filtered_df.dropna(subset=["unit_sqft"])
-    valid_value = filtered_df.dropna(subset=["rent_per_sqft"])
+    c1, c2 = st.columns(2)
 
     with c1:
-        if not valid_rent.empty:
-            lowest = valid_rent.loc[valid_rent["unit_price"].idxmin()]
-            st.metric("Lowest Rent", f"${int(lowest['unit_price']):,}")
-        else:
-            st.metric("Lowest Rent", "N/A")
-
-    with c2:
-        if not valid_sqft.empty:
-            largest = valid_sqft.loc[valid_sqft["unit_sqft"].idxmax()]
-            st.metric("Largest Unit", f"{int(largest['unit_sqft'])} sq ft")
-        else:
-            st.metric("Largest Unit", "N/A")
-
-    with c3:
-        if not valid_value.empty:
-            best_value = valid_value.loc[valid_value["rent_per_sqft"].idxmin()]
-            st.metric("Best Value", f"${best_value['rent_per_sqft']}/sq ft")
-        else:
-            st.metric("Best Value", "N/A")
-
-    clear1, clear2 = st.columns(2)
-
-    with clear1:
-        if st.button("Remove Last Unit Row"):
-            if st.session_state.comparison_rows:
-                st.session_state.comparison_rows.pop()
-                st.rerun()
-
-    with clear2:
-        if st.button("Clear Comparison Table"):
-            st.session_state.comparison_rows = []
-            st.session_state.ai_prefs = None
-            st.session_state.ai_rationale = ""
+        if st.button("🏢 Use Avalon Example", use_container_width=True):
+            st.session_state.listing_text = AVALON_EXAMPLE
             st.rerun()
 
+    with c2:
+        if st.button("🧹 Clear Text", use_container_width=True):
+            st.session_state.listing_text = ""
+            st.session_state.last_result = None
+            st.session_state.parsed_df = pd.DataFrame()
+            st.rerun()
+
+    listing_text = st.text_area(
+        "Apartment listing text",
+        key="listing_text",
+        height=420,
+        label_visibility="collapsed"
+    )
+
+    analyze = st.button("✨ Analyze Apartment", use_container_width=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+
+if analyze:
+    result = parse_apartment_text(st.session_state.listing_text)
+    st.session_state.last_result = result
+    st.session_state.parsed_df = pd.DataFrame(result["units"])
+
+
+if st.session_state.last_result:
+    result = st.session_state.last_result
+    building = result.get("building_nearby", {})
+
+    st.markdown("### 🏠 Property Summary")
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Property", result["property_title"] or "Unknown")
+    m2.metric("Units Parsed", result["unit_count"])
+    m3.metric("Nearest Metro", format_travel(building.get("metro_travel_mode"), building.get("metro_min")))
+    m4.metric("Nearest Hospital", format_travel(building.get("hospital_travel_mode"), building.get("hospital_min")))
+
+    st.caption(result["address"])
+
+    if result.get("nearby_places"):
+        with st.expander("View nearby building-level places"):
+            st.dataframe(pd.DataFrame(result["nearby_places"]), use_container_width=True)
+
+    if not st.session_state.parsed_df.empty:
+        st.markdown("### 📋 Parsed Units")
+        st.caption("Units extracted from the current building. Save them, then filter and rank below.")        
+        st.dataframe(st.session_state.parsed_df, use_container_width=True)
+
+        
+
+        if st.button("➕ Save Units", use_container_width=True):
+            st.session_state.comparison_df = pd.concat(
+                [st.session_state.comparison_df, st.session_state.parsed_df],
+                ignore_index=True
+            )
+            st.success("Units added!")
+            st.rerun()
+    else:
+        st.warning("No unit rows were parsed from this listing.")
+
+
+
+st.markdown("### 🔎 Filter & Rank Your Apartments")
+
+if not st.session_state.comparison_df.empty:
+    comp_df = st.session_state.comparison_df.copy()
+
+    min_price = int(comp_df["price_num"].min())
+    max_price = int(comp_df["price_num"].max())
+
+    price_range = st.slider(
+        "Monthly price range",
+        min_value=min_price,
+        max_value=max_price,
+        value=(min_price, max_price),
+        step=50
+    )
+
+    min_sqft = int(comp_df["sqft_num"].min())
+    max_sqft = int(comp_df["sqft_num"].max())
+
+    sqft_range = st.slider(
+        "Square footage range",
+        min_value=min_sqft,
+        max_value=max_sqft,
+        value=(min_sqft, max_sqft),
+        step=25
+    )
+
+
+
+    st.markdown("""
+    <p class="small-muted">
+    Try: “cheapest 1 bed available now” or “2 bed 2 bath within 10 min walk of metro.”
+    </p>
+    """, unsafe_allow_html=True)
+
+
+
+    llm_request = st.text_input(
+        "Ask Nest AI to filter your saved units",
+        value="1 bed not on the first floor within 10 min walk of metro"
+    )
+
+    filtered_comp_df = comp_df[
+        (comp_df["price_num"] >= price_range[0]) &
+        (comp_df["price_num"] <= price_range[1]) &
+        (comp_df["sqft_num"] >= sqft_range[0]) &
+        (comp_df["sqft_num"] <= sqft_range[1])
+    ]
+
+    filtered_comp_df = filter_units_by_request(filtered_comp_df, llm_request)
+
+    st.markdown("### 🏆 Nest AI Recommendations: Compare all your saved units to see what fits your pesonalized needs")
+
+    if filtered_comp_df.empty:
+        st.warning("No saved units match your filters.")
+    else:
+        ranked_df = filtered_comp_df.copy()
+
+        ranked_df["price_score"] = ranked_df["price_num"].rank(ascending=False)
+        ranked_df["space_score"] = ranked_df["sqft_num"].rank(ascending=True)
+
+        if "metro_min" in ranked_df.columns:
+            ranked_df["metro_score"] = ranked_df["metro_min"].fillna(99).rank(ascending=False)
+        else:
+            ranked_df["metro_score"] = 0
+
+        ranked_df["floor_score"] = ranked_df["floor"].fillna(0).rank(ascending=True)
+
+        ranked_df["nest_score"] = (
+            ranked_df["price_score"] * 0.35 +
+            ranked_df["space_score"] * 0.30 +
+            ranked_df["metro_score"] * 0.25 +
+            ranked_df["floor_score"] * 0.10
+        )
+
+        ranked_df = ranked_df.sort_values("nest_score", ascending=False)
+
+        top3 = ranked_df.head(3)
+
+        for i, (_, row) in enumerate(top3.iterrows(), start=1):
+            st.success(
+                f"#{i} • {row.get('property', 'Unknown')} • Unit {row.get('unit', 'N/A')}  \n"
+                f"${int(row.get('price_num', 0)):,} • {int(row.get('sqft_num', 0))} sqft • "
+                f"{row.get('beds', '')} • {row.get('baths', '')}"
+            )
+
+        display_cols = [
+            "property",
+            "floorplan",
+            "unit",
+            "floor",
+            "price",
+            "beds",
+            "baths",
+            "sqft",
+            "has_den",
+            "availability",
+            "nearest_metro",
+            "metro_travel_mode",
+            "metro_min",
+            "nearest_hospital",
+            "hospital_travel_mode",
+            "hospital_min",
+            "nest_score",
+        ]
+
+        display_cols = [col for col in display_cols if col in ranked_df.columns]
+        clean_ranked_df = ranked_df[display_cols].copy()
+
+        if "nest_score" in clean_ranked_df.columns:
+            clean_ranked_df["nest_score"] = clean_ranked_df["nest_score"].round(2)
+
+        st.dataframe(clean_ranked_df, use_container_width=True)
 else:
-    st.info("No saved comparison rows yet.")
+    st.info("Add units to compare first.")

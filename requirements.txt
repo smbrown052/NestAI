@@ -1,4 +1,6 @@
 streamlit
+requests
+beautifulsoup4
 pandas
-python-docx
-altair==4.2.2
+openai
+python-dotenv

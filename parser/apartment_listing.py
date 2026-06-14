@@ -251,37 +251,6 @@ def extract_apartment_features(text):
     return clean_list(items)
 
 
-def extract_walkability(text):
-    walk_score = extract_field(r"\bWalk Score\b[:\s-]*(\d{1,3})", text, re.IGNORECASE)
-    transit_score = extract_field(r"\bTransit Score\b[:\s-]*(\d{1,3})", text, re.IGNORECASE)
-    bike_score = extract_field(r"\bBike Score\b[:\s-]*(\d{1,3})", text, re.IGNORECASE)
-
-    walk_label = extract_field(
-        r"\bWalk Score\b[:\s-]*\d{1,3}\s*[\-\u2013\u2014]?\s*([A-Za-z][A-Za-z ]+)",
-        text,
-        re.IGNORECASE,
-    )
-    transit_label = extract_field(
-        r"\bTransit Score\b[:\s-]*\d{1,3}\s*[\-\u2013\u2014]?\s*([A-Za-z][A-Za-z ]+)",
-        text,
-        re.IGNORECASE,
-    )
-    bike_label = extract_field(
-        r"\bBike Score\b[:\s-]*\d{1,3}\s*[\-\u2013\u2014]?\s*([A-Za-z][A-Za-z ]+)",
-        text,
-        re.IGNORECASE,
-    )
-
-    return {
-        "walk_score": int(walk_score) if walk_score else None,
-        "transit_score": int(transit_score) if transit_score else None,
-        "bike_score": int(bike_score) if bike_score else None,
-        "walk_label": walk_label,
-        "transit_label": transit_label,
-        "bike_label": bike_label,
-    }
-
-
 def parse_unit_records(unit_text):
     pattern = re.compile(
         r"Unit\s*(?P<unit>[A-Za-z]?\d{2,4}[A-Za-z]?)"
@@ -338,15 +307,7 @@ def parse_apartment_listing(raw_text: str) -> dict:
             "floorplan_has_den": False,
             "amenities": [],
             "apartment_features": [],
-            "walkability": {
-                "walk_score": None,
-                "transit_score": None,
-                "bike_score": None,
-                "walk_label": None,
-                "transit_label": None,
-                "bike_label": None,
-            },
-            "units": [],
+             "units": [],
         }
 
     text = normalize_text(raw_text)
@@ -365,7 +326,6 @@ def parse_apartment_listing(raw_text: str) -> dict:
 
     amenities = extract_amenities(text)
     apartment_features = extract_apartment_features(text)
-    walkability = extract_walkability(text)
 
     unit_lines = extract_available_units_section(lines)
     unit_lines = [
@@ -387,6 +347,5 @@ def parse_apartment_listing(raw_text: str) -> dict:
         "floorplan_has_den": floorplan_has_den,
         "amenities": amenities,
         "apartment_features": apartment_features,
-        "walkability": walkability,
         "units": unit_records,
     }
