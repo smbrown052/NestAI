@@ -72,7 +72,7 @@ with left:
 
     c1, c2 = st.columns(2)
 
-    with c1:
+with c1:
     if st.button("🏢 Use Avalon Example", use_container_width=True):
         st.session_state.listing_text = AVALON_EXAMPLE
         st.rerun()
