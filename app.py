@@ -74,7 +74,7 @@ with left:
     c1, c2 = st.columns(2)
 
     with c1:
-        if st.button("🏢 Use Sample Listing", use_container_width=True):
+        if st.button("🏢 Load Example Listing", use_container_width=True):
             with open("data/app_listing_1.txt", "r", encoding="utf-8") as f:
                 st.session_state.listing_text = f.read()
             st.rerun()
@@ -88,7 +88,7 @@ with left:
 
     listing_text = st.text_area(
         "Apartment listing text",
-        value=st.session_state.listing_text,
+        key="listing_text",
         height=420,
         placeholder="Paste copied Apartments.com listing text here..."
     )
