@@ -3,8 +3,7 @@ import streamlit as st
 import pandas as pd
 from text_parser import parse_apartment_text, filter_units_by_request
 
-<<<<<<< HEAD
-st.set_page_config(page_title="Nest AI", page_icon="🏠", layout="wide")
+st.title("Nest AI")
 
 st.markdown("""
 <style>
@@ -60,7 +59,6 @@ st.set_page_config(page_title="NestAI", layout="wide")
 
 st.title("NestAI")
 st.markdown("### Find *your* nest.")
->>>>>>> e31cefd3d47d57828e1a4c17f8347ee6c06648b7
 
 
 def format_travel(mode, minutes):
@@ -1257,7 +1255,6 @@ st.info("""
 Go to an Apartments.com listing, press **Ctrl + A**, then **Ctrl + C**, paste everything below, and let the magic happen.
 """)
 
-<<<<<<< HEAD
 video_left, video_right = st.columns([0.45, 0.55])
 with video_left:
     st.markdown("### 🎥 Quick Demo")
@@ -1414,7 +1411,6 @@ with right_col:
 
         with st.expander("Show parsed JSON"):
             st.json(parsed_listing)
->>>>>>> e31cefd3d47d57828e1a4c17f8347ee6c06648b7
     else:
         st.caption("Add `demo.mp4` to this project folder to show your screen recording here.")
 
