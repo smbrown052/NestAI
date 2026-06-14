@@ -88,8 +88,7 @@ with left:
         "Apartment listing text",
         key="listing_text",
         height=420,
-        placeholder="
-Map
+        placeholder= "Map
  English
 Apartments.com Logo
 Manage Rentals     
@@ -989,8 +988,7 @@ apartments.com
 © 2026 CoStar Group, Inc.
 Equal Housing Opportunity
 
-Apartments.com Ai
-"
+Apartments.com Ai"
     )
 
     analyze = st.button("✨ Analyze Apartment", use_container_width=True)
