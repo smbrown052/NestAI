@@ -3,6 +3,8 @@ import streamlit as st
 import pandas as pd
 from text_parser import parse_apartment_text, filter_units_by_request
 
+st.set_page_config(page_title="NestAI", layout="wide")
+
 st.title("🏠 NestAI")
 st.markdown("### Find *your* nest.")
 
@@ -44,15 +46,14 @@ st.info("""
 Go to an Apartments.com listing, press **Ctrl + A**, then **Ctrl + C**, paste everything below, and let the magic happen.
 """)
 
-with video_right:
-    st.markdown("### What it does")
-    st.write("""
-    - Extracts units from copied apartment listing text
-    - Pulls rent, square footage, availability, beds, baths, floor, and nearby transit
-    - Saves units into a comparison table
-    - Lets you filter by natural language preferences
-    - Ranks apartments based on price, space, metro access, and floor
-    """)
+st.markdown("### What it does")
+st.write("""
+- Extracts units from copied apartment listing text
+- Pulls rent, square footage, availability, beds, baths, floor, and nearby transit
+- Saves units into a comparison table
+- Lets you filter by natural language preferences
+- Ranks apartments based on price, space, metro access, and floor
+""")
 
 left, right = st.columns([1.15, 0.85], gap="large")
 
