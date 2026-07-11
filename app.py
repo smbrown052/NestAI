@@ -56,7 +56,7 @@ left, right = st.columns([1.15, 0.85], gap="large")
 
 with left:
     st.markdown("### 1. Paste Listing Text")
-        example_1, example_2, clear = st.columns(3)
+    example_1, example_2, clear = st.columns(3)
 
     with example_1:
         if st.button(
