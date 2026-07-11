@@ -2,6 +2,25 @@ import os
 import streamlit as st
 import pandas as pd
 from text_parser import parse_apartment_text, filter_units_by_request
+import json
+
+
+def make_streamlit_safe(df: pd.DataFrame) -> pd.DataFrame:
+    """Convert nested or inconsistent object values into display-safe scalars."""
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    safe_df = df.copy()
+
+    for column in safe_df.columns:
+        if safe_df[column].dtype == "object":
+            safe_df[column] = safe_df[column].map(
+                lambda value: json.dumps(value, default=str)
+                if isinstance(value, (dict, list, tuple, set))
+                else value
+            )
+
+    return safe_df
 
 st.title("🏠 NestAI")
 st.markdown("### Find *your* nest.")
@@ -159,7 +178,8 @@ if analyze:
     if st.session_state.listing_text.strip():
         result = parse_apartment_text(st.session_state.listing_text)
         st.session_state.last_result = result
-        st.session_state.parsed_df = pd.DataFrame(result.get("units", []))
+        parsed_units = pd.DataFrame(result.get("units", []))
+        st.session_state.parsed_df = make_streamlit_safe(parsed_units)
     else:
         st.warning("Paste listing text first.")
 
@@ -211,22 +231,43 @@ if st.session_state.last_result:
     if not st.session_state.parsed_df.empty:
         st.markdown("### 📋 Parsed Units")
         st.caption("Units extracted from the current building. Save them, then filter and rank below.")
-        st.dataframe(st.session_state.parsed_df, use_container_width=True)
+        st.dataframe(
+            make_streamlit_safe(st.session_state.parsed_df),
+            use_container_width=True,
+        )
 
-        if st.button("➕ Save Units", use_container_width=True):
-            st.session_state.comparison_df = pd.concat(
-                [st.session_state.comparison_df, st.session_state.parsed_df],
-                ignore_index=True
-            )
-            st.success("Units added!")
-            st.rerun()
-    else:
-        st.warning("No unit rows were parsed from this listing.")
+    if st.button("➕ Save Units", use_container_width=True):
+        new_units = make_streamlit_safe(st.session_state.parsed_df)
+        existing_units = make_streamlit_safe(st.session_state.comparison_df)
+    
+        st.session_state.comparison_df = pd.concat(
+            [existing_units, new_units],
+            ignore_index=True,
+            sort=False,
+        )
+    
+        st.success(f"{len(new_units)} units added!")
+        st.rerun()
 
 st.markdown("### 🔎 Filter & Rank Your Apartments")
 
 if not st.session_state.comparison_df.empty:
     comp_df = st.session_state.comparison_df.copy()
+        comp_df["price_num"] = pd.to_numeric(
+        comp_df.get("price_num"),
+        errors="coerce",
+    )
+    
+    comp_df["sqft_num"] = pd.to_numeric(
+        comp_df.get("sqft_num"),
+        errors="coerce",
+    )
+    
+    comp_df = comp_df.dropna(subset=["price_num", "sqft_num"])
+    
+    if comp_df.empty:
+        st.warning("Saved units do not contain valid price and square-footage values.")
+        st.stop()
 
     min_price = int(comp_df["price_num"].min())
     max_price = int(comp_df["price_num"].max())
@@ -329,6 +370,9 @@ if not st.session_state.comparison_df.empty:
         if "nest_score" in clean_ranked_df.columns:
             clean_ranked_df["nest_score"] = clean_ranked_df["nest_score"].round(2)
 
-        st.dataframe(clean_ranked_df, use_container_width=True)
+        st.dataframe(
+            make_streamlit_safe(clean_ranked_df),
+            use_container_width=True,
+        )
 else:
     st.info("Add units to compare first.")
