@@ -79,7 +79,7 @@ with left:
         placeholder="Paste copied Apartments.com listing text here..."
     )
 
-    analyze = st.button("✨ Analyze Apartment", use_container_width=True)
+analyze = st.button("✨ Analyze Apartment", use_container_width=True)
 
 with right:
     st.markdown("### How to use it")
