@@ -57,7 +57,7 @@ left, right = st.columns([1.15, 0.85], gap="large")
 with left:
     st.markdown("### 1. Paste Listing Text")
 
-    c1, c2 = st.columns(2)
+    c1, c2, c3 = st.columns(3)
 
     with c1:
         if st.button("🏢 Load Example Listing", use_container_width=True):
@@ -66,11 +66,17 @@ with left:
             st.rerun()
 
     with c2:
+        if st.button("🏢 Load Example Listing", use_container_width=True):
+            with open("data/app_listing_2.txt", "r", encoding="utf-8") as f:
+                st.session_state.listing_text = f.read()
+            st.rerun()
+   
+    with c3:
         if st.button("🧹 Clear Text", use_container_width=True):
             st.session_state.listing_text = ""
             st.session_state.last_result = None
             st.session_state.parsed_df = pd.DataFrame()
-            st.rerun()
+            st.rerun() 
 
     listing_text = st.text_area(
         "Apartment listing text",
