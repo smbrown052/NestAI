@@ -253,7 +253,7 @@ st.markdown("### 🔎 Filter & Rank Your Apartments")
 
 if not st.session_state.comparison_df.empty:
     comp_df = st.session_state.comparison_df.copy()
-        comp_df["price_num"] = pd.to_numeric(
+    comp_df["price_num"] = pd.to_numeric(
         comp_df.get("price_num"),
         errors="coerce",
     )
