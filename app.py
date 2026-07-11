@@ -117,7 +117,7 @@ with left:
     
     with example_2:
         if st.button(
-            "🏙️ Cortland Bennett Park",
+            "🏙️ Example 2",
             help="Load a sample Arlington apartment listing",
             use_container_width=True,
         ):
