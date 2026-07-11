@@ -154,14 +154,14 @@ with clear:
         st.session_state.parsed_df = pd.DataFrame()
         st.rerun()
 
-    listing_text = st.text_area(
-        "Apartment listing text",
-        key="listing_text",
-        height=420,
-        placeholder="Paste copied Apartments.com listing text here..."
-    )
+listing_text = st.text_area(
+    "Apartment listing text",
+    key="listing_text",
+    height=420,
+    placeholder="Paste copied Apartments.com listing text here..."
+)
 
-    analyze = st.button("✨ Analyze Apartment", use_container_width=True)
+analyze = st.button("✨ Analyze Apartment", use_container_width=True)
 
 with right:
     st.markdown("### How to use it")
@@ -228,43 +228,21 @@ if st.session_state.last_result:
         with st.expander("View nearby building-level places"):
             st.dataframe(pd.DataFrame(result["nearby_places"]), use_container_width=True)
 
-    if not st.session_state.parsed_df.empty:
-        st.markdown("### 📋 Parsed Units")
-        st.caption("Units extracted from the current building. Save them, then filter and rank below.")
-        st.dataframe(
-            make_streamlit_safe(st.session_state.parsed_df),
-            use_container_width=True,
-        )
-
-    if st.button("➕ Save Units", use_container_width=True):
-        new_units = make_streamlit_safe(st.session_state.parsed_df)
-        existing_units = make_streamlit_safe(st.session_state.comparison_df)
-    
-        st.session_state.comparison_df = pd.concat(
-            [existing_units, new_units],
-            ignore_index=True,
-            sort=False,
-        )
-    
-        st.success(f"{len(new_units)} units added!")
-        st.rerun()
-
-st.markdown("### 🔎 Filter & Rank Your Apartments")
-
 if not st.session_state.comparison_df.empty:
     comp_df = st.session_state.comparison_df.copy()
+
     comp_df["price_num"] = pd.to_numeric(
         comp_df.get("price_num"),
         errors="coerce",
     )
-    
+
     comp_df["sqft_num"] = pd.to_numeric(
         comp_df.get("sqft_num"),
         errors="coerce",
     )
-    
+
     comp_df = comp_df.dropna(subset=["price_num", "sqft_num"])
-    
+
     if comp_df.empty:
         st.warning("Saved units do not contain valid price and square-footage values.")
         st.stop()
@@ -277,18 +255,18 @@ if not st.session_state.comparison_df.empty:
         min_value=min_price,
         max_value=max_price,
         value=(min_price, max_price),
-        step=50
+        step=50,
     )
 
     min_sqft = int(comp_df["sqft_num"].min())
     max_sqft = int(comp_df["sqft_num"].max())
 
     sqft_range = st.slider(
-        "Square footage range",
+        "Square footage",
         min_value=min_sqft,
         max_value=max_sqft,
         value=(min_sqft, max_sqft),
-        step=25
+        step=50,
     )
 
     llm_request = st.text_input(
