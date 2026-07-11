@@ -161,6 +161,7 @@ def summarize_building_nearby(nearby_places):
         summary["metro_travel_mode"] = nearest["travel_mode"]
 
     if schools:
+        nearest = min(schools, key=lambda x: x["minutes"])
         summary["nearest_school"] = nearest["place_name"]
         summary["school_min"] = nearest["minutes"]
         summary["school_travel_mode"] = nearest["travel_mode"]
