@@ -67,26 +67,29 @@ with left:
         ):
             with open("data/app_listing_1.txt", "r", encoding="utf-8") as f:
                 st.session_state.listing_text = f.read()
-    
+
             st.session_state.last_result = None
             st.session_state.parsed_df = pd.DataFrame()
             st.rerun()
-    
+
     with example_2:
         if st.button(
             "🏙️ Cortland Bennett Park",
             help="Load a sample Arlington apartment listing",
             use_container_width=True,
         ):
-        with open("data/app_listing_2.txt", "r", encoding="utf-8") as f:
-            st.session_state.listing_text = f.read()
+            with open("data/app_listing_2.txt", "r", encoding="utf-8") as f:
+                st.session_state.listing_text = f.read()
 
-        st.session_state.last_result = None
-        st.session_state.parsed_df = pd.DataFrame()
-        st.rerun()
+            st.session_state.last_result = None
+            st.session_state.parsed_df = pd.DataFrame()
+            st.rerun()
 
     with clear:
-        if st.button("🧹 Clear Text", use_container_width=True):
+        if st.button(
+            "🧹 Clear Text",
+            use_container_width=True,
+        ):
             st.session_state.listing_text = ""
             st.session_state.last_result = None
             st.session_state.parsed_df = pd.DataFrame()
@@ -95,12 +98,14 @@ with left:
     listing_text = st.text_area(
         "Apartment listing text",
         key="listing_text",
-        height=420,
-        placeholder="Paste copied Apartments.com listing text here..."
+        height=550,
+        placeholder="Paste copied Apartments.com listing text here...",
     )
 
-analyze = st.button("✨ Analyze Apartment", use_container_width=True)
-
+    analyze = st.button(
+        "✨ Analyze Apartment",
+        use_container_width=True,
+    )
 with right:
     st.markdown("### How to use it")
     st.write("""
