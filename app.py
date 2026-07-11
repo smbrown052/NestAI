@@ -77,7 +77,6 @@ for key, default in {
     "listing_text": "",
     "filtered_df": pd.DataFrame(),
     "comparison_df": pd.DataFrame(),
-    "parsed_df": pd.DataFrame(),
     "last_result": None,
 }.items():
     if key not in st.session_state:
@@ -178,8 +177,6 @@ if analyze:
     if st.session_state.listing_text.strip():
         result = parse_apartment_text(st.session_state.listing_text)
         st.session_state.last_result = result
-        parsed_units = pd.DataFrame(result.get("units", []))
-        st.session_state.parsed_df = make_streamlit_safe(parsed_units)
     else:
         st.warning("Paste listing text first.")
 
