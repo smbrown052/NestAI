@@ -66,7 +66,7 @@ with left:
             st.rerun()
 
     with c2:
-        if st.button("🏢 Load Example Listing", use_container_width=True):
+         if st.button("🏢 Load Example Listing", use_container_width=True):
             with open("data/app_listing_2.txt", "r", encoding="utf-8") as f:
                 st.session_state.listing_text = f.read()
             st.rerun()
