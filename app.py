@@ -6,54 +6,11 @@ from text_parser import parse_apartment_text, filter_units_by_request
 st.title("🏠 NestAI")
 st.markdown("### Find *your* nest.")
 
-st.markdown(
-    """
-    <style>
-    .summary-card {
-        min-height: 112px;
-        padding: 16px;
-        border: 1px solid rgba(128, 128, 128, 0.25);
-        border-radius: 12px;
-        background: rgba(128, 128, 128, 0.05);
-    }
-
-    .summary-label {
-        font-size: 0.82rem;
-        color: #6b7280;
-        margin-bottom: 8px;
-        font-weight: 600;
-    }
-
-    .summary-value {
-        font-size: 1.15rem;
-        font-weight: 700;
-        line-height: 1.3;
-        white-space: normal;
-        overflow-wrap: anywhere;
-        word-break: normal;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
 def format_travel(mode, minutes):
     if mode and minutes:
         return f"{mode.title()} · {minutes} min"
     return "—"
 
-def summary_card(label, value):
-    safe_value = value if value not in (None, "") else "—"
-
-    st.markdown(
-        f"""
-        <div class="summary-card">
-            <div class="summary-label">{label}</div>
-            <div class="summary-value">{safe_value}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
 for key, default in {
     "listing_text": "",
     "filtered_df": pd.DataFrame(),
@@ -100,40 +57,20 @@ left, right = st.columns([1.15, 0.85], gap="large")
 with left:
     st.markdown("### 1. Paste Listing Text")
 
-    example_1, example_2, clear = st.columns(3)
+    c1, c2 = st.columns(2)
 
-    with example_1:
-        if st.button(
-            "🏢 Example 1",
-            help="Load the first sample apartment listing",
-            use_container_width=True,
-        ):
+    with c1:
+        if st.button("🏢 Load Example Listing", use_container_width=True):
             with open("data/app_listing_1.txt", "r", encoding="utf-8") as f:
                 st.session_state.listing_text = f.read()
-    
-            st.session_state.last_result = None
-            st.session_state.parsed_df = pd.DataFrame()
-            st.rerun()
-    
-    with example_2:
-        if st.button(
-            "🏙️ Example 2",
-            help="Load a sample Arlington apartment listing",
-            use_container_width=True,
-        ):
-            with open("data/app_listing_2.txt", "r", encoding="utf-8") as f:
-                st.session_state.listing_text = f.read()
-    
-            st.session_state.last_result = None
-            st.session_state.parsed_df = pd.DataFrame()
             st.rerun()
 
-with clear:
-    if st.button("🧹 Clear Text", use_container_width=True):
-        st.session_state.listing_text = ""
-        st.session_state.last_result = None
-        st.session_state.parsed_df = pd.DataFrame()
-        st.rerun()
+    with c2:
+        if st.button("🧹 Clear Text", use_container_width=True):
+            st.session_state.listing_text = ""
+            st.session_state.last_result = None
+            st.session_state.parsed_df = pd.DataFrame()
+            st.rerun()
 
     listing_text = st.text_area(
         "Apartment listing text",
@@ -171,35 +108,16 @@ if st.session_state.last_result:
 
     m1, m2, m3, m4 = st.columns(4)
 
-    with m1:
-        summary_card(
-            "Property",
-            result.get("property_title") or "Unknown",
-        )
-    
-    with m2:
-        summary_card(
-            "Units Parsed",
-            str(result.get("unit_count", 0)),
-        )
-    
-    with m3:
-        summary_card(
-            "Nearest Metro",
-            format_travel(
-                building.get("metro_travel_mode"),
-                building.get("metro_min"),
-            ),
-        )
-    
-    with m4:
-        summary_card(
-            "Nearest Hospital",
-            format_travel(
-                building.get("hospital_travel_mode"),
-                building.get("hospital_min"),
-            ),
-        )
+    m1.metric("Property", result.get("property_title") or "Unknown")
+    m2.metric("Units Parsed", result.get("unit_count", 0))
+    m3.metric(
+        "Nearest Metro",
+        format_travel(building.get("metro_travel_mode"), building.get("metro_min"))
+    )
+    m4.metric(
+        "Nearest Hospital",
+        format_travel(building.get("hospital_travel_mode"), building.get("hospital_min"))
+    )
 
     if result.get("address"):
         st.caption(result.get("address"))
