@@ -104,21 +104,51 @@ if st.session_state.last_result:
     result = st.session_state.last_result
     building = result.get("building_nearby", {})
 
-    st.markdown("### 🏠 Property Summary")
+st.markdown("### 🏠 Property Summary")
 
-    m1, m2, m3, m4 = st.columns(4)
+property_name = result.get("property_title") or "Unknown"
+unit_count = result.get("unit_count", 0)
 
-    m1.metric("Property", result.get("property_title") or "Unknown")
-    m2.metric("Units Parsed", result.get("unit_count", 0))
-    m3.metric(
-        "Nearest Metro",
-        format_travel(building.get("metro_travel_mode"), building.get("metro_min"))
-    )
-    m4.metric(
-        "Nearest Hospital",
-        format_travel(building.get("hospital_travel_mode"), building.get("hospital_min"))
-    )
+metro_name = building.get("nearest_metro") or "Not found"
+metro_travel = format_travel(
+    building.get("metro_travel_mode"),
+    building.get("metro_min")
+)
 
+hospital_name = building.get("nearest_hospital") or "Not found"
+hospital_travel = format_travel(
+    building.get("hospital_travel_mode"),
+    building.get("hospital_min")
+)
+
+row1_col1, row1_col2 = st.columns(2)
+
+with row1_col1:
+    with st.container(border=True):
+        st.caption("PROPERTY")
+        st.markdown(f"#### {property_name}")
+
+with row1_col2:
+    with st.container(border=True):
+        st.caption("UNITS PARSED")
+        st.markdown(f"#### {unit_count}")
+
+row2_col1, row2_col2 = st.columns(2)
+
+with row2_col1:
+    with st.container(border=True):
+        st.caption("NEAREST METRO")
+        st.markdown(f"#### {metro_name}")
+        st.write(metro_travel)
+
+with row2_col2:
+    with st.container(border=True):
+        st.caption("NEAREST HOSPITAL")
+        st.markdown(f"#### {hospital_name}")
+        st.write(hospital_travel)
+
+if result.get("address"):
+    st.caption(result.get("address"))
     if result.get("address"):
         st.caption(result.get("address"))
 
