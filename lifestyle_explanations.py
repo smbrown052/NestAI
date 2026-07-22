@@ -90,6 +90,37 @@ def generate_lifestyle_explanation(
     return "\n".join(explanation_parts)
 
 
+def generate_amenities_list(row: pd.Series) -> str:
+    """
+    Generate a clean, readable amenities list for an apartment.
+    """
+    amenities = []
+    
+    if row.get("has_laundry"):
+        amenities.append("✓ In-unit Washer/Dryer")
+    if row.get("has_gym"):
+        amenities.append("✓ In-unit Gym")
+    if row.get("has_fitness"):
+        amenities.append("✓ Fitness Center")
+    if row.get("has_pool"):
+        amenities.append("✓ Pool")
+    if row.get("has_parking"):
+        amenities.append("✓ Parking")
+    if row.get("has_balcony"):
+        amenities.append("✓ Balcony")
+    if row.get("has_patio"):
+        amenities.append("✓ Patio")
+    if row.get("has_security"):
+        amenities.append("✓ 24hr Security")
+    if row.get("has_concierge"):
+        amenities.append("✓ Concierge")
+    
+    if not amenities:
+        return "No major amenities listed"
+    
+    return "\n".join(amenities)
+
+
 def compare_two_apartments(
     apt1: pd.Series,
     apt2: pd.Series,
