@@ -3,7 +3,7 @@ import streamlit as st
 import pandas as pd
 from text_parser import parse_apartment_text, filter_units_by_request
 from lifestyle_scoring import LifestyleScorer, get_priority_weights_from_sliders
-from lifestyle_explanations import generate_lifestyle_explanation
+from lifestyle_explanations import generate_lifestyle_explanation, generate_amenities_list
 from tradeoff_assistant import TradeoffAnalyzer
 from regret_analyzer import RegretAnalyzer
 
@@ -222,11 +222,16 @@ if not st.session_state.comparison_df.empty:
         scorer = LifestyleScorer(weights)
         ranked_df = scorer.score_apartments(filtered_comp_df.copy())
         
-        # ===== DISPLAY TOP 3 WITH EXPLANATIONS =====
+        # ===== DISPLAY TOP 3 WITH TAB-BASED UI =====
         st.markdown("#### 🥇 Top 3 Recommendations")
         top3 = ranked_df.head(3)
         
         for rank, (_, row) in enumerate(top3.iterrows(), start=1):
+            unit_id = row.get("unit", f"Unit{rank}")
+            
+            # Create tabs for each apartment
+            tab1, tab2, tab3, tab4 = st.tabs(["📊 Overview", "🏠 Amenities", "💡 Tradeoffs", "⚠️ Concerns"])
+            
             # Extract component scores
             component_scores = {
                 "commute": row.get("commute_score", 0),
@@ -236,52 +241,67 @@ if not st.session_state.comparison_df.empty:
                 "gym": row.get("gym_score", 0),
             }
             
-            # Generate lifestyle explanation
-            explanation = generate_lifestyle_explanation(
-                rank, row, component_scores, weights, ranked_df
-            )
+            # TAB 1: OVERVIEW
+            with tab1:
+                st.success(f"**Rank #{rank}: Unit {unit_id}**")
+                
+                col_a, col_b, col_c, col_d = st.columns(4)
+                col_a.metric("Price", f"${int(row.get('price_num', 0)):,}/mo")
+                col_b.metric("Sq Ft", f"{int(row.get('sqft_num', 0))}")
+                col_c.metric("Beds", row.get("beds", "—"))
+                col_d.metric("Baths", row.get("baths", "—"))
+                
+                st.markdown(f"**Lifestyle Score: {row.get('lifestyle_score', 0):.0f}/100**")
+                
+                explanation = generate_lifestyle_explanation(
+                    rank, row, component_scores, weights, ranked_df
+                )
+                st.markdown(explanation)
             
-            st.success(explanation)
+            # TAB 2: AMENITIES
+            with tab2:
+                st.markdown("**Building Amenities:**")
+                amenities_text = generate_amenities_list(row)
+                st.markdown(amenities_text)
+                
+                # Location info
+                st.markdown("**Location Info:**")
+                loc_col1, loc_col2 = st.columns(2)
+                with loc_col1:
+                    st.write(f"🚇 **Metro:** {row.get('metro_min', '—')} min walk")
+                    st.write(f"🏥 **Hospital:** {row.get('hospital_min', '—')} min")
+                with loc_col2:
+                    walk_score = row.get("walk_score", "N/A")
+                    st.write(f"🚶 **Walk Score:** {walk_score}")
             
-            # ===== PHASE 1B: TRADEOFF ASSISTANT =====
-            if rank > 1:
-                with st.expander(f"💡 Compare to Rank #{rank - 1}"):
+            # TAB 3: TRADEOFFS
+            with tab3:
+                if rank > 1:
                     tradeoff = TradeoffAnalyzer(ranked_df)
                     tradeoff_text = tradeoff.generate_tradeoff_explanation(rank - 2, rank - 1)
                     st.markdown(tradeoff_text)
+                else:
+                    st.info("This is your top recommendation!")
+            
+            # TAB 4: CONCERNS
+            with tab4:
+                regret_analyzer = RegretAnalyzer(ranked_df, weights)
+                analysis = regret_analyzer.analyze_apartment(rank - 1)
+                
+                if analysis.get('concerns'):
+                    st.write(f"**Regret Risk: {analysis['regret_risk']:.0f}/100**")
+                    st.write(f"{analysis['recommendation']}")
+                    
+                    st.markdown("**Potential Issues:**")
+                    for concern in analysis['concerns']:
+                        st.warning(f"{concern['icon']} **{concern['title']}**\n\n{concern['message']}")
+                else:
+                    st.success("✅ No major concerns!")
             
             st.divider()
         
-        # ===== PHASE 1C: REGRET ANALYZER =====
-        st.markdown("#### 🚨 Potential Regret Warnings")
-        
-        regret_analyzer = RegretAnalyzer(ranked_df, weights)
-        warning_report = regret_analyzer.generate_warning_report()
-        
-        if "High risk" in warning_report or "Moderate concerns" in warning_report:
-            st.warning(warning_report)
-        else:
-            st.info("✅ No major red flags in your top recommendations!")
-        
-        # ===== DETAILED ANALYSIS PER APARTMENT =====
-        st.markdown("#### 🔍 Detailed Analysis by Apartment")
-        
-        for rank in range(min(3, len(ranked_df))):
-            apt = ranked_df.iloc[rank]
-            analysis = regret_analyzer.analyze_apartment(rank)
-            
-            with st.expander(f"Unit {apt.get('unit', 'Unknown')} - Rank #{rank + 1}", expanded=False):
-                st.write(f"**Regret Risk Score: {analysis['regret_risk']:.0f}/100**")
-                st.write(analysis['recommendation'])
-                
-                if analysis['concerns']:
-                    st.write("**Concerns:**")
-                    for concern in analysis['concerns']:
-                        st.write(f"{concern['icon']} **{concern['title']}**")
-                        st.write(f"_{concern['message']}_")
-        
         # ===== FULL RANKED TABLE =====
-        st.markdown("### 📊 Full Ranking")
+        st.markdown("### 📊 Full Ranking Table")
         display_cols = [
             "property",
             "unit",
