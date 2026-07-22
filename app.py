@@ -2,6 +2,10 @@ import os
 import streamlit as st
 import pandas as pd
 from text_parser import parse_apartment_text, filter_units_by_request
+from lifestyle_scoring import LifestyleScorer, get_priority_weights_from_sliders
+from lifestyle_explanations import generate_lifestyle_explanation
+from tradeoff_assistant import TradeoffAnalyzer
+from regret_analyzer import RegretAnalyzer
 
 st.title("🏠 NestAI")
 st.markdown("### Find *your* nest.")
@@ -49,7 +53,9 @@ st.write("""
 - Pulls rent, square footage, availability, beds, baths, floor, and nearby transit
 - Saves units into a comparison table
 - Lets you filter by natural language preferences
-- Ranks apartments based on price, space, metro access, and floor
+- Ranks apartments based on your personal lifestyle priorities
+- Shows what you gain/lose when upgrading apartments
+- Warns about apartments you might regret
 """)
 
 left, right = st.columns([1.15, 0.85], gap="large")
@@ -141,14 +147,34 @@ if st.session_state.last_result:
     else:
         st.warning("No unit rows were parsed from this listing.")
 
-st.markdown("### 🔎 Filter & Rank Your Apartments")
+# ===== PHASE 1: LIFESTYLE PRIORITIES =====
+st.markdown("---")
+st.markdown("### 🎯 Set Your Lifestyle Priorities")
 
 if not st.session_state.comparison_df.empty:
     comp_df = st.session_state.comparison_df.copy()
-
+    
+    st.info("What matters most to you? Adjust these sliders (1=not important, 5=critical)")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        commute_priority = st.slider("🚇 Commute", 1, 5, 3, key="commute_slider")
+        safety_priority = st.slider("🛡️ Safety", 1, 5, 3, key="safety_slider")
+    
+    with col2:
+        nightlife_priority = st.slider("🍻 Nightlife", 1, 5, 2, key="nightlife_slider")
+        budget_priority = st.slider("💰 Budget", 1, 5, 4, key="budget_slider")
+    
+    with col3:
+        gym_priority = st.slider("💪 Gym/Fitness", 1, 5, 2, key="gym_slider")
+    
+    # ===== APPLY FILTERS =====
+    st.markdown("### 🔎 Filter & Rank Your Apartments")
+    
     min_price = int(comp_df["price_num"].min())
     max_price = int(comp_df["price_num"].max())
-
+    
     price_range = st.slider(
         "Monthly price range",
         min_value=min_price,
@@ -156,10 +182,10 @@ if not st.session_state.comparison_df.empty:
         value=(min_price, max_price),
         step=50
     )
-
+    
     min_sqft = int(comp_df["sqft_num"].min())
     max_sqft = int(comp_df["sqft_num"].max())
-
+    
     sqft_range = st.slider(
         "Square footage range",
         min_value=min_sqft,
@@ -167,86 +193,120 @@ if not st.session_state.comparison_df.empty:
         value=(min_sqft, max_sqft),
         step=25
     )
-
+    
     llm_request = st.text_input(
         "Ask Nest AI to filter your saved units",
         value="1 bed not on the first floor within 10 min walk of metro"
     )
-
+    
     filtered_comp_df = comp_df[
         (comp_df["price_num"] >= price_range[0]) &
         (comp_df["price_num"] <= price_range[1]) &
         (comp_df["sqft_num"] >= sqft_range[0]) &
         (comp_df["sqft_num"] <= sqft_range[1])
     ]
-
+    
     filtered_comp_df = filter_units_by_request(filtered_comp_df, llm_request)
-
-    st.markdown("### 🏆 Nest AI Recommendations")
-    st.caption("Compare all your saved units to see what fits your personalized needs.")
-
+    
+    st.markdown("### 🏆 Personalized Recommendations")
+    st.caption("Ranked by your lifestyle priorities.")
+    
     if filtered_comp_df.empty:
         st.warning("No saved units match your filters.")
     else:
-        ranked_df = filtered_comp_df.copy()
-
-        ranked_df["price_score"] = ranked_df["price_num"].rank(ascending=False)
-        ranked_df["space_score"] = ranked_df["sqft_num"].rank(ascending=True)
-
-        if "metro_min" in ranked_df.columns:
-            ranked_df["metro_score"] = ranked_df["metro_min"].fillna(99).rank(ascending=False)
-        else:
-            ranked_df["metro_score"] = 0
-
-        if "floor" in ranked_df.columns:
-            ranked_df["floor_score"] = ranked_df["floor"].fillna(0).rank(ascending=True)
-        else:
-            ranked_df["floor_score"] = 0
-
-        ranked_df["nest_score"] = (
-            ranked_df["price_score"] * 0.35 +
-            ranked_df["space_score"] * 0.30 +
-            ranked_df["metro_score"] * 0.25 +
-            ranked_df["floor_score"] * 0.10
+        # ===== COMPUTE LIFESTYLE SCORES =====
+        weights = get_priority_weights_from_sliders(
+            commute_priority, safety_priority, nightlife_priority, budget_priority, gym_priority
         )
-
-        ranked_df = ranked_df.sort_values("nest_score", ascending=False)
-
+        
+        scorer = LifestyleScorer(weights)
+        ranked_df = scorer.score_apartments(filtered_comp_df.copy())
+        
+        # ===== DISPLAY TOP 3 WITH EXPLANATIONS =====
+        st.markdown("#### 🥇 Top 3 Recommendations")
         top3 = ranked_df.head(3)
-
-        for i, (_, row) in enumerate(top3.iterrows(), start=1):
-            st.success(
-                f"#{i} • {row.get('property', 'Unknown')} • Unit {row.get('unit', 'N/A')}  \n"
-                f"${int(row.get('price_num', 0)):,} • {int(row.get('sqft_num', 0))} sqft • "
-                f"{row.get('beds', '')} • {row.get('baths', '')}"
+        
+        for rank, (_, row) in enumerate(top3.iterrows(), start=1):
+            # Extract component scores
+            component_scores = {
+                "commute": row.get("commute_score", 0),
+                "safety": row.get("safety_score", 0),
+                "nightlife": row.get("nightlife_score", 0),
+                "budget": row.get("budget_score", 0),
+                "gym": row.get("gym_score", 0),
+            }
+            
+            # Generate lifestyle explanation
+            explanation = generate_lifestyle_explanation(
+                rank, row, component_scores, weights, ranked_df
             )
-
+            
+            st.success(explanation)
+            
+            # ===== PHASE 1B: TRADEOFF ASSISTANT =====
+            if rank > 1:
+                with st.expander(f"💡 Compare to Rank #{rank - 1}"):
+                    tradeoff = TradeoffAnalyzer(ranked_df)
+                    tradeoff_text = tradeoff.generate_tradeoff_explanation(rank - 2, rank - 1)
+                    st.markdown(tradeoff_text)
+            
+            st.divider()
+        
+        # ===== PHASE 1C: REGRET ANALYZER =====
+        st.markdown("#### 🚨 Potential Regret Warnings")
+        
+        regret_analyzer = RegretAnalyzer(ranked_df, weights)
+        warning_report = regret_analyzer.generate_warning_report()
+        
+        if "High risk" in warning_report or "Moderate concerns" in warning_report:
+            st.warning(warning_report)
+        else:
+            st.info("✅ No major red flags in your top recommendations!")
+        
+        # ===== DETAILED ANALYSIS PER APARTMENT =====
+        st.markdown("#### 🔍 Detailed Analysis by Apartment")
+        
+        for rank in range(min(3, len(ranked_df))):
+            apt = ranked_df.iloc[rank]
+            analysis = regret_analyzer.analyze_apartment(rank)
+            
+            with st.expander(f"Unit {apt.get('unit', 'Unknown')} - Rank #{rank + 1}", expanded=False):
+                st.write(f"**Regret Risk Score: {analysis['regret_risk']:.0f}/100**")
+                st.write(analysis['recommendation'])
+                
+                if analysis['concerns']:
+                    st.write("**Concerns:**")
+                    for concern in analysis['concerns']:
+                        st.write(f"{concern['icon']} **{concern['title']}**")
+                        st.write(f"_{concern['message']}_")
+        
+        # ===== FULL RANKED TABLE =====
+        st.markdown("### 📊 Full Ranking")
         display_cols = [
             "property",
-            "floorplan",
             "unit",
-            "floor",
             "price",
             "beds",
             "baths",
             "sqft",
-            "has_den",
-            "availability",
-            "nearest_metro",
-            "metro_travel_mode",
             "metro_min",
-            "nearest_hospital",
-            "hospital_travel_mode",
-            "hospital_min",
-            "nest_score",
+            "walk_score",
+            "commute_score",
+            "budget_score",
+            "safety_score",
+            "gym_score",
+            "lifestyle_score",
         ]
-
+        
         display_cols = [col for col in display_cols if col in ranked_df.columns]
         clean_ranked_df = ranked_df[display_cols].copy()
-
-        if "nest_score" in clean_ranked_df.columns:
-            clean_ranked_df["nest_score"] = clean_ranked_df["nest_score"].round(2)
-
+        
+        # Round score columns
+        for col in ["commute_score", "budget_score", "safety_score", "gym_score", "lifestyle_score"]:
+            if col in clean_ranked_df.columns:
+                clean_ranked_df[col] = clean_ranked_df[col].round(1)
+        
         st.dataframe(clean_ranked_df, use_container_width=True)
+
 else:
     st.info("Add units to compare first.")
