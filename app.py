@@ -7,6 +7,8 @@ from lifestyle_explanations import generate_lifestyle_explanation, generate_amen
 from tradeoff_assistant import TradeoffAnalyzer
 from regret_analyzer import RegretAnalyzer
 
+st.set_page_config(layout="wide")
+
 st.title("🏠 NestAI")
 st.markdown("### Find *your* nest.")
 
@@ -15,16 +17,70 @@ def format_travel(mode, minutes):
         return f"{mode.title()} · {minutes} min"
     return "—"
 
+def get_priority_rank(priority_name: str, weights: dict) -> str:
+    """
+    Convert priority weight to human-readable rank (1st, 2nd, tied for 2nd, etc.)
+    """
+    sorted_priorities = sorted(weights.items(), key=lambda x: x[1], reverse=True)
+    
+    # Find position of this priority
+    position = None
+    for idx, (name, weight) in enumerate(sorted_priorities):
+        if name == priority_name:
+            position = idx
+            break
+    
+    if position is None:
+        return "low priority"
+    
+    # Check for ties
+    current_weight = weights[priority_name]
+    ties = [name for name, w in weights.items() if w == current_weight and name != priority_name]
+    
+    ordinal = ["1st", "2nd", "3rd", "4th", "5th"]
+    rank_str = ordinal[position] if position < len(ordinal) else f"{position + 1}th"
+    
+    if ties:
+        return f"tied for {rank_str}"
+    else:
+        return rank_str
+
 for key, default in {
     "listing_text": "",
     "filtered_df": pd.DataFrame(),
     "comparison_df": pd.DataFrame(),
     "parsed_df": pd.DataFrame(),
     "last_result": None,
+    "show_instructions": True,
 }.items():
     if key not in st.session_state:
         st.session_state[key] = default
 
+# ===== SIDEBAR: TABLE OF CONTENTS =====
+with st.sidebar:
+    st.markdown("## 📑 Navigation")
+    
+    if not st.session_state.comparison_df.empty:
+        st.markdown("### Sections")
+        st.markdown("""
+- [Parse Listing](#parse-listing)
+- [Property Summary](#property-summary)
+- [Lifestyle Priorities](#lifestyle-priorities)
+- [Rankings](#rankings)
+- [Full Table](#full-table)
+        """)
+        
+        st.markdown("---")
+        st.markdown("### Quick Stats")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Total Units", len(st.session_state.comparison_df))
+        with col2:
+            st.metric("Buildings", st.session_state.comparison_df["property"].nunique())
+    else:
+        st.markdown("👈 Paste an apartment listing to get started!")
+
+# ===== MAIN CONTENT =====
 st.markdown("""
 <div class="hero">
     <p>
@@ -41,68 +97,51 @@ Apartment hunting often means comparing dozens of tabs, prices, floor plans, fee
 Nest AI turns unstructured Apartments.com listing text into structured, filterable, ranked recommendations — helping renters make faster, clearer decisions.
 """)
 
-st.info("""
-🚀 **Try an example or get your own.**
+st.markdown("### <a id='parse-listing'>1. Paste Listing Text</a>", unsafe_allow_html=True)
 
-Go to an Apartments.com listing, press **Ctrl + A**, then **Ctrl + C**, paste everything below, and let the magic happen.
-""")
+c1, c2 = st.columns(2)
 
-st.markdown("### What it does")
-st.write("""
-- Extracts units from copied apartment listing text
-- Pulls rent, square footage, availability, beds, baths, floor, and nearby transit
-- Saves units into a comparison table
-- Lets you filter by natural language preferences
-- Ranks apartments based on your personal lifestyle priorities
-- Shows what you gain/lose when upgrading apartments
-- Warns about apartments you might regret
-""")
+with c1:
+    if st.button("🏢 Load Example Listing", use_container_width=True):
+        with open("data/app_listing_1.txt", "r", encoding="utf-8") as f:
+            st.session_state.listing_text = f.read()
+        st.rerun()
 
-left, right = st.columns([1.15, 0.85], gap="large")
+with c2:
+    if st.button("🧹 Clear Text", use_container_width=True):
+        st.session_state.listing_text = ""
+        st.session_state.last_result = None
+        st.session_state.parsed_df = pd.DataFrame()
+        st.session_state.show_instructions = True
+        st.rerun()
 
-with left:
-    st.markdown("### 1. Paste Listing Text")
-
-    c1, c2 = st.columns(2)
-
-    with c1:
-        if st.button("🏢 Load Example Listing", use_container_width=True):
-            with open("data/app_listing_1.txt", "r", encoding="utf-8") as f:
-                st.session_state.listing_text = f.read()
-            st.rerun()
-
-    with c2:
-        if st.button("🧹 Clear Text", use_container_width=True):
-            st.session_state.listing_text = ""
-            st.session_state.last_result = None
-            st.session_state.parsed_df = pd.DataFrame()
-            st.rerun()
-
-    listing_text = st.text_area(
-        "Apartment listing text",
-        key="listing_text",
-        height=420,
-        placeholder="Paste copied Apartments.com listing text here..."
-    )
-
-    analyze = st.button("✨ Analyze Apartment", use_container_width=True)
-
-with right:
-    st.markdown("### How to use it")
-    st.write("""
-    1. Open an apartment listing.
-    2. Press **Ctrl + A**.
-    3. Press **Ctrl + C**.
-    4. Paste the copied text here.
-    5. Click **Analyze Apartment**.
-    6. Save units into your comparison table.
+if st.session_state.show_instructions:
+    st.info("""
+**How to use it:**
+1. Open an Apartments.com listing
+2. Press **Ctrl + A** to select all
+3. Press **Ctrl + C** to copy
+4. Paste the text below
+5. Click **Analyze Apartment**
+6. Save units and use the filters below to find your perfect home
     """)
+
+listing_text = st.text_area(
+    "Apartment listing text",
+    key="listing_text",
+    height=300,
+    placeholder="Paste copied Apartments.com listing text here...",
+)
+
+analyze = st.button("✨ Analyze Apartment", use_container_width=True, type="primary")
 
 if analyze:
     if st.session_state.listing_text.strip():
         result = parse_apartment_text(st.session_state.listing_text)
         st.session_state.last_result = result
         st.session_state.parsed_df = pd.DataFrame(result.get("units", []))
+        st.session_state.show_instructions = False
+        st.rerun()
     else:
         st.warning("Paste listing text first.")
 
@@ -110,23 +149,23 @@ if st.session_state.last_result:
     result = st.session_state.last_result
     building = result.get("building_nearby", {})
 
-    st.markdown("### 🏠 Property Summary")
+    st.markdown("### <a id='property-summary'>🏠 Property Summary</a>", unsafe_allow_html=True)
 
     m1, m2, m3, m4 = st.columns(4)
 
-    m1.metric("Property", result.get("property_title") or "Unknown")
-    m2.metric("Units Parsed", result.get("unit_count", 0))
-    m3.metric(
-        "Nearest Metro",
-        format_travel(building.get("metro_travel_mode"), building.get("metro_min"))
-    )
-    m4.metric(
-        "Nearest Hospital",
-        format_travel(building.get("hospital_travel_mode"), building.get("hospital_min"))
-    )
+    with m1:
+        st.metric("Property", result.get("property_title") or "Unknown")
+    with m2:
+        st.metric("Units Parsed", result.get("unit_count", 0))
+    with m3:
+        metro_display = format_travel(building.get("metro_travel_mode"), building.get("metro_min"))
+        st.metric("Nearest Metro", metro_display)
+    with m4:
+        hospital_display = format_travel(building.get("hospital_travel_mode"), building.get("hospital_min"))
+        st.metric("Nearest Hospital", hospital_display)
 
     if result.get("address"):
-        st.caption(result.get("address"))
+        st.caption(f"📍 {result.get('address')}")
 
     if result.get("nearby_places"):
         with st.expander("View nearby building-level places"):
@@ -137,7 +176,7 @@ if st.session_state.last_result:
         st.caption("Units extracted from the current building. Save them, then filter and rank below.")
         st.dataframe(st.session_state.parsed_df, use_container_width=True)
 
-        if st.button("➕ Save Units", use_container_width=True):
+        if st.button("➕ Save Units to Comparison", use_container_width=True):
             st.session_state.comparison_df = pd.concat(
                 [st.session_state.comparison_df, st.session_state.parsed_df],
                 ignore_index=True
@@ -149,7 +188,7 @@ if st.session_state.last_result:
 
 # ===== PHASE 1: LIFESTYLE PRIORITIES =====
 st.markdown("---")
-st.markdown("### 🎯 Set Your Lifestyle Priorities")
+st.markdown("### <a id='lifestyle-priorities'>🎯 Set Your Lifestyle Priorities</a>", unsafe_allow_html=True)
 
 if not st.session_state.comparison_df.empty:
     comp_df = st.session_state.comparison_df.copy()
@@ -170,7 +209,7 @@ if not st.session_state.comparison_df.empty:
         gym_priority = st.slider("💪 Gym/Fitness", 1, 5, 2, key="gym_slider")
     
     # ===== APPLY FILTERS =====
-    st.markdown("### 🔎 Filter & Rank Your Apartments")
+    st.markdown("### 🔎 Filter Your Apartments")
     
     min_price = int(comp_df["price_num"].min())
     max_price = int(comp_df["price_num"].max())
@@ -199,21 +238,27 @@ if not st.session_state.comparison_df.empty:
         value="1 bed not on the first floor within 10 min walk of metro"
     )
     
-    filtered_comp_df = comp_df[
-        (comp_df["price_num"] >= price_range[0]) &
-        (comp_df["price_num"] <= price_range[1]) &
-        (comp_df["sqft_num"] >= sqft_range[0]) &
-        (comp_df["sqft_num"] <= sqft_range[1])
-    ]
+    apply_filters = st.button("✓ Apply Filters & Rank", use_container_width=True, type="primary")
     
-    filtered_comp_df = filter_units_by_request(filtered_comp_df, llm_request)
+    if apply_filters:
+        filtered_comp_df = comp_df[
+            (comp_df["price_num"] >= price_range[0]) &
+            (comp_df["price_num"] <= price_range[1]) &
+            (comp_df["sqft_num"] >= sqft_range[0]) &
+            (comp_df["sqft_num"] <= sqft_range[1])
+        ]
+        
+        filtered_comp_df = filter_units_by_request(filtered_comp_df, llm_request)
+        
+        st.session_state.filtered_df = filtered_comp_df
     
-    st.markdown("### 🏆 Personalized Recommendations")
-    st.caption("Ranked by your lifestyle priorities.")
+    # Use stored filtered_df if it exists
+    filtered_comp_df = st.session_state.filtered_df if not st.session_state.filtered_df.empty else None
     
-    if filtered_comp_df.empty:
-        st.warning("No saved units match your filters.")
-    else:
+    if filtered_comp_df is not None and not filtered_comp_df.empty:
+        st.markdown("### <a id='rankings'>🏆 Personalized Rankings</a>", unsafe_allow_html=True)
+        st.caption("Ranked by your lifestyle priorities.")
+        
         # ===== COMPUTE LIFESTYLE SCORES =====
         weights = get_priority_weights_from_sliders(
             commute_priority, safety_priority, nightlife_priority, budget_priority, gym_priority
@@ -228,6 +273,7 @@ if not st.session_state.comparison_df.empty:
         
         for rank, (_, row) in enumerate(top3.iterrows(), start=1):
             unit_id = row.get("unit", f"Unit{rank}")
+            building_name = row.get("property", "Unknown Building")
             
             # Create tabs for each apartment
             tab1, tab2, tab3, tab4 = st.tabs(["📊 Overview", "🏠 Amenities", "💡 Tradeoffs", "⚠️ Concerns"])
@@ -243,7 +289,7 @@ if not st.session_state.comparison_df.empty:
             
             # TAB 1: OVERVIEW
             with tab1:
-                st.success(f"**Rank #{rank}: Unit {unit_id}**")
+                st.success(f"**Rank #{rank}: {building_name} · Unit {unit_id}**")
                 
                 col_a, col_b, col_c, col_d = st.columns(4)
                 col_a.metric("Price", f"${int(row.get('price_num', 0)):,}/mo")
@@ -253,8 +299,10 @@ if not st.session_state.comparison_df.empty:
                 
                 st.markdown(f"**Lifestyle Score: {row.get('lifestyle_score', 0):.0f}/100**")
                 
+                # Generate explanation with priority ranks
                 explanation = generate_lifestyle_explanation(
-                    rank, row, component_scores, weights, ranked_df
+                    rank, row, component_scores, weights, ranked_df,
+                    priority_rank_fn=lambda name: get_priority_rank(name, weights)
                 )
                 st.markdown(explanation)
             
@@ -301,7 +349,7 @@ if not st.session_state.comparison_df.empty:
             st.divider()
         
         # ===== FULL RANKED TABLE =====
-        st.markdown("### 📊 Full Ranking Table")
+        st.markdown("### <a id='full-table'>📊 Full Ranking Table</a>", unsafe_allow_html=True)
         display_cols = [
             "property",
             "unit",
@@ -327,6 +375,9 @@ if not st.session_state.comparison_df.empty:
                 clean_ranked_df[col] = clean_ranked_df[col].round(1)
         
         st.dataframe(clean_ranked_df, use_container_width=True)
+    
+    elif apply_filters:
+        st.warning("No apartments match your filters. Try adjusting your preferences.")
 
 else:
-    st.info("Add units to compare first.")
+    st.info("👈 Add units to compare first by pasting an apartment listing above.")
