@@ -53,7 +53,7 @@ class RegretAnalyzer:
             concerns.append(location_concern)
             severity_scores.append(location_concern["severity"])
         
-        # Check amenity mismatches
+        # Check amenity mismatches (only flag MISSING amenities user cares about)
         amenity_concerns = self._check_amenity_mismatch(apt)
         concerns.extend(amenity_concerns)
         severity_scores.extend([c["severity"] for c in amenity_concerns])
@@ -143,16 +143,18 @@ class RegretAnalyzer:
     
     def _check_amenity_mismatch(self, apt: pd.Series) -> List[Dict]:
         """
-        Check if apartment is missing critical amenities the user values.
+        Check if apartment is MISSING critical amenities the user values.
+        Only flag when BOTH user cares AND apartment doesn't have it.
         """
         concerns = []
         
-        # Check if user values gym but apartment doesn't have it
+        # Check gym - only flag if user prioritizes gym AND apartment lacks it
         gym_priority = self.user_weights.get("gym", 0)
         has_gym = apt.get("has_gym", False)
+        has_fitness = apt.get("has_fitness", False)
         nearby_gyms = apt.get("nearby_gyms", 0)
         
-        if gym_priority > 0.3 and not has_gym and nearby_gyms < 2:
+        if gym_priority > 0.3 and not has_gym and not has_fitness and nearby_gyms < 2:
             concerns.append({
                 "type": "amenity",
                 "title": "No Fitness Options",
@@ -162,7 +164,7 @@ class RegretAnalyzer:
                 "icon": "💪"
             })
         
-        # Check laundry (if not present)
+        # Check laundry - only flag if apartment lacks it (don't flag if it HAS it!)
         has_laundry = apt.get("has_laundry", False)
         if not has_laundry:
             concerns.append({
@@ -207,8 +209,10 @@ class RegretAnalyzer:
         
         concerns = self.get_all_concerns()
         
+        has_warnings = False
         for apt_analysis in concerns:
             if apt_analysis["regret_risk"] >= 50:
+                has_warnings = True
                 report += f"**Unit {apt_analysis['apartment']} (Rank #{apt_analysis['rank']})** - "
                 report += f"Risk Score: {apt_analysis['regret_risk']:.0f}/100\n"
                 
@@ -216,5 +220,8 @@ class RegretAnalyzer:
                     report += f"  {concern['icon']} {concern['title']}\n"
                 
                 report += f"  → {apt_analysis['recommendation']}\n\n"
+        
+        if not has_warnings:
+            report = "✅ **No Major Red Flags** - Your top recommendations look solid!"
         
         return report
