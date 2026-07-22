@@ -2,7 +2,7 @@
 Generate human-readable explanations for lifestyle scores.
 """
 
-from typing import Dict
+from typing import Dict, Callable
 import pandas as pd
 
 
@@ -11,14 +11,15 @@ def generate_lifestyle_explanation(
     row: pd.Series,
     scores: Dict[str, float],
     weights: Dict[str, float],
-    all_apartments: pd.DataFrame = None
+    all_apartments: pd.DataFrame = None,
+    priority_rank_fn: Callable = None
 ) -> str:
     """
     Generate a personalized explanation for why this apartment scores well.
     
     Example:
     "Apartment A scored 92 because it saves 18 minutes of commuting while 
-    only costing $75/month more. Your commute priority is highly weighted, 
+    only costing $75/month more. Your commute is your 1st priority, 
     and this location is 8 min from the metro."
     """
     
@@ -37,14 +38,21 @@ def generate_lifestyle_explanation(
     
     # Header
     explanation_parts.append(
-        f"**#{rank}: Unit {unit} · {beds}B/{baths}B · ${price:,} · {sqft} sqft**"
+        f"**Unit {unit} · {beds}B/{baths}B · ${price:,} · {sqft} sqft**"
     )
-    explanation_parts.append(f"\n**Lifestyle Score: {lifestyle_score}/100**\n")
+    explanation_parts.append(f"\n**Lifestyle Score: {lifestyle_score:.0f}/100**\n")
     
     # Primary factor
     factor1_name, factor1_score = top_factors[0]
-    factor1_weight = weights.get(factor1_name, 0)
-    explanation_parts.append(f"✨ **{factor1_name.title()}** ({factor1_weight*100:.0f}% of your priorities):\n")
+    
+    # Get priority rank if function provided
+    priority_rank = ""
+    if priority_rank_fn:
+        priority_rank = priority_rank_fn(factor1_name)
+        explanation_parts.append(f"✨ **{factor1_name.title()}** (your {priority_rank} priority):\n")
+    else:
+        factor1_weight = weights.get(factor1_name, 0)
+        explanation_parts.append(f"✨ **{factor1_name.title()}** ({factor1_weight*100:.0f}% of your priorities):\n")
     
     if factor1_name == "commute":
         metro_min = row.get("metro_min")
@@ -65,8 +73,13 @@ def generate_lifestyle_explanation(
     # Secondary factor
     if len(top_factors) > 1:
         factor2_name, factor2_score = top_factors[1]
-        factor2_weight = weights.get(factor2_name, 0)
-        explanation_parts.append(f"\n✨ **{factor2_name.title()}** ({factor2_weight*100:.0f}% of your priorities):\n")
+        
+        if priority_rank_fn:
+            priority_rank_2 = priority_rank_fn(factor2_name)
+            explanation_parts.append(f"\n✨ **{factor2_name.title()}** (your {priority_rank_2} priority):\n")
+        else:
+            factor2_weight = weights.get(factor2_name, 0)
+            explanation_parts.append(f"\n✨ **{factor2_name.title()}** ({factor2_weight*100:.0f}% of your priorities):\n")
         
         if factor2_name == "commute":
             metro_min = row.get("metro_min")
@@ -80,12 +93,6 @@ def generate_lifestyle_explanation(
             explanation_parts.append(f"   • {factor2_score:.0f}/100: Great dining and entertainment scene")
         elif factor2_name == "gym":
             explanation_parts.append(f"   • {factor2_score:.0f}/100: Fitness options available")
-    
-    # Weak factors (if relevant)
-    weak_factors = sorted_scores[-1:]
-    weak_name, weak_score = weak_factors[0]
-    if weak_score < 50:
-        explanation_parts.append(f"\n⚠️ **{weak_name.title()}** is lower ({weak_score:.0f}/100) since it's less important to you.")
     
     return "\n".join(explanation_parts)
 
