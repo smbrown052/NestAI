@@ -106,9 +106,12 @@ if st.session_state.last_result:
 
     st.markdown("### 🏠 Property Summary")
 
-    m1, m2, m3, m4 = st.columns(4)
+    # Show full property name without truncation before the metric columns
+    property_title = result.get("property_title") or "Unknown"
+    st.markdown(f"**{property_title}**")
 
-    m1.metric("Property", result.get("property_title") or "Unknown")
+    m2, m3, m4, m5 = st.columns(4)
+
     m2.metric("Units Parsed", result.get("unit_count", 0))
     m3.metric(
         "Nearest Metro",
@@ -119,8 +122,19 @@ if st.session_state.last_result:
         format_travel(building.get("hospital_travel_mode"), building.get("hospital_min"))
     )
 
+    # Show walk score and safety score when available
+    walk_score = result.get("units", [{}])[0].get("walk_score") if result.get("units") else None
+    safety_score = result.get("units", [{}])[0].get("safety_score") if result.get("units") else None
+    m5.metric(
+        "Walk Score",
+        f"{walk_score} / 100" if walk_score is not None else "—"
+    )
+
     if result.get("address"):
         st.caption(result.get("address"))
+
+    if safety_score is not None:
+        st.caption(f"Safety Score: {safety_score} / 100 (based on renter rating)")
 
     if result.get("nearby_places"):
         with st.expander("View nearby building-level places"):
@@ -203,23 +217,100 @@ if not st.session_state.comparison_df.empty:
         else:
             ranked_df["floor_score"] = 0
 
+        if "walk_score" in ranked_df.columns:
+            ranked_df["walk_score_score"] = ranked_df["walk_score"].fillna(0).rank(ascending=True)
+        else:
+            ranked_df["walk_score_score"] = 0
+
+        if "safety_score" in ranked_df.columns:
+            ranked_df["safety_score_rank"] = ranked_df["safety_score"].fillna(0).rank(ascending=True)
+        else:
+            ranked_df["safety_score_rank"] = 0
+
         ranked_df["nest_score"] = (
-            ranked_df["price_score"] * 0.35 +
-            ranked_df["space_score"] * 0.30 +
-            ranked_df["metro_score"] * 0.25 +
-            ranked_df["floor_score"] * 0.10
+            ranked_df["price_score"] * 0.30 +
+            ranked_df["space_score"] * 0.25 +
+            ranked_df["metro_score"] * 0.20 +
+            ranked_df["floor_score"] * 0.10 +
+            ranked_df["walk_score_score"] * 0.10 +
+            ranked_df["safety_score_rank"] * 0.05
         )
 
         ranked_df = ranked_df.sort_values("nest_score", ascending=False)
 
         top3 = ranked_df.head(3)
 
+        # Show all top-ranked apartments (up to 3, or fewer if fewer exist)
         for i, (_, row) in enumerate(top3.iterrows(), start=1):
+            price_num = row.get("price_num")
+            sqft_num = row.get("sqft_num")
+            price_display = int(price_num) if pd.notna(price_num) else 0
+            sqft_display = int(sqft_num) if pd.notna(sqft_num) else 0
             st.success(
                 f"#{i} • {row.get('property', 'Unknown')} • Unit {row.get('unit', 'N/A')}  \n"
-                f"${int(row.get('price_num', 0)):,} • {int(row.get('sqft_num', 0))} sqft • "
+                f"${price_display:,} • {sqft_display} sqft • "
                 f"{row.get('beds', '')} • {row.get('baths', '')}"
             )
+
+        # Tradeoffs section: compare each top apartment against the others
+        if len(top3) > 1:
+            st.markdown("### 📊 Tradeoffs")
+            st.caption("How each top-ranked apartment compares to the others on key criteria.")
+
+            tradeoff_criteria = [
+                ("price_num", "price", False),          # lower is better
+                ("sqft_num", "square footage", True),    # higher is better
+                ("metro_min", "metro distance", False),  # lower is better
+                ("floor", "floor level", True),          # higher is better
+                ("walk_score", "walk score", True),      # higher is better
+                ("safety_score", "safety score", True),  # higher is better
+            ]
+
+            top3_rows = list(top3.iterrows())
+            apt_labels = {
+                idx: f"#{rank} (Unit {row.get('unit', 'N/A')})"
+                for rank, (idx, row) in enumerate(top3_rows, start=1)
+            }
+
+            for rank, (idx, row) in enumerate(top3_rows, start=1):
+                label = apt_labels[idx]
+                bullets = []
+                for col, display_name, higher_is_better in tradeoff_criteria:
+                    if col not in ranked_df.columns:
+                        continue
+                    val = row.get(col)
+                    try:
+                        val = float(val)
+                        if pd.isna(val):
+                            raise ValueError("missing")
+                    except (ValueError, TypeError):
+                        bullets.append(f"No data on {display_name}")
+                        continue
+
+                    for other_idx, other_row in top3_rows:
+                        if other_idx == idx:
+                            continue
+                        other_label = apt_labels[other_idx]
+                        other_val = other_row.get(col)
+                        try:
+                            other_val = float(other_val)
+                            if pd.isna(other_val):
+                                raise ValueError("missing")
+                        except (ValueError, TypeError):
+                            continue
+
+                        if (higher_is_better and val > other_val) or (
+                            not higher_is_better and val < other_val
+                        ):
+                            bullets.append(f"Better than {other_label} on {display_name}")
+                        elif val == other_val:
+                            bullets.append(f"Equal to {other_label} on {display_name}")
+                        else:
+                            bullets.append(f"Not better than {other_label} on {display_name}")
+
+                with st.expander(f"{label} — Tradeoffs", expanded=True):
+                    for bullet in bullets:
+                        st.write(f"- {bullet}")
 
         display_cols = [
             "property",
@@ -238,6 +329,8 @@ if not st.session_state.comparison_df.empty:
             "nearest_hospital",
             "hospital_travel_mode",
             "hospital_min",
+            "walk_score",
+            "safety_score",
             "nest_score",
         ]
 
