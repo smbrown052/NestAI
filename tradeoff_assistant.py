@@ -22,6 +22,15 @@ class TradeoffAnalyzer:
         prop = row.get("property", "Unknown Property")
         unit = row.get("unit", "N/A")
         return f"{prop} · Unit {unit}"
+
+    @staticmethod
+    def _to_number(value, default: float = 0.0) -> float:
+        if value is None or pd.isna(value):
+            return default
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
     
     def get_difference_metrics(self, apt1: pd.Series, apt2: pd.Series) -> Dict:
         """
@@ -31,20 +40,20 @@ class TradeoffAnalyzer:
         differences = {}
         
         # Price difference
-        price1 = apt1.get("price_num", 0)
-        price2 = apt2.get("price_num", 0)
+        price1 = self._to_number(apt1.get("price_num", 0))
+        price2 = self._to_number(apt2.get("price_num", 0))
         price_diff = price2 - price1
         differences["price_diff"] = price_diff
         
         # Sqft difference
-        sqft1 = apt1.get("sqft_num", 0)
-        sqft2 = apt2.get("sqft_num", 0)
+        sqft1 = self._to_number(apt1.get("sqft_num", 0))
+        sqft2 = self._to_number(apt2.get("sqft_num", 0))
         sqft_diff = sqft2 - sqft1
         differences["sqft_diff"] = sqft_diff
         
         # Commute difference
-        commute1 = apt1.get("metro_min", 0)
-        commute2 = apt2.get("metro_min", 0)
+        commute1 = self._to_number(apt1.get("metro_min", 0))
+        commute2 = self._to_number(apt2.get("metro_min", 0))
         commute_diff = commute1 - commute2  # Negative = better
         differences["commute_diff"] = commute_diff
         
