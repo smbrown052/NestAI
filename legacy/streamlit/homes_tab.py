@@ -41,6 +41,7 @@ from parser.home_listing import (
 
 _KEYS = {
     "home_text": "",
+    "home_text_should_clear": False,   # deferred clear flag — set True to wipe the text_area on next rerun
     "home_result": None,               # ParsedHomeResult | None
     "home_replace_pending": None,      # int | None (home_id to replace)
     "home_filter_min_price": 0,
@@ -135,6 +136,13 @@ def render_homes_tab() -> None:
             st.session_state.home_text = ""
             st.session_state.home_result = None
             st.rerun()
+
+    # Apply deferred clear of the text_area value BEFORE the widget is instantiated.
+    # This avoids the StreamlitAPIException raised when widget-backed keys are mutated
+    # after their widget has already been rendered in the same script run.
+    if st.session_state.get("home_text_should_clear"):
+        st.session_state["home_text"] = ""
+        st.session_state.home_text_should_clear = False
 
     home_text = st.text_area(
         "Zillow listing text",
@@ -263,7 +271,7 @@ def _render_save_button(result: ParsedHomeResult) -> None:
             home_id = save_home(result, raw_source_text=raw)
             st.success(f"✅ Home saved! (ID {home_id})")
             st.session_state.home_result = None
-            st.session_state.home_text = ""
+            st.session_state.home_text_should_clear = True
             st.rerun()
     else:
         # Free plan: show replacement prompt
@@ -280,7 +288,7 @@ def _render_save_button(result: ParsedHomeResult) -> None:
                 home_id = save_home(result, raw_source_text=raw)
                 st.success(f"✅ Old home archived. New home saved! (ID {home_id})")
                 st.session_state.home_result = None
-                st.session_state.home_text = ""
+                st.session_state.home_text_should_clear = True
                 st.rerun()
         with c_upgrade:
             st.button("⬆️ Upgrade to Premium", use_container_width=True, disabled=True)
