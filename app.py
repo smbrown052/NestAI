@@ -29,6 +29,7 @@ from credits import (
     analyses_remaining,
 )
 from cache import get_geocode, _address_key
+from feedback import submit_feedback, send_feedback_email, validate_beta_code
 
 st.set_page_config(page_title="NestAI", page_icon="🏠", layout="wide")
 st.title("🏠 NestAI")
@@ -87,6 +88,10 @@ for key, default in {
     "building_cache": {},
     # V2: last enrichment request time per address (rate limiting)
     "last_enrich_time": {},
+    # Feedback & beta
+    "show_feedback_form": False,
+    "feedback_submitted_ref": None,
+    "beta_tester": False,
 }.items():
     if key not in st.session_state:
         st.session_state[key] = default
@@ -106,7 +111,59 @@ with st.sidebar:
         "**Free:** 5 building analyses, basic comparison & ranking.  \n"
         "**Premium ($24.99):** 100 analyses + AI, Walk Score, commute, neighborhood, exports."
     )
+
+    # ── Beta Access ─────────────────────────────────────────────────────────
+    with st.expander("🔬 Beta Access", expanded=False):
+        if st.session_state.beta_tester:
+            st.success("✅ Beta features unlocked!")
+        else:
+            beta_code_input = st.text_input(
+                "Enter invite code",
+                placeholder="e.g. NEST-BETA-2025",
+                type="password",
+                key="beta_code_input",
+            )
+            if st.button("Activate Beta Access", use_container_width=True):
+                if validate_beta_code(beta_code_input):
+                    st.session_state.beta_tester = True
+                    st.success("✅ Beta access activated!")
+                    st.rerun()
+                else:
+                    st.error("Invalid invite code.")
+
     st.divider()
+
+    # ── Remove Building ─────────────────────────────────────────────────────
+    if not st.session_state.comparison_df.empty:
+        buildings_available = sorted(
+            st.session_state.comparison_df["property"].dropna().unique().tolist()
+        )
+        if buildings_available:
+            st.markdown("## 🗑 Remove Building")
+            building_to_remove = st.selectbox(
+                "Select building to remove",
+                options=["— keep all —"] + buildings_available,
+                key="remove_building_select",
+            )
+            if st.button("Remove Building", use_container_width=True, type="secondary"):
+                if building_to_remove and building_to_remove != "— keep all —":
+                    st.session_state.comparison_df = st.session_state.comparison_df[
+                        st.session_state.comparison_df["property"] != building_to_remove
+                    ].reset_index(drop=True)
+                    if not st.session_state.enriched_df.empty:
+                        st.session_state.enriched_df = st.session_state.enriched_df[
+                            st.session_state.enriched_df["property"] != building_to_remove
+                        ].reset_index(drop=True)
+                    # Clear building cache entry for removed building
+                    addr_keys = [
+                        k for k in st.session_state.building_cache
+                        if building_to_remove.lower() in k.lower()
+                    ]
+                    for k in addr_keys:
+                        del st.session_state.building_cache[k]
+                    st.success(f"Removed **{building_to_remove}** from your search.")
+                    st.rerun()
+            st.divider()
 
     st.markdown("## 🤖 AI Apartment Advisor")
     st.caption(
@@ -208,6 +265,16 @@ with st.sidebar:
     else:
         st.caption("Paste an apartment listing to get started.")
 
+    st.divider()
+    if st.button(
+        "🐛 Report a Bug or Suggest an Improvement",
+        use_container_width=True,
+        key="open_feedback_btn",
+    ):
+        st.session_state.show_feedback_form = not st.session_state.show_feedback_form
+        st.session_state.feedback_submitted_ref = None
+        st.rerun()
+
 
 # ── Hero / Intro ──────────────────────────────────────────────────────────────
 
@@ -228,60 +295,55 @@ enriched, personalized recommendations with commute times, neighborhood data, an
 negotiation tools.
 """)
 
-st.info("""
-🚀 **Try an example or get your own.**
+with st.expander("ℹ️ How to use NestAI", expanded=False):
+    st.write("""
+    **Try an example or paste your own listing:**
 
-Go to an Apartments.com listing, press **Ctrl + A**, then **Ctrl + C**, paste everything below.
-""")
+    1. Open an apartment listing on Apartments.com.
+    2. Expand all floor plans and click **Show More** so all units are visible.
+    3. Press **Ctrl + A** then **Ctrl + C** to copy everything on the page.
+    4. Paste the text in the box below and click **✨ Analyze Apartment**.
+    5. Click **➕ Save Units** to add them to your comparison table.
+    6. Repeat for each building you want to compare (or load Example 1/2).
+    7. Optionally enable paid APIs for AI + official Walk/Transit/Bike scores.
+    8. Adjust Lifestyle Priority sliders, then review Rankings, Tradeoffs, and Concerns.
+
+    **To remove a building** from your search, use the 🗑 Remove Building panel in the sidebar.
+    """)
 
 # ── Paste & Analyze ───────────────────────────────────────────────────────────
 
-left, right = st.columns([1.15, 0.85], gap="large")
+st.markdown("### 1. Paste Listing Text")
 
-with left:
-    st.markdown("### 1. Paste Listing Text")
+c1, c2, c3 = st.columns(3)
 
-    c1, c2, c3 = st.columns(3)
+with c1:
+    if st.button("🏢 Load Example 1", use_container_width=True):
+        with open("data/app_listing_1.txt", "r", encoding="utf-8") as f:
+            st.session_state.listing_text = f.read()
+        st.rerun()
 
-    with c1:
-        if st.button("🏢 Load Example 1", use_container_width=True):
-            with open("data/app_listing_1.txt", "r", encoding="utf-8") as f:
-                st.session_state.listing_text = f.read()
-            st.rerun()
+with c2:
+    if st.button("🏢 Load Example 2", use_container_width=True):
+        with open("data/app_listing_2.txt", "r", encoding="utf-8") as f:
+            st.session_state.listing_text = f.read()
+        st.rerun()
 
-    with c2:
-        if st.button("🏢 Load Example 2", use_container_width=True):
-            with open("data/app_listing_2.txt", "r", encoding="utf-8") as f:
-                st.session_state.listing_text = f.read()
-            st.rerun()
+with c3:
+    if st.button("🧹 Clear Text", use_container_width=True):
+        st.session_state.listing_text = ""
+        st.session_state.last_result = None
+        st.session_state.parsed_df = pd.DataFrame()
+        st.rerun()
 
-    with c3:
-        if st.button("🧹 Clear Text", use_container_width=True):
-            st.session_state.listing_text = ""
-            st.session_state.last_result = None
-            st.session_state.parsed_df = pd.DataFrame()
-            st.rerun()
+listing_text = st.text_area(
+    "Apartment listing text",
+    key="listing_text",
+    height=380,
+    placeholder="Paste copied Apartments.com listing text here…",
+)
 
-    listing_text = st.text_area(
-        "Apartment listing text",
-        key="listing_text",
-        height=380,
-        placeholder="Paste copied Apartments.com listing text here…",
-    )
-
-    analyze = st.button("✨ Analyze Apartment", use_container_width=True)
-
-with right:
-    st.markdown("### How to use it")
-    st.write("""
-    1. Open an apartment listing on Apartments.com.
-    2. Expand all floor plans and click **Show More** so all units are visible.
-    3. Press **Ctrl + A** then **Ctrl + C**.
-    4. Paste the text here and click **Analyze Apartment**.
-    5. Save units into your comparison table (or load Example 1/2).
-    6. Optionally enable paid APIs/models for AI + official Walk/Transit/Bike scores.
-    7. Filter, rank, and review tradeoffs.
-    """)
+analyze = st.button("✨ Analyze Apartment", use_container_width=True)
 
 if analyze:
     if st.session_state.listing_text.strip():
@@ -305,10 +367,13 @@ if st.session_state.last_result:
     m2, m3, m4, m5 = st.columns(4)
 
     m2.metric("Units Parsed", result.get("unit_count", 0))
+    metro_val = format_travel(building.get("metro_travel_mode"), building.get("metro_min"))
     m3.metric(
         "Nearest Metro",
-        format_travel(building.get("metro_travel_mode"), building.get("metro_min")),
+        metro_val if metro_val != "—" else "Not found",
     )
+    if metro_val == "—":
+        m3.caption("No transit stop found within ~30 min or transit data unavailable.")
     m4.metric(
         "Nearest Hospital",
         format_travel(building.get("hospital_travel_mode"), building.get("hospital_min")),
@@ -602,8 +667,29 @@ if not st.session_state.comparison_df.empty:
             + ranked_df["safety_score_rank"] * 0.05
         )
 
+        # ── Compute unified NestAI Score (0–100) ───────────────────────────
+        # Normalise raw nest_score rank sum to 0–1 range
+        ns_max = ranked_df["nest_score"].max()
+        ns_min = ranked_df["nest_score"].min()
+        ns_range = ns_max - ns_min if ns_max != ns_min else 1.0
+        ranked_df["nest_score_norm"] = (
+            (ranked_df["nest_score"] - ns_min) / ns_range
+        ) * 100.0
+
+        profile_set = any(st.session_state.user_profile.values())
+
+        def _compute_nestai_score(row_: pd.Series) -> float:
+            lifestyle = float(row_.get("lifestyle_score", 0) or 0)
+            nest_norm = float(row_.get("nest_score_norm", 0) or 0)
+            if profile_set:
+                match = compute_match_score(row_, st.session_state.user_profile)
+                return round(0.60 * lifestyle + 0.25 * match + 0.15 * nest_norm, 1)
+            return round(0.85 * lifestyle + 0.15 * nest_norm, 1)
+
+        ranked_df["nestai_score"] = ranked_df.apply(_compute_nestai_score, axis=1)
+
         ranked_df = ranked_df.sort_values(
-            ["lifestyle_score", "nest_score"],
+            ["nestai_score", "lifestyle_score"],
             ascending=[False, False],
         )
         top3 = ranked_df.head(3)
@@ -615,16 +701,15 @@ if not st.session_state.comparison_df.empty:
             price_display = int(price_num) if pd.notna(price_num) else 0
             sqft_display = int(sqft_num) if pd.notna(sqft_num) else 0
 
-            # Match %
-            profile = st.session_state.user_profile
-            match_pct = compute_match_score(row, profile) if any(profile.values()) else None
-            match_badge = f"  |  {match_pct:.0f}% match" if match_pct else ""
+            nestai_score = row.get("nestai_score", 0)
 
-            # Price position vs same-bed-count average
+            # Price position vs same-bed-count average (no leading minus)
             diff, avg = price_position(row, ranked_df)
             if diff is not None:
-                sign = "+" if diff >= 0 else ""
-                price_badge = f"  |  {sign}${diff:,} vs avg"
+                if diff >= 0:
+                    price_badge = f"  |  ${abs(diff):,} above avg"
+                else:
+                    price_badge = f"  |  ${abs(diff):,} below avg"
             else:
                 price_badge = ""
 
@@ -634,15 +719,15 @@ if not st.session_state.comparison_df.empty:
 
             st.success(
                 f"#{i} • {row.get('property', 'Unknown')} • Unit {row.get('unit', 'N/A')}"
-                f"{match_badge}  |  Lifestyle {row.get('lifestyle_score', 0):.0f}/100  \n"
+                f"  |  NestAI Score {nestai_score:.0f}/100  \n"
                 f"${price_display:,}/mo{price_badge} • {sqft_display} sqft • "
                 f"{row.get('beds', '')} • {row.get('baths', '')}"
                 f"{commute_line}"
             )
 
-        st.markdown("#### 🎯 Lifestyle Breakdown")
+        st.markdown("#### 🎯 Breakdown")
         st.caption(
-            "Lifestyle Score uses 5 weighted categories. Match % is profile-fit only, so the two can differ."
+            "NestAI Score = 60% Lifestyle + 25% Profile Match + 15% Relative Rank (or 85%/15% when no profile is set)."
         )
         tradeoff = TradeoffAnalyzer(ranked_df) if len(ranked_df) > 1 else None
         regret_analyzer = RegretAnalyzer(ranked_df, weights)
@@ -666,14 +751,13 @@ if not st.session_state.comparison_df.empty:
                 }
 
                 with tab1:
-                    score_cols = st.columns(4)
-                    score_cols[0].metric("Lifestyle Score", f"{row.get('lifestyle_score', 0):.0f}/100")
-                    score_cols[1].metric("Nest Score", f"{row.get('nest_score', 0):.2f}")
-                    score_cols[2].metric(
+                    score_cols = st.columns(3)
+                    score_cols[0].metric("NestAI Score", f"{row.get('nestai_score', 0):.0f}/100")
+                    score_cols[1].metric(
                         "Price",
                         f"${int(overview_price) if pd.notna(overview_price) else 0:,}/mo",
                     )
-                    score_cols[3].metric(
+                    score_cols[2].metric(
                         "Sq Ft",
                         f"{int(overview_sqft) if pd.notna(overview_sqft) else 0}",
                     )
@@ -693,7 +777,12 @@ if not st.session_state.comparison_df.empty:
                     st.markdown(generate_amenities_list(row))
                     amenity_col1, amenity_col2 = st.columns(2)
                     with amenity_col1:
-                        st.write(f"🚇 **Metro:** {row.get('metro_min', '—')} min")
+                        metro_min_val = row.get("metro_min")
+                        if metro_min_val is not None and pd.notna(metro_min_val):
+                            st.write(f"🚇 **Metro:** {metro_min_val} min")
+                        else:
+                            st.write("🚇 **Metro:** Not found")
+                            st.caption("No transit stop found within ~30 min or transit data unavailable.")
                         st.write(f"🏥 **Hospital:** {row.get('hospital_min', '—')} min")
                     with amenity_col2:
                         walk_score_value = row.get("official_walk_score") or row.get("walk_score") or "—"
@@ -753,20 +842,6 @@ if not st.session_state.comparison_df.empty:
                     for d in details:
                         st.caption(d)
 
-        # ── Apartment Match % section ──────────────────────────────────────
-        if any(st.session_state.user_profile.values()):
-            st.markdown("#### 🎯 Your Match Breakdown")
-            for i, (_, row) in enumerate(top3.iterrows(), start=1):
-                match_pct = compute_match_score(row, st.session_state.user_profile)
-                reasons = explain_match(row, st.session_state.user_profile, match_pct)
-                color = "green" if match_pct >= 70 else "orange" if match_pct >= 50 else "red"
-                st.markdown(
-                    f"**#{i} Unit {row.get('unit', 'N/A')}** — "
-                    f":{color}[**{match_pct:.0f}% match**]"
-                )
-                for reason in reasons:
-                    st.write(f"  - {reason}")
-
         # ── Cost of Living breakdowns ──────────────────────────────────────
         extras = st.session_state.cost_extras
         if any(v for v in extras.values() if v):
@@ -783,88 +858,6 @@ if not st.session_state.comparison_df.empty:
                                 st.markdown(f"**Total: ${int(val):,}/mo**")
                             else:
                                 st.write(f"{label}: ${int(val):,}")
-
-        # ── Tradeoffs ──────────────────────────────────────────────────────
-        if len(top3) > 1:
-            st.markdown("#### 📊 Tradeoffs")
-            st.caption(
-                "Major differences are shown first; if units are similar, tie-breakers show specific amenities."
-            )
-
-            top3_rows = list(top3.iterrows())
-
-            def apt_label(r):
-                return f"{r.get('property', 'Unknown')} · Unit {r.get('unit', 'N/A')}"
-
-            major_metric_rules = [
-                ("price_num", 150.0, "price"),
-                ("sqft_num", 100.0, "space"),
-                ("metro_min", 4.0, "metro time"),
-                ("walk_score", 8.0, "walk score"),
-                ("official_walk_score", 8.0, "walk score"),
-                ("safety_score", 8.0, "safety score"),
-            ]
-
-            amenity_fields = [
-                ("has_gym", "gym"),
-                ("has_fitness", "fitness center"),
-                ("has_pool", "pool"),
-                ("has_laundry", "in-unit laundry"),
-                ("has_parking", "parking"),
-                ("has_balcony", "balcony"),
-                ("has_den", "den"),
-                ("has_security", "24hr security"),
-                ("has_concierge", "concierge"),
-            ]
-
-            for rank, (idx, row) in enumerate(top3_rows, start=1):
-                label = apt_label(row)
-                with st.expander(f"{label} — Tradeoffs", expanded=(rank == 1)):
-                    for other_idx, other_row in top3_rows:
-                        if other_idx == idx:
-                            continue
-
-                        other_label = apt_label(other_row)
-                        major_diffs = []
-
-                        for col, threshold, name in major_metric_rules:
-                            if col not in ranked_df.columns:
-                                continue
-                            v1 = row.get(col)
-                            v2 = other_row.get(col)
-                            if pd.isna(v1) or pd.isna(v2):
-                                continue
-                            diff = float(v1) - float(v2)
-                            if abs(diff) < threshold:
-                                continue
-
-                            if name == "price":
-                                direction = "higher" if diff > 0 else "lower"
-                                major_diffs.append(f"{abs(diff):.0f} {direction} monthly rent")
-                            elif name == "space":
-                                direction = "more" if diff > 0 else "less"
-                                major_diffs.append(f"{abs(diff):.0f} sq ft {direction} space")
-                            else:
-                                direction = "higher" if diff > 0 else "lower"
-                                major_diffs.append(f"{abs(diff):.0f} points {direction} {name}")
-
-                        if major_diffs:
-                            st.write(f"- vs **{other_label}**: " + "; ".join(major_diffs))
-                            continue
-
-                        amenity_diffs = []
-                        for field, name in amenity_fields:
-                            has_current = bool(row.get(field, False))
-                            has_other = bool(other_row.get(field, False))
-                            if has_current and not has_other:
-                                amenity_diffs.append(f"has {name}")
-                            elif has_other and not has_current:
-                                amenity_diffs.append(f"missing {name}")
-
-                        if amenity_diffs:
-                            st.write(f"- vs **{other_label}**: " + ", ".join(amenity_diffs))
-                        else:
-                            st.write(f"- vs **{other_label}**: very similar on major metrics and amenities.")
 
         # ── AI Rent Negotiator ─────────────────────────────────────────────
         if has_feature("negotiation") and openai_configured():
@@ -924,20 +917,20 @@ if not st.session_state.comparison_df.empty:
             "walk_score", "safety_score",
             "nearby_groceries", "restaurants_count", "nearby_gyms", "nearby_parks",
             "lifestyle_summary",
+            "nestai_score",
             "lifestyle_score",
             "lifestyle_commute_score",
             "lifestyle_safety_score",
             "lifestyle_nightlife_score",
             "lifestyle_budget_score",
             "lifestyle_gym_score",
-            "nest_score",
         ]
 
         display_cols = [c for c in display_cols if c in ranked_df.columns]
         clean_ranked_df = ranked_df[display_cols].copy()
 
         for score_col in (
-            "nest_score",
+            "nestai_score",
             "lifestyle_score",
             "lifestyle_commute_score",
             "lifestyle_safety_score",
@@ -946,9 +939,146 @@ if not st.session_state.comparison_df.empty:
             "lifestyle_gym_score",
         ):
             if score_col in clean_ranked_df.columns:
-                clean_ranked_df[score_col] = clean_ranked_df[score_col].round(2)
+                clean_ranked_df[score_col] = clean_ranked_df[score_col].round(1)
 
         st.dataframe(clean_ranked_df, use_container_width=True)
 
 else:
     st.info("Add units to compare first. Paste a listing above and click **Save Units**.")
+
+
+# ── Feedback Form ─────────────────────────────────────────────────────────────
+
+if st.session_state.show_feedback_form:
+    st.divider()
+    st.markdown("## 🐛 Report a Bug or Suggest an Improvement")
+
+    if st.session_state.feedback_submitted_ref:
+        st.success(
+            f"✅ Thanks! Your feedback was submitted. Reference: **{st.session_state.feedback_submitted_ref}**"
+        )
+        if st.button("Submit another", key="feedback_another"):
+            st.session_state.feedback_submitted_ref = None
+            st.rerun()
+    else:
+        with st.form("feedback_form", clear_on_submit=False):
+            category_options = {
+                "Bug": "bug",
+                "Feature Request": "feature_request",
+                "Improvement Suggestion": "improvement",
+                "Something Was Confusing": "confusing_experience",
+            }
+            category_label = st.selectbox(
+                "What would you like to report?",
+                options=list(category_options.keys()),
+            )
+            category = category_options[category_label]
+
+            title = st.text_input("Short title *", max_chars=200, placeholder="e.g. Walk Score not loading")
+            description = st.text_area("Description", height=120, placeholder="Tell us more…")
+
+            # Category-specific fields
+            actual_behavior = expected_behavior = None
+            requested_feature = problem_to_solve = value_rating = None
+            what_doing = what_unclear = what_expected_next = None
+
+            if category == "bug":
+                actual_behavior = st.text_area(
+                    "What happened?",
+                    height=80,
+                    placeholder="Describe what went wrong",
+                )
+                expected_behavior = st.text_area(
+                    "What did you expect to happen?",
+                    height=80,
+                )
+
+            elif category in ("feature_request", "improvement"):
+                requested_feature = st.text_area(
+                    "What would you like NestAI to do?",
+                    height=80,
+                )
+                problem_to_solve = st.text_area(
+                    "What problem would this solve?",
+                    height=80,
+                )
+                value_options = {
+                    "Nice to have": "nice_to_have",
+                    "Would use occasionally": "use_occasionally",
+                    "Would use during every apartment search": "use_every_search",
+                    "I might not use NestAI without it": "might_not_use_without",
+                }
+                value_label = st.selectbox(
+                    "How valuable would this be to you?",
+                    options=list(value_options.keys()),
+                )
+                value_rating = value_options[value_label]
+
+            elif category == "confusing_experience":
+                what_doing = st.text_area(
+                    "What were you trying to do?",
+                    height=80,
+                )
+                what_unclear = st.text_area(
+                    "What part was unclear?",
+                    height=80,
+                )
+                expected_behavior = st.text_area(
+                    "What did you expect to happen next?",
+                    height=80,
+                )
+
+            contact_email = st.text_input(
+                "Contact email (optional)",
+                placeholder="you@example.com",
+            )
+            user_contact_allowed = st.checkbox(
+                "NestAI may contact me about this report", value=False
+            )
+            screenshot = st.file_uploader(
+                "Attach a screenshot (optional)",
+                type=["png", "jpg", "jpeg", "gif", "webp"],
+            )
+
+            submitted = st.form_submit_button("Submit Feedback", use_container_width=True)
+
+        if submitted:
+            if not title.strip():
+                st.error("Please enter a title for your feedback.")
+            else:
+                # Auto-captured context
+                comparison_df_ctx = st.session_state.comparison_df
+                unit_count = len(comparison_df_ctx) if not comparison_df_ctx.empty else 0
+                building_count = (
+                    comparison_df_ctx["property"].nunique()
+                    if not comparison_df_ctx.empty and "property" in comparison_df_ctx.columns
+                    else 0
+                )
+
+                payload = {
+                    "category": category,
+                    "title": title,
+                    "description": description,
+                    "actual_behavior": actual_behavior,
+                    "expected_behavior": expected_behavior,
+                    "requested_feature": requested_feature,
+                    "problem_to_solve": problem_to_solve,
+                    "value_rating": value_rating,
+                    "what_were_you_doing": what_doing,
+                    "what_was_unclear": what_unclear,
+                    "contact_email": contact_email,
+                    "user_contact_allowed": user_contact_allowed,
+                    "user_plan": get_tier(),
+                    "beta_tester": st.session_state.beta_tester,
+                    "platform": "web",
+                    "unit_count": unit_count,
+                    "building_count": building_count,
+                }
+
+                try:
+                    ref = submit_feedback(payload)
+                    send_feedback_email(payload, ref)
+                    st.session_state.feedback_submitted_ref = ref
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Could not save feedback: {exc}")
