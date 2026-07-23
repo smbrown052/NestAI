@@ -1,12 +1,18 @@
+import time as _time
+
 import streamlit as st
 import pandas as pd
 
 from text_parser import parse_apartment_text, filter_units_by_request
 from enrichment import (
     enrich_units_df,
+    enrich_building,
+    get_commute_cached,
     compute_monthly_total,
     generate_lifestyle_summary,
     walkscore_api_configured,
+    maps_api_configured,
+    format_commute_display,
 )
 from ranking import compute_match_score, explain_match, price_position
 from llm_helpers import generate_negotiation_script, advisor_chat_response
@@ -14,6 +20,15 @@ from lifestyle_scoring import LifestyleScorer, get_priority_weights_from_sliders
 from lifestyle_explanations import generate_lifestyle_explanation, generate_amenities_list
 from tradeoff_assistant import TradeoffAnalyzer
 from regret_analyzer import RegretAnalyzer
+from credits import (
+    render_tier_badge,
+    get_tier,
+    has_feature,
+    can_enrich_building,
+    consume_analysis,
+    analyses_remaining,
+)
+from cache import get_geocode, _address_key
 
 st.set_page_config(page_title="NestAI", page_icon="🏠", layout="wide")
 st.title("🏠 NestAI")
@@ -68,6 +83,10 @@ for key, default in {
     "commute_destination": "",
     "paid_features_enabled": False,
     "negotiation_outputs": {},  # unit key -> negotiation text
+    # V2: per-building enrichment state: {address: building_dict}
+    "building_cache": {},
+    # V2: last enrichment request time per address (rate limiting)
+    "last_enrich_time": {},
 }.items():
     if key not in st.session_state:
         st.session_state[key] = default
@@ -76,13 +95,17 @@ for key, default in {
 # ── Sidebar — AI Apartment Advisor ────────────────────────────────────────────
 
 with st.sidebar:
-    st.markdown("## 💳 Paid Features")
-    st.checkbox(
-        "Enable paid APIs/models",
-        key="paid_features_enabled",
-        help="Turns on features that can incur API/model costs.",
+    # ── Tier / Credits ───────────────────────────────────────────────────────
+    st.markdown("## 💳 Plan & Credits")
+    render_tier_badge()
+
+    # Backwards-compat: mirror tier into paid_features_enabled flag
+    st.session_state.paid_features_enabled = (get_tier() == "premium")
+
+    st.caption(
+        "**Free:** 5 building analyses, basic comparison & ranking.  \n"
+        "**Premium ($24.99):** 100 analyses + AI, Walk Score, commute, neighborhood, exports."
     )
-    st.caption("Includes AI Advisor, AI Negotiator, and official Walk/Transit/Bike scores.")
     st.divider()
 
     st.markdown("## 🤖 AI Apartment Advisor")
@@ -90,8 +113,8 @@ with st.sidebar:
         "Ask about commutes, tradeoffs, lifestyle fit, or anything else about your saved units."
     )
 
-    if not st.session_state.paid_features_enabled:
-        st.info("Enable paid APIs/models to use the AI Advisor.")
+    if not has_feature("ai_chat"):
+        st.info("Upgrade to Premium to use the AI Advisor.")
     elif not openai_configured():
         st.info("Add `OPENAI_API_KEY` to Streamlit secrets to enable the advisor.")
     else:
@@ -401,29 +424,99 @@ if not st.session_state.comparison_df.empty:
         value="1 bed not on the first floor within 10 min walk of metro",
     )
 
-    # ── Enrich with live data ──────────────────────────────────────────────
+    # ── Level 2 Enrichment (cache-first, building-level, credit-gated) ────────
+
     enrich_col, status_col = st.columns([1, 2])
+
+    # Determine which buildings still need enrichment
+    addresses_in_view = (
+        comp_df["address"].dropna().unique().tolist()
+        if "address" in comp_df.columns
+        else []
+    )
+    already_enriched = {
+        addr
+        for addr in addresses_in_view
+        if addr in st.session_state.building_cache
+    }
+    needs_enrichment = [a for a in addresses_in_view if a not in already_enriched]
+
+    # Rate-limit: 10-second cooldown per address per session
+    _ENRICH_COOLDOWN = 10
+    now_ts = _time.time()
+
+    can_enrich = (
+        has_feature("walk_score")
+        and (maps_api_configured() or walkscore_api_configured())
+        and len(needs_enrichment) > 0
+        and analyses_remaining() > 0
+    )
+
     with enrich_col:
         enrich_clicked = st.button(
-            "🌐 Enrich (Paid: Official Scores)",
+            "🌐 Enrich Neighborhoods",
             use_container_width=True,
-            disabled=not st.session_state.paid_features_enabled,
-            help="Fetches official Walk/Transit/Bike scores when paid APIs/models are enabled.",
+            disabled=not can_enrich,
+            help=(
+                "Fetches Walk Score, neighborhood amenities, and commute data. "
+                "Uses 1 credit per unique building. Results are cached for all users."
+            ),
         )
     with status_col:
-        if not st.session_state.paid_features_enabled:
-            st.caption("Free mode: using listing-provided data only.")
-        elif not walkscore_api_configured():
+        if not has_feature("walk_score"):
             st.caption(
-                "Add `WALKSCORE_API_KEY` to fetch official Walk/Transit/Bike scores."
+                f"🔒 Neighborhood enrichment requires Premium. "
+                f"Upgrade to unlock Walk Score, commute & amenities."
             )
-        elif st.session_state.enrichment_done:
-            st.caption("✅ Enrichment complete — showing official Walk/Transit/Bike scores.")
+        elif not maps_api_configured() and not walkscore_api_configured():
+            st.caption("Add API keys to Streamlit secrets to enable enrichment.")
+        elif analyses_remaining() == 0:
+            st.caption("⚠️ No analysis credits remaining. Purchase more to continue.")
+        elif st.session_state.enrichment_done and not needs_enrichment:
+            st.caption("✅ All buildings enriched — showing cached neighborhood data.")
+        elif needs_enrichment:
+            st.caption(
+                f"Ready to enrich {len(needs_enrichment)} building(s). "
+                f"Uses {len(needs_enrichment)} credit(s). "
+                f"{analyses_remaining()} remaining."
+            )
         else:
-            st.caption("Ready to enrich.")
+            st.caption("✅ Enrichment complete.")
 
-    if enrich_clicked and st.session_state.paid_features_enabled:
-        with st.spinner("Fetching official Walk/Transit/Bike scores…"):
+    if enrich_clicked and can_enrich:
+        enriched_count = 0
+        throttled = []
+        with st.spinner("Enriching neighborhoods (cache-first)…"):
+            for addr in needs_enrichment:
+                # Per-address rate limit
+                last_ts = st.session_state.last_enrich_time.get(addr, 0)
+                if now_ts - last_ts < _ENRICH_COOLDOWN:
+                    throttled.append(addr)
+                    continue
+
+                # Determine a stable building_id for credit tracking
+                geo = get_geocode(addr)
+                building_id = (
+                    geo.get("google_place_id") or geo.get("building_id") or _address_key(addr)
+                    if geo
+                    else _address_key(addr)
+                )
+
+                if not can_enrich_building(building_id):
+                    st.warning("Credit limit reached during enrichment.")
+                    break
+
+                building_data = enrich_building(addr)
+                if building_data:
+                    consume_analysis(building_id)
+                    st.session_state.building_cache[addr] = building_data
+                    st.session_state.last_enrich_time[addr] = now_ts
+                    enriched_count += 1
+
+        if throttled:
+            st.info(f"⏳ {len(throttled)} address(es) throttled (retry in {_ENRICH_COOLDOWN}s).")
+
+        if enriched_count > 0 or already_enriched:
             st.session_state.enriched_df = enrich_units_df(
                 st.session_state.comparison_df,
                 st.session_state.commute_destination,
@@ -774,7 +867,7 @@ if not st.session_state.comparison_df.empty:
                             st.write(f"- vs **{other_label}**: very similar on major metrics and amenities.")
 
         # ── AI Rent Negotiator ─────────────────────────────────────────────
-        if st.session_state.paid_features_enabled and openai_configured():
+        if has_feature("negotiation") and openai_configured():
             st.markdown("#### 🤝 AI Rent Negotiator")
             st.caption(
                 "Generate a personalized negotiation email and talking points for any unit."
@@ -814,7 +907,7 @@ if not st.session_state.comparison_df.empty:
                             ),
                         )
         elif openai_configured():
-            st.caption("Enable paid APIs/models to use the AI Rent Negotiator.")
+            st.caption("Upgrade to Premium to use the AI Rent Negotiator.")
 
         # ── Full ranked table ──────────────────────────────────────────────
         st.markdown("### <a id='full-table'>📊 Full Ranking Table</a>", unsafe_allow_html=True)
