@@ -108,3 +108,105 @@ def generate_rationale_with_llm(user_query: str, prefs: dict, top_results: list[
     )
 
     return response.output_text.strip()
+
+
+# ── AI Rent Negotiator ────────────────────────────────────────────────────────
+
+def generate_negotiation_script(unit: dict, comparables: list[dict]) -> str:
+    """
+    Generate a negotiation email, talking points, and concession requests
+    for a specific unit, using nearby comparable listings for leverage.
+    """
+    client = get_openai_client()
+
+    unit_summary = {
+        k: unit.get(k)
+        for k in [
+            "property", "unit", "price", "price_num",
+            "beds", "baths", "sqft", "availability", "address",
+        ]
+    }
+    comp_summary = [
+        {k: c.get(k) for k in ["property", "unit", "price", "price_num", "beds", "sqft"]}
+        for c in comparables
+    ]
+
+    response = client.responses.create(
+        model="gpt-5-mini",
+        input=[
+            {
+                "role": "system",
+                "content": (
+                    "You are an expert apartment negotiator helping a renter secure the best deal. "
+                    "Write a professional, specific negotiation email and talking points. "
+                    "Be concise, cite only the data provided, and do not invent facts."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Target apartment:\n{json.dumps(unit_summary, indent=2)}\n\n"
+                    f"Comparable listings (for leverage):\n{json.dumps(comp_summary, indent=2)}\n\n"
+                    "Please produce:\n"
+                    "### Negotiation Email\n"
+                    "A concise, professional email to the property manager.\n\n"
+                    "### Talking Points\n"
+                    "Three specific points to raise in conversation.\n\n"
+                    "### Concessions to Request\n"
+                    "Two realistic concessions (e.g., one month free, waived parking fee).\n"
+                ),
+            },
+        ],
+    )
+    return response.output_text.strip()
+
+
+# ── AI Apartment Advisor ──────────────────────────────────────────────────────
+
+def advisor_chat_response(
+    user_message: str,
+    history: list[dict],
+    units_context: list[dict],
+) -> str:
+    """
+    Return an AI advisor reply given the full conversation history and saved units.
+
+    history: list of {"role": "user"|"assistant", "content": str} dicts.
+    units_context: list of unit dicts from the comparison DataFrame.
+    """
+    client = get_openai_client()
+
+    keep_keys = [
+        "property", "unit", "price_num", "sqft_num",
+        "beds_num", "baths_num", "floor", "availability",
+        "nearest_metro", "metro_min",
+        "walk_score", "safety_score",
+        "commute_driving_min", "commute_transit_min",
+        "commute_display", "lifestyle_summary",
+        "address",
+    ]
+    units_json = json.dumps(
+        [{k: u.get(k) for k in keep_keys} for u in units_context],
+        indent=2,
+    )
+
+    system_prompt = (
+        "You are a personal AI apartment advisor. "
+        "Help the user find the best apartment for their specific lifestyle, commute, and budget. "
+        "When recommending, explain why and surface any tradeoffs. "
+        "When advising someone to skip an option, say clearly why. "
+        "Answer natural language questions like 'which has the fastest commute for both of us?' "
+        "Be conversational, specific, and concise. Use only the data provided.\n\n"
+        f"Available apartments:\n{units_json}"
+    )
+
+    messages = [{"role": "system", "content": system_prompt}]
+    for msg in history:
+        messages.append({"role": msg["role"], "content": msg["content"]})
+    messages.append({"role": "user", "content": user_message})
+
+    response = client.responses.create(
+        model="gpt-5-mini",
+        input=messages,
+    )
+    return response.output_text.strip()
