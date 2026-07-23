@@ -444,10 +444,14 @@ if st.session_state.last_result:
             for col, val in (st.session_state.cost_extras or {}).items():
                 if val is not None:
                     new_rows[f"extra_{col}"] = val
+            if "user_notes" not in new_rows.columns:
+                new_rows["user_notes"] = ""
             st.session_state.comparison_df = pd.concat(
                 [st.session_state.comparison_df, new_rows],
                 ignore_index=True,
             )
+            if "user_notes" not in st.session_state.comparison_df.columns:
+                st.session_state.comparison_df["user_notes"] = ""
             st.session_state.enrichment_done = False
             st.success("Units added!")
             st.rerun()
@@ -675,6 +679,85 @@ if not st.session_state.comparison_df.empty:
         else comp_df
     )
 
+    # Ensure user_notes column exists in both comparison_df and working_df
+    if "user_notes" not in st.session_state.comparison_df.columns:
+        st.session_state.comparison_df["user_notes"] = ""
+    if "user_notes" not in working_df.columns:
+        working_df = working_df.copy()
+        working_df["user_notes"] = ""
+
+    # Propagate user_notes from comparison_df into working_df (keeps notes visible after enrichment)
+    if (
+        len(working_df) == len(st.session_state.comparison_df)
+        and working_df is not st.session_state.comparison_df
+    ):
+        working_df = working_df.copy()
+        working_df["user_notes"] = st.session_state.comparison_df["user_notes"].values
+
+    # ── Unit Notes & Annotations ───────────────────────────────────────────
+    st.markdown("### 📝 Unit Notes & Annotations")
+    st.caption(
+        "Add custom details to any unit (e.g. metro line, noise level, pet policy notes). "
+        "Notes are included when NestAI filters your apartments."
+    )
+
+    note_display_cols = [c for c in ["property", "unit", "user_notes"] if c in st.session_state.comparison_df.columns]
+    edited_notes = st.data_editor(
+        st.session_state.comparison_df[note_display_cols].copy(),
+        column_config={
+            "property": st.column_config.TextColumn("Property", disabled=True, width="medium"),
+            "unit": st.column_config.TextColumn("Unit", disabled=True, width="small"),
+            "user_notes": st.column_config.TextColumn(
+                "Your Notes",
+                help="E.g. 'Green line metro', 'loud street noise', 'dog-friendly'. Used by NestAI filter.",
+                width="large",
+            ),
+        },
+        use_container_width=True,
+        hide_index=True,
+        key="unit_notes_editor",
+    )
+
+    notes_action_col1, notes_action_col2 = st.columns([2, 1])
+    with notes_action_col1:
+        apply_to_building = st.checkbox(
+            "Apply note to all units in same building",
+            help="When checked, a non-empty note on any row will be copied to every other unit in the same building.",
+        )
+    with notes_action_col2:
+        save_notes_clicked = st.button("💾 Save Notes", use_container_width=True)
+
+    if save_notes_clicked:
+        updated_notes = edited_notes["user_notes"].fillna("").tolist()
+
+        if apply_to_building and "property" in edited_notes.columns:
+            # Build a map: property → first non-empty note
+            building_note_map: dict[str, str] = {}
+            for prop, note in zip(edited_notes["property"].tolist(), updated_notes):
+                if note.strip() and prop not in building_note_map:
+                    building_note_map[str(prop)] = note.strip()
+            # Apply building-level note to all rows in that building
+            updated_notes = [
+                building_note_map.get(str(prop), note)
+                for prop, note in zip(
+                    st.session_state.comparison_df["property"].tolist(),
+                    updated_notes,
+                )
+            ]
+
+        st.session_state.comparison_df["user_notes"] = updated_notes
+
+        # Keep enriched_df in sync so notes survive enrichment
+        if (
+            st.session_state.enrichment_done
+            and not st.session_state.enriched_df.empty
+            and len(st.session_state.enriched_df) == len(st.session_state.comparison_df)
+        ):
+            st.session_state.enriched_df["user_notes"] = updated_notes
+
+        st.success("Notes saved!")
+        st.rerun()
+
     filtered_comp_df = working_df[
         (working_df["price_num"] >= price_range[0])
         & (working_df["price_num"] <= price_range[1])
@@ -815,9 +898,9 @@ if not st.session_state.comparison_df.empty:
             diff, avg = price_position(row, ranked_df)
             if diff is not None:
                 if diff >= 0:
-                    price_badge = f"  |  ${abs(diff):,} above avg"
+                    price_badge = f"  |  ${abs(diff):,}/mo above avg rent"
                 else:
-                    price_badge = f"  |  ${abs(diff):,} below avg"
+                    price_badge = f"  |  saves ${abs(diff):,}/mo vs avg rent"
             else:
                 price_badge = ""
 
@@ -1028,6 +1111,7 @@ if not st.session_state.comparison_df.empty:
             "walk_score", "safety_score",
             "nearby_groceries", "restaurants_count", "nearby_gyms", "nearby_parks",
             "lifestyle_summary",
+            "user_notes",
             "nestai_score",
             "lifestyle_score",
             "lifestyle_commute_score",
