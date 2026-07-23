@@ -15,7 +15,6 @@ validate_beta_code(code)   -> bool         checks against BETA_CODES secret
 """
 
 import html
-import re
 import smtplib
 import sqlite3
 from datetime import datetime, timezone
@@ -137,9 +136,18 @@ def _sanitize_email(email: str | None) -> str:
     if not email:
         return ""
     email = email.strip()[:254]
-    if re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
-        return email
-    return ""
+    # Simple structural check: one @, non-empty local and domain, a dot in domain.
+    # Avoids backtracking-heavy patterns on user-supplied input.
+    at_idx = email.find("@")
+    if at_idx < 1 or at_idx == len(email) - 1:
+        return ""
+    local = email[:at_idx]
+    domain = email[at_idx + 1:]
+    if " " in local or " " in domain:
+        return ""
+    if "." not in domain or domain.startswith(".") or domain.endswith("."):
+        return ""
+    return email
 
 
 # ── Secrets helper ────────────────────────────────────────────────────────────
