@@ -57,23 +57,6 @@ def openai_configured() -> bool:
         return False
 
 
-def get_priority_rank(priority_name: str, weights: dict) -> str:
-    sorted_priorities = sorted(weights.items(), key=lambda item: item[1], reverse=True)
-    position = next(
-        (idx for idx, (name, _) in enumerate(sorted_priorities) if name == priority_name),
-        None,
-    )
-
-    if position is None:
-        return "low priority"
-
-    current_weight = weights[priority_name]
-    tied = [name for name, weight in weights.items() if weight == current_weight and name != priority_name]
-    ordinal = ["1st", "2nd", "3rd", "4th", "5th"]
-    rank_str = ordinal[position] if position < len(ordinal) else f"{position + 1}th"
-    return f"tied for {rank_str}" if tied else rank_str
-
-
 # ── Session state ─────────────────────────────────────────────────────────────
 
 for key, default in {
@@ -478,16 +461,64 @@ st.markdown("### <a id='lifestyle-priorities'>🎯 Lifestyle Priorities</a>", un
 if not st.session_state.comparison_df.empty:
     comp_df = st.session_state.comparison_df.copy()
 
-    st.info("Adjust these sliders to personalize the lifestyle ranking.")
+    st.info("All priorities are optional. Set any slider to 0 to disable it.")
     priority_col1, priority_col2, priority_col3 = st.columns(3)
     with priority_col1:
-        commute_priority = st.slider("🚇 Commute", 1, 5, 3, key="commute_slider")
-        safety_priority = st.slider("🛡️ Safety", 1, 5, 3, key="safety_slider")
+        commute_priority = st.slider("🚇 Commute", 0, 5, 3, key="commute_slider")
+        safety_priority = st.slider("🛡️ Safety", 0, 5, 3, key="safety_slider")
+        beds_priority = st.slider("🛏 Bedrooms", 0, 5, 0, key="beds_slider")
     with priority_col2:
-        nightlife_priority = st.slider("🍻 Nightlife", 1, 5, 2, key="nightlife_slider")
-        budget_priority = st.slider("💰 Budget", 1, 5, 4, key="budget_slider")
+        nightlife_priority = st.slider("🍻 Nightlife", 0, 5, 2, key="nightlife_slider")
+        budget_priority = st.slider("💰 Budget", 0, 5, 4, key="budget_slider")
+        baths_priority = st.slider("🛁 Bathrooms", 0, 5, 0, key="baths_slider")
     with priority_col3:
-        gym_priority = st.slider("💪 Gym/Fitness", 1, 5, 2, key="gym_slider")
+        gym_priority = st.slider("💪 Gym/Fitness", 0, 5, 2, key="gym_slider")
+        amenities_priority = st.slider("🏠 Amenities", 0, 5, 0, key="amenities_slider")
+        metro_time_priority = st.slider("🚇 Metro time target", 0, 5, 0, key="metro_time_slider")
+
+    preference_col1, preference_col2 = st.columns(2)
+    with preference_col1:
+        priority_target_beds = st.selectbox(
+            "Preferred beds (for lifestyle priority)",
+            options=[None, 0, 1, 2, 3, 4],
+            format_func=lambda x: "Any" if x is None else ("Studio" if x == 0 else f"{x} bed"),
+            key="priority_target_beds",
+        )
+        priority_target_baths = st.selectbox(
+            "Preferred baths (for lifestyle priority)",
+            options=[None, 1.0, 1.5, 2.0, 2.5, 3.0],
+            format_func=lambda x: "Any" if x is None else f"{x:g} bath",
+            key="priority_target_baths",
+        )
+        metro_mode_preference = st.selectbox(
+            "Metro time mode (for lifestyle priority)",
+            options=["walking", "driving"],
+            key="priority_metro_mode",
+        )
+        metro_max_minutes = st.slider(
+            "Target max minutes (for metro time priority)",
+            min_value=5,
+            max_value=90,
+            step=5,
+            value=30,
+            key="priority_metro_max_minutes",
+        )
+    with preference_col2:
+        amenity_options = {
+            "In-unit Washer/Dryer": "has_laundry",
+            "Gym/Fitness": "has_gym",
+            "Pool": "has_pool",
+            "Parking": "has_parking",
+            "Balcony": "has_balcony",
+            "Patio": "has_patio",
+            "Security": "has_security",
+            "Concierge": "has_concierge",
+        }
+        selected_amenity_labels = st.multiselect(
+            "Preferred amenities (for lifestyle priority)",
+            options=list(amenity_options.keys()),
+            key="priority_amenities",
+        )
 
     st.markdown("### 🔎 Filter Your Apartments")
 
@@ -657,12 +688,29 @@ if not st.session_state.comparison_df.empty:
             filtered_comp_df = filter_units_by_request(filtered_comp_df, last_applied)
 
     weights = get_priority_weights_from_sliders(
-        commute_priority,
-        safety_priority,
-        nightlife_priority,
-        budget_priority,
-        gym_priority,
+        {
+            "commute": commute_priority,
+            "safety": safety_priority,
+            "nightlife": nightlife_priority,
+            "budget": budget_priority,
+            "gym": gym_priority,
+            "beds": beds_priority,
+            "baths": baths_priority,
+            "amenities": amenities_priority,
+            "metro_time": metro_time_priority,
+        }
     )
+    if not weights:
+        st.caption("No lifestyle priorities selected; using balanced default priorities.")
+        weights = LifestyleScorer.DEFAULT_WEIGHTS.copy()
+
+    lifestyle_preferences = {
+        "target_beds": priority_target_beds,
+        "target_baths": priority_target_baths,
+        "required_amenities": [amenity_options[label] for label in selected_amenity_labels],
+        "metro_mode": metro_mode_preference,
+        "metro_max_minutes": metro_max_minutes,
+    }
 
     # ── Rankings ───────────────────────────────────────────────────────────
     st.markdown("### <a id='rankings'>🏆 Nest AI Recommendations</a>", unsafe_allow_html=True)
@@ -677,7 +725,10 @@ if not st.session_state.comparison_df.empty:
         else:
             st.warning("No saved units match your filters.")
     else:
-        ranked_df = LifestyleScorer(weights).score_apartments(filtered_comp_df.copy())
+        ranked_df = LifestyleScorer(
+            weights,
+            user_preferences=lifestyle_preferences,
+        ).score_apartments(filtered_comp_df.copy())
 
         ranked_df["price_score"] = ranked_df["price_num"].rank(ascending=False)
         ranked_df["space_score"] = ranked_df["sqft_num"].rank(ascending=True)
@@ -805,6 +856,10 @@ if not st.session_state.comparison_df.empty:
                     "nightlife": row.get("lifestyle_nightlife_score", 0),
                     "budget": row.get("lifestyle_budget_score", 0),
                     "gym": row.get("lifestyle_gym_score", 0),
+                    "beds": row.get("lifestyle_beds_score", 0),
+                    "baths": row.get("lifestyle_baths_score", 0),
+                    "amenities": row.get("lifestyle_amenities_score", 0),
+                    "metro_time": row.get("lifestyle_metro_time_score", 0),
                 }
 
                 with tab1:
@@ -825,7 +880,6 @@ if not st.session_state.comparison_df.empty:
                             component_scores,
                             weights,
                             ranked_df,
-                            priority_rank_fn=lambda name: get_priority_rank(name, weights),
                         )
                     )
 

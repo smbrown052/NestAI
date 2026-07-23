@@ -2,7 +2,7 @@
 Generate human-readable explanations for lifestyle scores.
 """
 
-from typing import Dict, Callable
+from typing import Dict
 import pandas as pd
 
 
@@ -12,7 +12,6 @@ def generate_lifestyle_explanation(
     scores: Dict[str, float],
     weights: Dict[str, float],
     all_apartments: pd.DataFrame = None,
-    priority_rank_fn: Callable = None
 ) -> str:
     """
     Generate a personalized explanation for why this apartment scores well.
@@ -71,6 +70,14 @@ def generate_lifestyle_explanation(
     elif factor1_name == "gym":
         has_gym = row.get("has_gym", False)
         explanation_parts.append(f"   • {factor1_score:.0f}/100: {'In-unit gym' if has_gym else 'Gyms nearby'}")
+    elif factor1_name == "beds":
+        explanation_parts.append(f"   • {factor1_score:.0f}/100: Bedroom fit score based on your preferred bed count")
+    elif factor1_name == "baths":
+        explanation_parts.append(f"   • {factor1_score:.0f}/100: Bathroom fit score based on your preferred bath count")
+    elif factor1_name == "amenities":
+        explanation_parts.append(f"   • {factor1_score:.0f}/100: Matches your selected amenities")
+    elif factor1_name == "metro_time":
+        explanation_parts.append(f"   • {factor1_score:.0f}/100: Aligns with your metro time target")
     
     # Secondary factor
     if len(top_factors) > 1:
@@ -92,6 +99,14 @@ def generate_lifestyle_explanation(
             explanation_parts.append(f"   • {factor2_score:.0f}/100: Great dining and entertainment scene")
         elif factor2_name == "gym":
             explanation_parts.append(f"   • {factor2_score:.0f}/100: Fitness options available")
+        elif factor2_name == "beds":
+            explanation_parts.append(f"   • {factor2_score:.0f}/100: Bedroom count is close to your preference")
+        elif factor2_name == "baths":
+            explanation_parts.append(f"   • {factor2_score:.0f}/100: Bathroom count is close to your preference")
+        elif factor2_name == "amenities":
+            explanation_parts.append(f"   • {factor2_score:.0f}/100: Includes amenities you prioritized")
+        elif factor2_name == "metro_time":
+            explanation_parts.append(f"   • {factor2_score:.0f}/100: Metro time is near your target")
     
     return "\n".join(explanation_parts)
 
@@ -145,7 +160,7 @@ def compare_two_apartments(
     comparison = f"**Unit {unit1} ({score1:.0f}) vs Unit {unit2} ({score2:.0f})**\n\n"
     
     # Find biggest differentiators
-    for factor in ["commute", "budget", "safety", "nightlife", "gym"]:
+    for factor in ["commute", "budget", "safety", "nightlife", "gym", "beds", "baths", "amenities", "metro_time"]:
         s1 = scores1.get(factor, 0)
         s2 = scores2.get(factor, 0)
         diff = abs(s1 - s2)
