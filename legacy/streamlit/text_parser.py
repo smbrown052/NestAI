@@ -48,9 +48,80 @@ def parse_has_den(floorplan_name, nearby_text=""):
 
     return False
 
+def extract_amenities_from_text(text):
+    """
+    Extract amenities from full apartment listing text.
+    Searches Apartment Features, Community Amenities, and FAQ sections.
+    """
+    amenities = {
+        "has_laundry": False,
+        "has_gym": False,
+        "has_fitness": False,
+        "has_pool": False,
+        "has_parking": False,
+        "has_balcony": False,
+        "has_patio": False,
+        "has_security": False,
+        "has_concierge": False,
+    }
+    
+    text_lower = text.lower()
+    
+    # Look for laundry mentions
+    if "washer" in text_lower and "dryer" in text_lower:
+        amenities["has_laundry"] = True
+    elif "in-unit laundry" in text_lower or "in unit laundry" in text_lower:
+        amenities["has_laundry"] = True
+    elif re.search(r"washer\s*[/&]\s*dryer", text_lower):
+        amenities["has_laundry"] = True
+    
+    # Look for gym/fitness
+    if "gym" in text_lower or "fitness" in text_lower or "fitness center" in text_lower:
+        if "gym" in text_lower:
+            amenities["has_gym"] = True
+        if "fitness" in text_lower:
+            amenities["has_fitness"] = True
+    
+    # Look for pool
+    if "pool" in text_lower or "swimming pool" in text_lower:
+        amenities["has_pool"] = True
+    
+    # Look for parking
+    if "parking" in text_lower or "garage" in text_lower or "covered parking" in text_lower:
+        amenities["has_parking"] = True
+    
+    # Look for balcony/patio
+    if "balcony" in text_lower or "patio" in text_lower or "deck" in text_lower:
+        if "balcony" in text_lower:
+            amenities["has_balcony"] = True
+        if "patio" in text_lower or "patios" in text_lower:
+            amenities["has_patio"] = True
+    
+    # Look for security/concierge
+    if "24" in text_lower and "hour" in text_lower and "security" in text_lower:
+        amenities["has_security"] = True
+    elif "security" in text_lower:
+        amenities["has_security"] = True
+    
+    if "concierge" in text_lower:
+        amenities["has_concierge"] = True
+    
+    return amenities
+
+
 def parse_nearby_places(lines):
     nearby = []
     current_type = None
+    prev_place_candidate = ""
+
+    noise_terms = [
+        "Washington Metropolitan Area Transit Authority Metrorail Silver Line Orange Line Blue Line",
+        "Washington Metropolitan Area Transit Authority Metrorail Silver Line Orange Line",
+        "Washington Metropolitan Area Transit Authority Metrorail",
+        "Silver Line Orange Line Blue Line",
+        "Silver Line Orange Line",
+        "Blue Line",
+    ]
 
     for line in lines:
         clean = line.strip()
@@ -59,14 +130,17 @@ def parse_nearby_places(lines):
         # Start sections using "in", not exact match
         if "education" == lower or lower.startswith("education"):
             current_type = "School"
+            prev_place_candidate = ""
             continue
 
         if "transit / subway" in lower:
             current_type = "Metro"
+            prev_place_candidate = ""
             continue
 
         if lower.startswith("hospitals"):
             current_type = "Hospital"
+            prev_place_candidate = ""
             continue
 
         # End sections
@@ -80,6 +154,7 @@ def parse_nearby_places(lines):
             or lower.startswith("reviews")
         ):
             current_type = None
+            prev_place_candidate = ""
             continue
 
         if current_type is None:
@@ -89,24 +164,25 @@ def parse_nearby_places(lines):
             mode = "walk" if "walk:" in lower else "drive"
 
             minute_match = re.search(r"(\d+)\s*min", lower)
-            mile_match = re.search(r"([\d.]+)\s*mi", lower)
+            # Use word boundary to avoid matching "min" in place of "mi"
+            mile_match = re.search(r"([\d.]+)\s*mi\b", lower)
 
             minutes = int(minute_match.group(1)) if minute_match else None
             miles = float(mile_match.group(1)) if mile_match else None
 
-            place_name = re.split(r"Walk:|Drive:", clean)[0].strip()
+            place_name = re.split(r"Walk:|Drive:", clean, flags=re.IGNORECASE)[0].strip()
 
-            noise_terms = [
-                "Washington Metropolitan Area Transit Authority Metrorail Silver Line Orange Line Blue Line",
-                "Washington Metropolitan Area Transit Authority Metrorail Silver Line Orange Line",
-                "Washington Metropolitan Area Transit Authority Metrorail",
-                "Silver Line Orange Line Blue Line",
-                "Silver Line Orange Line",
-                "Blue Line",
-            ]
+            # When name and distance are on separate lines, the distance line
+            # has an empty left-hand side — fall back to the previous content line.
+            if not place_name and prev_place_candidate:
+                place_name = prev_place_candidate
 
             for noise in noise_terms:
                 place_name = place_name.replace(noise, "").strip()
+
+            # Final fallback: never emit a blank place_name
+            if not place_name:
+                place_name = f"Nearby {current_type}"
 
             nearby.append({
                 "place_type": current_type,
@@ -115,6 +191,10 @@ def parse_nearby_places(lines):
                 "miles": miles,
                 "travel_mode": mode,
             })
+            prev_place_candidate = ""
+        else:
+            # Remember this line as a potential place name for the next distance line
+            prev_place_candidate = clean
 
     return nearby
 
@@ -175,6 +255,32 @@ def summarize_building_nearby(nearby_places):
     return summary
 
 
+def parse_walk_score(lines):
+    """Parse the numeric walkability score from the 'Getting Around' section."""
+    for i, line in enumerate(lines):
+        if line.strip().lower() == "walkability":
+            for j in range(i + 1, min(i + 4, len(lines))):
+                stripped = lines[j].strip()
+                if re.match(r"^\d{1,3}$", stripped):
+                    score = int(stripped)
+                    if 0 <= score <= 100:
+                        return score
+    return None
+
+
+def parse_renter_rating(lines):
+    """Parse the numeric renter rating (e.g. 2.5 out of 5) from listing text."""
+    for i, line in enumerate(lines):
+        if "renter rating" in line.strip().lower() and i > 0:
+            try:
+                rating = float(lines[i - 1].strip())
+                if 0.0 <= rating <= 5.0:
+                    return rating
+            except ValueError:
+                pass
+    return None
+
+
 def parse_apartment_text(text):
     lines = [line.strip() for line in text.splitlines() if line.strip()]
 
@@ -194,9 +300,17 @@ def parse_apartment_text(text):
     if not address:
         address = lines[1] if len(lines) > 1 else ""
 
+    # Extract amenities from full text
+    building_amenities = extract_amenities_from_text(text)
+
     # Nearby uses the FULL page
     nearby_places = parse_nearby_places(lines)
     building_nearby = summarize_building_nearby(nearby_places)
+
+    # Building-level scores shared by all units
+    walk_score = parse_walk_score(lines)
+    renter_rating = parse_renter_rating(lines)
+    safety_score = round(renter_rating / 5.0 * 100) if renter_rating is not None else None
 
     # Units use ONLY the pricing section
     pricing_start = None
@@ -212,6 +326,7 @@ def parse_apartment_text(text):
             "address": address,
             "nearby_places": nearby_places,
             "building_nearby": building_nearby,
+            "building_amenities": building_amenities,
             "units": [],
             "unit_count": 0,
         }
@@ -336,8 +451,12 @@ def parse_apartment_text(text):
                         "floorplan_sqft_range": current_floorplan_sqft,
                         "has_den": parse_has_den(current_floorplan, current_floorplan_sqft),
                         "availability": availability,
+                        "walk_score": walk_score,
+                        "safety_score": safety_score,
                     }
 
+                    # Add building amenities to each unit
+                    unit.update(building_amenities)
                     unit.update(building_nearby)
                     units.append(unit)
 
@@ -351,6 +470,7 @@ def parse_apartment_text(text):
         "address": address,
         "nearby_places": nearby_places,
         "building_nearby": building_nearby,
+        "building_amenities": building_amenities,
         "units": units,
         "unit_count": len(units),
     }
@@ -404,5 +524,17 @@ def filter_units_by_request(df, request):
 
     if "largest" in req or "most sqft" in req:
         filtered = filtered.sort_values("sqft_num", ascending=False)
+
+    if "laundry" in req or "washer" in req or "dryer" in req:
+        filtered = filtered[filtered["has_laundry"] == True]
+
+    if "gym" in req or "fitness" in req:
+        filtered = filtered[(filtered["has_gym"] == True) | (filtered["has_fitness"] == True)]
+
+    if "pool" in req:
+        filtered = filtered[filtered["has_pool"] == True]
+
+    if "parking" in req:
+        filtered = filtered[filtered["has_parking"] == True]
 
     return filtered
