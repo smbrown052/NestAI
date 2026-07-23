@@ -20,7 +20,6 @@ import streamlit as st
 from feature_access import (
     capability,
     can_save_another_property,
-    count_active_homes,
     require_capability,
 )
 from home_storage import (
