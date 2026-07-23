@@ -57,6 +57,8 @@ CREATE TABLE IF NOT EXISTS buildings (
     cafe_count        INTEGER,
     nearest_metro     TEXT,
     nearest_metro_distance TEXT,
+    metro_min         INTEGER,
+    metro_travel_mode TEXT,
     created_at        TEXT,
     updated_at        TEXT,
     last_enriched_at  TEXT
@@ -96,6 +98,21 @@ def _connect() -> sqlite3.Connection:
 def _init_db(conn: sqlite3.Connection) -> None:
     conn.executescript(_SCHEMA)
     conn.commit()
+    _migrate_db(conn)
+
+
+def _migrate_db(conn: sqlite3.Connection) -> None:
+    """Add any columns that were introduced after the initial schema."""
+    new_cols = [
+        ("metro_min", "INTEGER"),
+        ("metro_travel_mode", "TEXT"),
+    ]
+    for col, col_type in new_cols:
+        try:
+            conn.execute(f"ALTER TABLE buildings ADD COLUMN {col} {col_type}")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # column already exists
 
 
 def get_connection() -> sqlite3.Connection:
@@ -235,6 +252,7 @@ def upsert_building(data: dict) -> str:
                 bike_score, bike_description,
                 grocery_count, restaurant_count, gym_count, park_count, cafe_count,
                 nearest_metro, nearest_metro_distance,
+                metro_min, metro_travel_mode,
                 created_at, updated_at, last_enriched_at
             ) VALUES (
                 :building_id, :google_place_id, :building_name,
@@ -245,6 +263,7 @@ def upsert_building(data: dict) -> str:
                 :bike_score, :bike_description,
                 :grocery_count, :restaurant_count, :gym_count, :park_count, :cafe_count,
                 :nearest_metro, :nearest_metro_distance,
+                :metro_min, :metro_travel_mode,
                 :created_at, :updated_at, :last_enriched_at
             )
             ON CONFLICT(building_id) DO UPDATE SET
@@ -269,6 +288,8 @@ def upsert_building(data: dict) -> str:
                 cafe_count           = excluded.cafe_count,
                 nearest_metro        = excluded.nearest_metro,
                 nearest_metro_distance = excluded.nearest_metro_distance,
+                metro_min            = excluded.metro_min,
+                metro_travel_mode    = excluded.metro_travel_mode,
                 updated_at           = excluded.updated_at,
                 last_enriched_at     = excluded.last_enriched_at
             """,
@@ -295,6 +316,8 @@ def upsert_building(data: dict) -> str:
                 "cafe_count": data.get("cafe_count"),
                 "nearest_metro": data.get("nearest_metro"),
                 "nearest_metro_distance": data.get("nearest_metro_distance"),
+                "metro_min": data.get("metro_min"),
+                "metro_travel_mode": data.get("metro_travel_mode"),
                 "created_at": created_at,
                 "updated_at": now,
                 "last_enriched_at": now,

@@ -1,8 +1,14 @@
 import time as _time
+from pathlib import Path
 
 import streamlit as st
 import pandas as pd
 
+_DATA_DIR = Path(__file__).parent / "data"
+_EXAMPLE_LISTINGS = [
+    (_DATA_DIR / "app_listing_1.txt", "Avalon Courthouse Place"),
+    (_DATA_DIR / "app_listing_2.txt", "Cortland Bennett Park"),
+]
 from text_parser import parse_apartment_text, filter_units_by_request
 from enrichment import (
     enrich_units_df,
@@ -318,14 +324,14 @@ st.markdown("### 1. Paste Listing Text")
 c1, c2, c3 = st.columns(3)
 
 with c1:
-    if st.button("🏢 Load Example 1", use_container_width=True):
-        with open("data/app_listing_1.txt", "r", encoding="utf-8") as f:
+    if st.button("🏢 Avalon Courthouse Place", use_container_width=True):
+        with open(_EXAMPLE_LISTINGS[0][0], "r", encoding="utf-8") as f:
             st.session_state.listing_text = f.read()
         st.rerun()
 
 with c2:
-    if st.button("🏢 Load Example 2", use_container_width=True):
-        with open("data/app_listing_2.txt", "r", encoding="utf-8") as f:
+    if st.button("🏢 Cortland Bennett Park", use_container_width=True):
+        with open(_EXAMPLE_LISTINGS[1][0], "r", encoding="utf-8") as f:
             st.session_state.listing_text = f.read()
         st.rerun()
 
@@ -367,7 +373,18 @@ if st.session_state.last_result:
     m2, m3, m4, m5 = st.columns(4)
 
     m2.metric("Units Parsed", result.get("unit_count", 0))
-    metro_val = format_travel(building.get("metro_travel_mode"), building.get("metro_min"))
+
+    # Use text-parsed metro data; fall back to API-enriched data if not found
+    metro_min = building.get("metro_min")
+    metro_travel_mode = building.get("metro_travel_mode")
+    if metro_min is None:
+        address_key = result.get("address", "")
+        enriched_building = st.session_state.building_cache.get(address_key, {})
+        if enriched_building.get("metro_min") is not None:
+            metro_min = enriched_building["metro_min"]
+            metro_travel_mode = enriched_building.get("metro_travel_mode")
+
+    metro_val = format_travel(metro_travel_mode, metro_min)
     m3.metric(
         "Nearest Metro",
         metro_val if metro_val != "—" else "Not found",

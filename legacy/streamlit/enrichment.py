@@ -178,7 +178,12 @@ def enrich_building(address: str) -> dict:
     if maps_api_configured():
         places_data = _fetch_nearby_places(lat, lng)
 
-    # ── 6. Build record and store ─────────────────────────────────────────────
+    # ── 6. Look up nearest metro station via API ──────────────────────────────
+    metro_data = {}
+    if maps_api_configured():
+        metro_data = _fetch_nearest_metro_station(lat, lng, address)
+
+    # ── 7. Build record and store ─────────────────────────────────────────────
     building_data = {
         "google_place_id": place_id,
         "street_address": address,
@@ -186,6 +191,7 @@ def enrich_building(address: str) -> dict:
         "longitude": lng,
         **ws_data,
         **places_data,
+        **metro_data,
     }
     building_id = upsert_building(building_data)
     building_data["building_id"] = building_id
@@ -216,6 +222,8 @@ def _building_row_to_enrichment(row: dict) -> dict:
         # Transit
         "nearest_metro": row.get("nearest_metro"),
         "nearest_metro_distance": row.get("nearest_metro_distance"),
+        "metro_min": row.get("metro_min"),
+        "metro_travel_mode": row.get("metro_travel_mode"),
         # Metadata
         "last_enriched_at": row.get("last_enriched_at"),
     }
@@ -301,7 +309,81 @@ def _fetch_nearby_places(lat: float, lng: float, radius_meters: int = 1000) -> d
     return counts
 
 
-# ── Commute (cache-first) ─────────────────────────────────────────────────────
+def _fetch_nearest_metro_station(lat: float, lng: float, address: str) -> dict:
+    """
+    Find the nearest transit station via Google Places and return walking time.
+
+    Uses Places Nearby Search (ranked by distance) to locate the closest
+    transit_station, then Distance Matrix to compute the walking time from
+    the building address to that station.
+
+    Returns a dict with keys: nearest_metro, metro_min, metro_travel_mode.
+    Returns {} when the API is unavailable or no station is found.
+    """
+    key = _key("GOOGLE_MAPS_API_KEY")
+    if not key:
+        return {}
+
+    location_str = f"{lat},{lng}"
+
+    # Step 1: Find the nearest transit station
+    try:
+        resp = requests.get(
+            "https://maps.googleapis.com/maps/api/place/nearbysearch/json",
+            params={
+                "location": location_str,
+                "rankby": "distance",
+                "type": "transit_station",
+                "key": key,
+            },
+            timeout=10,
+        )
+        data = resp.json()
+        results = data.get("results", [])
+        if not results:
+            return {}
+
+        nearest = results[0]
+        station_name = nearest.get("name", "Nearby Transit")
+        station_loc = nearest.get("geometry", {}).get("location", {})
+        station_lat = station_loc.get("lat")
+        station_lng = station_loc.get("lng")
+        if not station_lat or not station_lng:
+            return {}
+    except Exception:
+        return {}
+
+    # Step 2: Get walking time from building address to station
+    try:
+        resp = requests.get(
+            "https://maps.googleapis.com/maps/api/distancematrix/json",
+            params={
+                "origins": address,
+                "destinations": f"{station_lat},{station_lng}",
+                "mode": "walking",
+                "key": key,
+            },
+            timeout=10,
+        )
+        data = resp.json()
+        if data.get("status") == "OK":
+            rows = data.get("rows", [])
+            if rows:
+                element = rows[0].get("elements", [{}])[0]
+                if element.get("status") == "OK":
+                    dur = element.get("duration")
+                    if dur:
+                        return {
+                            "nearest_metro": station_name,
+                            "metro_min": round(dur["value"] / 60),
+                            "metro_travel_mode": "walk",
+                        }
+    except Exception:
+        pass
+
+    return {}
+
+
 
 def get_commute_cached(building_id: str, origin_address: str, destination: str) -> dict:
     """
@@ -520,6 +602,7 @@ _ENRICHED_COLS = [
     "official_walk_score", "walk_description",
     "transit_score", "transit_description",
     "bike_score", "bike_description",
+    "nearest_metro", "metro_min", "metro_travel_mode",
     "lifestyle_summary",
     "building_id",
     "last_enriched_at",
@@ -577,7 +660,15 @@ def enrich_units_df(df: pd.DataFrame, commute_destination: str = "") -> pd.DataF
             building_cache[address] = enriched_vals
 
         row_dict = row.to_dict()
-        row_dict.update(building_cache[address])
+        enriched = building_cache[address]
+        # Metro from text parsing takes priority; only use API value when absent
+        _metro_keys = ("metro_min", "metro_travel_mode", "nearest_metro")
+        merged = {**enriched}
+        for k in _metro_keys:
+            existing = row_dict.get(k)
+            if existing is not None and not (isinstance(existing, float) and pd.isna(existing)):
+                merged[k] = existing
+        row_dict.update(merged)
         rows.append(row_dict)
 
     return pd.DataFrame(rows)
