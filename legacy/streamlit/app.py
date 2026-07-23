@@ -34,6 +34,8 @@ from credits import (
     consume_analysis,
     analyses_remaining,
 )
+from feature_access import capability as _fa_capability, get_plan as _fa_get_plan
+from plan_ui import render_plan_sidebar, render_pricing_cards
 from cache import get_geocode, _address_key
 from feedback import submit_feedback, send_feedback_email, validate_beta_code
 from homes_tab import render_homes_tab
@@ -90,6 +92,8 @@ for key, default in {
     "enrichment_done": False,
     "commute_destination": "",
     "paid_features_enabled": False,
+    "nestai_show_pricing": False,
+    "nestai_upgrade_intent": None,
     "negotiation_outputs": {},  # unit key -> negotiation text
     # V2: per-building enrichment state: {address: building_dict}
     "building_cache": {},
@@ -107,36 +111,12 @@ for key, default in {
 # ── Sidebar — AI Apartment Advisor ────────────────────────────────────────────
 
 with st.sidebar:
-    # ── Tier / Credits ───────────────────────────────────────────────────────
+    # ── Plan & Credits ───────────────────────────────────────────────────────
     st.markdown("## 💳 Plan & Credits")
-    render_tier_badge()
+    render_plan_sidebar()
 
-    # Backwards-compat: mirror tier into paid_features_enabled flag
-    st.session_state.paid_features_enabled = (get_tier() == "premium")
-
-    st.caption(
-        "**Free:** 5 building analyses, basic comparison & ranking.  \n"
-        "**Premium ($24.99):** 100 analyses + AI, Walk Score, commute, neighborhood, exports."
-    )
-
-    # ── Beta Access ─────────────────────────────────────────────────────────
-    with st.expander("🔬 Beta Access", expanded=False):
-        if st.session_state.beta_tester:
-            st.success("✅ Beta features unlocked!")
-        else:
-            beta_code_input = st.text_input(
-                "Enter invite code",
-                placeholder="e.g. NEST-BETA-2025",
-                type="password",
-                key="beta_code_input",
-            )
-            if st.button("Activate Beta Access", use_container_width=True):
-                if validate_beta_code(beta_code_input):
-                    st.session_state.beta_tester = True
-                    st.success("✅ Beta access activated!")
-                    st.rerun()
-                else:
-                    st.error("Invalid invite code.")
+    # Backwards-compat: mirror plan into paid_features_enabled flag
+    st.session_state.paid_features_enabled = has_feature("walk_score")
 
     st.divider()
 
@@ -982,6 +962,19 @@ with _homes_tab:
     render_homes_tab()
 
 
+# ── Pricing section ───────────────────────────────────────────────────────────
+# Shown when the user clicks "View Plans & Upgrade" in the sidebar,
+# or always visible as a collapsible section for discoverability.
+
+st.divider()
+_pricing_expanded = bool(st.session_state.get("nestai_show_pricing", False))
+with st.expander("💳 Plans & Pricing", expanded=_pricing_expanded):
+    if _pricing_expanded:
+        # Reset the flag so it doesn't auto-expand on next rerun
+        st.session_state.nestai_show_pricing = False
+    render_pricing_cards()
+
+
 # ── Feedback Form ─────────────────────────────────────────────────────────────
 
 if st.session_state.show_feedback_form:
@@ -1103,7 +1096,7 @@ if st.session_state.show_feedback_form:
                     "what_was_unclear": what_unclear,
                     "contact_email": contact_email,
                     "user_contact_allowed": user_contact_allowed,
-                    "user_plan": get_tier(),
+                    "user_plan": _fa_get_plan(),
                     "beta_tester": st.session_state.beta_tester,
                     "platform": "web",
                     "unit_count": unit_count,

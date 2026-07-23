@@ -22,6 +22,11 @@ Plans:
     PREMIUM       — paid tier, all core features
     PREMIUM_PLUS  — paid tier, higher quotas + advanced features
     BETA          — admin-granted, configurable quotas + expiration
+    OWNER_TEST    — dev/owner only; unlimited everything; never shown on pricing page
+
+Environment flags:
+    NESTAI_OWNER_MODE=true  — forces OWNER_TEST plan on every run
+    NESTAI_DEV_MODE=true    — enables the in-app development plan switcher
 
 Usage::
 
@@ -35,6 +40,7 @@ Usage::
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -46,11 +52,21 @@ PLAN_FREE = "FREE"
 PLAN_PREMIUM = "PREMIUM"
 PLAN_PREMIUM_PLUS = "PREMIUM_PLUS"
 PLAN_BETA = "BETA"
+PLAN_OWNER_TEST = "OWNER_TEST"   # dev/owner only — NOT a purchasable plan
 
 ROLE_USER = "USER"
 ROLE_ADMIN = "ADMIN"
 
-_ALL_PLANS = {PLAN_FREE, PLAN_PREMIUM, PLAN_PREMIUM_PLUS, PLAN_BETA}
+_ALL_PLANS = {PLAN_FREE, PLAN_PREMIUM, PLAN_PREMIUM_PLUS, PLAN_BETA, PLAN_OWNER_TEST}
+
+# Credits.py only knows "free" / "premium"; map richer plans to the closest equivalent.
+_CREDITS_TIER_MAP = {
+    PLAN_FREE: "free",
+    PLAN_PREMIUM: "premium",
+    PLAN_PREMIUM_PLUS: "premium",
+    PLAN_BETA: "premium",
+    PLAN_OWNER_TEST: "premium",
+}
 
 # ── Per-plan capability and quota definitions ─────────────────────────────────
 
@@ -157,6 +173,7 @@ _PLAN_LABELS = {
     PLAN_PREMIUM: "Premium",
     PLAN_PREMIUM_PLUS: "Premium Plus",
     PLAN_BETA: "Beta",
+    PLAN_OWNER_TEST: "Owner Test",
 }
 
 # Feature → minimum plan required (for upgrade prompts)
@@ -175,6 +192,24 @@ _FEATURE_REQUIRED_PLAN: dict[str, str] = {
     "can_export": PLAN_PREMIUM,
     "can_use_ai_negotiation": PLAN_PREMIUM,
 }
+
+# ── Environment flag helpers ──────────────────────────────────────────────────
+
+def is_owner_mode_env() -> bool:
+    """Return True when NESTAI_OWNER_MODE=true is set in the environment.
+
+    When active, the plan is forced to OWNER_TEST on every run.
+    This cannot be overridden by session state.
+    """
+    return os.environ.get("NESTAI_OWNER_MODE", "").lower() in ("1", "true", "yes")
+
+
+def is_dev_mode() -> bool:
+    """Return True when NESTAI_DEV_MODE=true is set in the environment.
+
+    When active, the development plan switcher is visible in the sidebar.
+    """
+    return os.environ.get("NESTAI_DEV_MODE", "").lower() in ("1", "true", "yes")
 
 # ── FeatureUpgradeRequired ────────────────────────────────────────────────────
 
@@ -211,13 +246,20 @@ def _init() -> None:
         if k not in st.session_state:
             st.session_state[k] = v
 
+    # ── Owner mode: env var always wins, re-applied on every run ──────────
+    # NESTAI_OWNER_MODE=true forces OWNER_TEST regardless of session state.
+    if is_owner_mode_env():
+        st.session_state.nestai_plan = PLAN_OWNER_TEST
+        st.session_state.nestai_tier = "premium"   # keep credits.py happy
+        return
+
     # ── Backwards compatibility with credits.py ────────────────────────────
     # credits.py stores plan in `nestai_tier` ("free"/"premium").
-    # Mirror into the new canonical key so callers of feature_access.py
-    # see the same plan even when credits.py is the source of truth.
-    if "nestai_tier" in st.session_state:
+    # Mirror into the canonical key ONLY when the plan is still at the
+    # default FREE value — never downgrade a richer plan back to FREE.
+    if st.session_state.nestai_plan == PLAN_FREE and "nestai_tier" in st.session_state:
         legacy_tier = st.session_state.nestai_tier.upper()
-        if legacy_tier in _ALL_PLANS:
+        if legacy_tier in _ALL_PLANS and legacy_tier != PLAN_FREE:
             st.session_state.nestai_plan = legacy_tier
         elif legacy_tier == "PREMIUM":
             st.session_state.nestai_plan = PLAN_PREMIUM
@@ -242,22 +284,34 @@ def is_admin() -> bool:
 
 
 def set_plan(plan: str) -> None:
-    """Change the current session plan.  Only safe to call after auth/payment confirmation."""
+    """Change the current session plan.  Only safe to call after auth/payment confirmation.
+
+    OWNER_TEST can only be set when NESTAI_DEV_MODE or NESTAI_OWNER_MODE is active.
+    """
     _init()
-    if plan in _ALL_PLANS:
-        st.session_state.nestai_plan = plan
-        # Keep credits.py tier in sync
-        if "nestai_tier" in st.session_state:
-            st.session_state.nestai_tier = plan.lower()
+    if plan not in _ALL_PLANS:
+        return
+    if plan == PLAN_OWNER_TEST and not (is_owner_mode_env() or is_dev_mode()):
+        return
+    st.session_state.nestai_plan = plan
+    # Keep credits.py tier in sync using the closest legacy tier
+    if "nestai_tier" in st.session_state:
+        st.session_state.nestai_tier = _CREDITS_TIER_MAP.get(plan, "free")
+
+
+def is_owner_test() -> bool:
+    """Return True if the active plan is OWNER_TEST (unlimited dev/owner mode)."""
+    _init()
+    return st.session_state.nestai_plan == PLAN_OWNER_TEST
 
 
 def capability(feature: str) -> bool:
     """Return True if the current user's plan includes *feature*.
 
-    Always returns True for admin users.
+    Always returns True for admin users and for OWNER_TEST.
     """
     _init()
-    if is_admin():
+    if is_admin() or is_owner_test():
         return True
 
     plan = get_plan()
@@ -271,12 +325,16 @@ def capability(feature: str) -> bool:
     return bool(plan_caps.get(feature, False))
 
 
-def get_quota(quota_name: str) -> int:
+def get_quota(quota_name: str) -> Optional[int]:
     """Return the numeric quota for *quota_name* under the current plan.
 
+    Returns ``None`` for OWNER_TEST (unlimited).
     Returns 0 if the quota is not defined for the plan.
+    Callers must treat ``None`` as unlimited.
     """
     _init()
+    if is_owner_test():
+        return None   # unlimited for OWNER_TEST
     plan = get_plan()
     plan_caps = _CAPABILITIES.get(plan, _CAPABILITIES[PLAN_FREE])
     overrides = st.session_state.nestai_beta_overrides
@@ -315,21 +373,30 @@ def require_capability(feature: str) -> Optional[FeatureUpgradeRequired]:
     )
 
 
-def monthly_analyses_remaining() -> int:
-    """Return how many property analyses remain this billing period."""
+def monthly_analyses_remaining() -> Optional[int]:
+    """Return how many property analyses remain this billing period.
+
+    Returns ``None`` for OWNER_TEST (unlimited).
+    """
     _init()
-    used = int(st.session_state.nestai_analyses_used_month)
     limit = get_quota("monthly_analyses_limit")
+    if limit is None:
+        return None   # unlimited
+    used = int(st.session_state.nestai_analyses_used_month)
     return max(0, limit - used)
 
 
 def consume_monthly_analysis() -> bool:
     """Deduct one analysis from the monthly budget.
 
-    Returns True if the analysis was consumed; False if none remain.
+    Returns True if the analysis was consumed or the plan is unlimited.
+    Returns False if none remain.
     """
     _init()
-    if monthly_analyses_remaining() <= 0:
+    remaining = monthly_analyses_remaining()
+    if remaining is None:
+        return True   # unlimited — no deduction needed
+    if remaining <= 0:
         return False
     st.session_state.nestai_analyses_used_month += 1
     return True
@@ -338,6 +405,8 @@ def consume_monthly_analysis() -> bool:
 def can_save_another_property(current_active_count: int) -> bool:
     """Return True if the user can save an additional property."""
     limit = get_quota("saved_property_limit")
+    if limit is None:
+        return True   # unlimited
     return current_active_count < limit
 
 

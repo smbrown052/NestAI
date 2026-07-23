@@ -36,6 +36,7 @@ from parser.home_listing import (
     get_fixture_path,
     parse_home_listing_text,
 )
+from plan_ui import render_upgrade_prompt
 
 # ── Session-state keys (homes tab only) ──────────────────────────────────────
 
@@ -274,11 +275,7 @@ def _render_save_button(result: ParsedHomeResult) -> None:
             st.session_state.home_text_should_clear = True
             st.rerun()
     else:
-        # Free plan: show replacement prompt
-        st.warning(
-            "⚠️ You've reached your saved-home limit on the **Free plan** (1 active home). "
-            "Archive your existing saved home to make room, or upgrade to Premium."
-        )
+        render_upgrade_prompt("can_save_property", "Save Additional Home")
         oldest_id = get_oldest_active_home_id()
         c_replace, c_upgrade = st.columns(2)
         with c_replace:
@@ -337,7 +334,10 @@ def _render_saved_homes() -> None:
         if capability("can_compare_multiple_properties") and len(filtered) >= 2:
             _render_comparison_table(filtered)
         elif len(active_homes) >= 2:
-            st.info("💡 Upgrade to Premium to compare multiple homes side-by-side.")
+            render_upgrade_prompt(
+                "can_compare_multiple_properties",
+                "Multi-Property Comparison",
+            )
 
     # ── Archived homes ────────────────────────────────────────────────────────
     if archived_homes:
