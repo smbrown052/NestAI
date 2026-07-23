@@ -6,7 +6,6 @@ from enrichment import (
     enrich_units_df,
     compute_monthly_total,
     generate_lifestyle_summary,
-    maps_api_configured,
     walkscore_api_configured,
 )
 from ranking import compute_match_score, explain_match, price_position
@@ -119,9 +118,9 @@ with st.sidebar:
 
     st.divider()
 
-    # ── User Profile (used for Match % and enrichment) ──────────────────────
+    # ── User Profile (used for Match %) ─────────────────────────────────────
     st.markdown("## 🎯 Your Profile")
-    st.caption("Used to compute your personal Match % and commute times.")
+    st.caption("Used to compute your personal Match %.")
 
     commute_dest = st.text_input(
         "🏢 Workplace address",
@@ -399,21 +398,20 @@ if not st.session_state.comparison_df.empty:
         enrich_clicked = st.button(
             "🌐 Enrich with Live Data",
             use_container_width=True,
-            help="Fetches commute times, neighborhood counts, and official Walk Scores. Requires API keys in Streamlit secrets.",
+            help="Uses listing-provided distance info and optionally fetches official Walk Scores.",
         )
     with status_col:
-        if not maps_api_configured() and not walkscore_api_configured():
+        if not walkscore_api_configured():
             st.caption(
-                "Add `GOOGLE_MAPS_API_KEY` and/or `WALKSCORE_API_KEY` to Streamlit secrets "
-                "to enable live neighborhood and commute data."
+                "Using listing-provided distance data. Add `WALKSCORE_API_KEY` to also fetch official Walk/Transit/Bike Scores."
             )
         elif st.session_state.enrichment_done:
-            st.caption("✅ Enrichment complete — showing live neighborhood and commute data.")
+            st.caption("✅ Enrichment complete — showing listing data plus official Walk/Transit/Bike Scores.")
         else:
-            st.caption("Ready to enrich. Click the button to fetch live data.")
+            st.caption("Ready to enrich. Click the button to fetch official Walk/Transit/Bike Scores.")
 
     if enrich_clicked:
-        with st.spinner("Fetching commute times and neighborhood data…"):
+        with st.spinner("Refreshing listing-based data and fetching Walk Score data…"):
             st.session_state.enriched_df = enrich_units_df(
                 st.session_state.comparison_df,
                 st.session_state.commute_destination,

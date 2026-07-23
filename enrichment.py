@@ -1,8 +1,7 @@
 """
 enrichment.py
-External data enrichment for NestAI: commute times, neighborhood places, Walk Score.
-All public functions degrade gracefully when API keys are absent — the app
-continues to work normally, just without the live data layer.
+Data enrichment for NestAI: optional Walk Score plus listing-derived lifestyle text.
+All public functions degrade gracefully when API keys are absent.
 """
 
 import requests
@@ -317,8 +316,8 @@ _ENRICHED_COLS = [
 def enrich_units_df(df: pd.DataFrame, commute_destination: str = "") -> pd.DataFrame:
     """
     Return a copy of *df* with all enrichment columns populated.
+    Uses listing-provided data for commute/proximity and optional Walk Score API.
     Results are cached in st.session_state by address to avoid redundant API calls.
-    Safe to call even when no API keys are configured.
     """
     if df.empty:
         return df
@@ -332,25 +331,6 @@ def enrich_units_df(df: pd.DataFrame, commute_destination: str = "") -> pd.DataF
 
         if dest_key not in address_cache:
             enriched_vals: dict = {}
-
-            # Commute
-            if commute_destination and address:
-                ck = f"commute::{dest_key}"
-                if ck not in st.session_state:
-                    st.session_state[ck] = get_commute_times(address, commute_destination)
-                commute = st.session_state[ck]
-                enriched_vals["commute_driving_min"] = commute.get("driving")
-                enriched_vals["commute_transit_min"] = commute.get("transit")
-                enriched_vals["commute_biking_min"] = commute.get("bicycling")
-                enriched_vals["commute_walking_min"] = commute.get("walking")
-                enriched_vals["commute_display"] = format_commute_display(commute)
-
-            # Neighborhood places
-            if address:
-                ck = f"places::{address}"
-                if ck not in st.session_state:
-                    st.session_state[ck] = get_neighborhood_places(address)
-                enriched_vals.update(st.session_state[ck])
 
             # Official Walk Score
             if address:
