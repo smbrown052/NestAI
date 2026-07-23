@@ -66,8 +66,15 @@ def generate_lifestyle_explanation(
         walk_score = row.get("official_walk_score", row.get("walk_score"))
         explanation_parts.append(f"   • {factor1_score:.0f}/100: Highly walkable area (Walk Score {walk_score})")
     elif factor1_name == "nightlife":
-        nearby_venues = row.get("restaurants_count", row.get("nearby_restaurants", 0)) + row.get("nearby_bars", 0)
-        explanation_parts.append(f"   • {factor1_score:.0f}/100: {nearby_venues}+ entertainment venues nearby")
+        restaurants = row.get("restaurants_count", row.get("nearby_restaurants"))
+        bars = row.get("nearby_bars")
+        restaurants = 0 if pd.isna(restaurants) else restaurants
+        bars = 0 if pd.isna(bars) else bars
+        nearby_venues = restaurants + bars
+        if nearby_venues > 0:
+            explanation_parts.append(f"   • {factor1_score:.0f}/100: {nearby_venues}+ entertainment venues nearby")
+        else:
+            explanation_parts.append(f"   • {factor1_score:.0f}/100: nightlife data limited; score uses neutral fallback")
     elif factor1_name == "gym":
         has_gym = row.get("has_gym", False)
         explanation_parts.append(f"   • {factor1_score:.0f}/100: {'In-unit gym' if has_gym else 'Gyms nearby'}")

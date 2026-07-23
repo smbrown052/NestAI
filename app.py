@@ -66,6 +66,7 @@ for key, default in {
     "enriched_df": pd.DataFrame(),
     "enrichment_done": False,
     "commute_destination": "",
+    "paid_features_enabled": False,
     "negotiation_outputs": {},  # unit key -> negotiation text
 }.items():
     if key not in st.session_state:
@@ -75,12 +76,23 @@ for key, default in {
 # ── Sidebar — AI Apartment Advisor ────────────────────────────────────────────
 
 with st.sidebar:
+    st.markdown("## 💳 Paid Features")
+    st.checkbox(
+        "Enable paid APIs/models",
+        key="paid_features_enabled",
+        help="Turns on features that can incur API/model costs.",
+    )
+    st.caption("Includes AI Advisor, AI Negotiator, and official Walk/Transit/Bike scores.")
+    st.divider()
+
     st.markdown("## 🤖 AI Apartment Advisor")
     st.caption(
         "Ask about commutes, tradeoffs, lifestyle fit, or anything else about your saved units."
     )
 
-    if not openai_configured():
+    if not st.session_state.paid_features_enabled:
+        st.info("Enable paid APIs/models to use the AI Advisor.")
+    elif not openai_configured():
         st.info("Add `OPENAI_API_KEY` to Streamlit secrets to enable the advisor.")
     else:
         units_ctx = (
@@ -120,17 +132,7 @@ with st.sidebar:
 
     # ── User Profile (used for Match %) ─────────────────────────────────────
     st.markdown("## 🎯 Your Profile")
-    st.caption("Used to compute your personal Match %.")
-
-    commute_dest = st.text_input(
-        "🏢 Workplace address",
-        value=st.session_state.commute_destination,
-        placeholder="e.g. 1600 Pennsylvania Ave NW, Washington DC",
-        key="commute_dest_input",
-    )
-    if commute_dest != st.session_state.commute_destination:
-        st.session_state.commute_destination = commute_dest
-        st.session_state.enrichment_done = False
+    st.caption("Used to compute your personal Match %. Commute uses listing distance data.")
 
     max_budget = st.number_input(
         "💰 Max monthly budget ($)", min_value=0, step=50,
@@ -216,15 +218,21 @@ left, right = st.columns([1.15, 0.85], gap="large")
 with left:
     st.markdown("### 1. Paste Listing Text")
 
-    c1, c2 = st.columns(2)
+    c1, c2, c3 = st.columns(3)
 
     with c1:
-        if st.button("🏢 Load Example Listing", use_container_width=True):
+        if st.button("🏢 Load Example 1", use_container_width=True):
             with open("data/app_listing_1.txt", "r", encoding="utf-8") as f:
                 st.session_state.listing_text = f.read()
             st.rerun()
 
     with c2:
+        if st.button("🏢 Load Example 2", use_container_width=True):
+            with open("data/app_listing_2.txt", "r", encoding="utf-8") as f:
+                st.session_state.listing_text = f.read()
+            st.rerun()
+
+    with c3:
         if st.button("🧹 Clear Text", use_container_width=True):
             st.session_state.listing_text = ""
             st.session_state.last_result = None
@@ -244,11 +252,12 @@ with right:
     st.markdown("### How to use it")
     st.write("""
     1. Open an apartment listing on Apartments.com.
-    2. Press **Ctrl + A** then **Ctrl + C**.
-    3. Paste the text here and click **Analyze Apartment**.
-    4. Save units into your comparison table.
-    5. Set your profile in the sidebar and click **Enrich with Live Data**.
-    6. Filter, rank, and let the AI Advisor help you decide.
+    2. Expand all floor plans and click **Show More** so all units are visible.
+    3. Press **Ctrl + A** then **Ctrl + C**.
+    4. Paste the text here and click **Analyze Apartment**.
+    5. Save units into your comparison table (or load Example 1/2).
+    6. Optionally enable paid APIs/models for AI + official Walk/Transit/Bike scores.
+    7. Filter, rank, and review tradeoffs.
     """)
 
 if analyze:
@@ -396,22 +405,25 @@ if not st.session_state.comparison_df.empty:
     enrich_col, status_col = st.columns([1, 2])
     with enrich_col:
         enrich_clicked = st.button(
-            "🌐 Enrich with Live Data",
+            "🌐 Enrich (Paid: Official Scores)",
             use_container_width=True,
-            help="Uses listing-provided distance info and optionally fetches official Walk Scores.",
+            disabled=not st.session_state.paid_features_enabled,
+            help="Fetches official Walk/Transit/Bike scores when paid APIs/models are enabled.",
         )
     with status_col:
-        if not walkscore_api_configured():
+        if not st.session_state.paid_features_enabled:
+            st.caption("Free mode: using listing-provided data only.")
+        elif not walkscore_api_configured():
             st.caption(
-                "Using listing-provided distance data. Add `WALKSCORE_API_KEY` to also fetch official Walk/Transit/Bike Scores."
+                "Add `WALKSCORE_API_KEY` to fetch official Walk/Transit/Bike scores."
             )
         elif st.session_state.enrichment_done:
-            st.caption("✅ Enrichment complete — showing listing data plus official Walk/Transit/Bike Scores.")
+            st.caption("✅ Enrichment complete — showing official Walk/Transit/Bike scores.")
         else:
-            st.caption("Ready to enrich. Click the button to fetch official Walk/Transit/Bike Scores.")
+            st.caption("Ready to enrich.")
 
-    if enrich_clicked:
-        with st.spinner("Refreshing listing-based data and fetching Walk Score data…"):
+    if enrich_clicked and st.session_state.paid_features_enabled:
+        with st.spinner("Fetching official Walk/Transit/Bike scores…"):
             st.session_state.enriched_df = enrich_units_df(
                 st.session_state.comparison_df,
                 st.session_state.commute_destination,
@@ -445,7 +457,7 @@ if not st.session_state.comparison_df.empty:
 
     # ── Rankings ───────────────────────────────────────────────────────────
     st.markdown("### <a id='rankings'>🏆 Nest AI Recommendations</a>", unsafe_allow_html=True)
-    st.caption("Ranked by your lifestyle priorities, live neighborhood data, and your personal profile.")
+    st.caption("Ranked by your lifestyle priorities, listing data, and your personal profile.")
 
     if filtered_comp_df.empty:
         st.warning("No saved units match your filters.")
@@ -536,6 +548,9 @@ if not st.session_state.comparison_df.empty:
             )
 
         st.markdown("#### 🎯 Lifestyle Breakdown")
+        st.caption(
+            "Lifestyle Score uses 5 weighted categories. Match % is profile-fit only, so the two can differ."
+        )
         tradeoff = TradeoffAnalyzer(ranked_df) if len(ranked_df) > 1 else None
         regret_analyzer = RegretAnalyzer(ranked_df, weights)
         for rank, (_, row) in enumerate(top3.iterrows(), start=1):
@@ -679,71 +694,87 @@ if not st.session_state.comparison_df.empty:
         # ── Tradeoffs ──────────────────────────────────────────────────────
         if len(top3) > 1:
             st.markdown("#### 📊 Tradeoffs")
-            st.caption("How each top-ranked apartment compares to the others on key criteria.")
-
-            tradeoff_criteria = [
-                ("price_num", "price", False),
-                ("sqft_num", "square footage", True),
-                ("commute_transit_min", "transit commute", False),
-                ("metro_min", "metro distance", False),
-                ("floor", "floor level", True),
-                ("official_walk_score", "walk score", True),
-                ("walk_score", "walk score (listing)", True),
-                ("safety_score", "safety score", True),
-            ]
+            st.caption(
+                "Major differences are shown first; if units are similar, tie-breakers show specific amenities."
+            )
 
             top3_rows = list(top3.iterrows())
-            apt_labels = {
-                idx: f"#{rank} (Unit {row.get('unit', 'N/A')})"
-                for rank, (idx, row) in enumerate(top3_rows, start=1)
-            }
+
+            def apt_label(r):
+                return f"{r.get('property', 'Unknown')} · Unit {r.get('unit', 'N/A')}"
+
+            major_metric_rules = [
+                ("price_num", 150.0, "price"),
+                ("sqft_num", 100.0, "space"),
+                ("metro_min", 4.0, "metro time"),
+                ("walk_score", 8.0, "walk score"),
+                ("official_walk_score", 8.0, "walk score"),
+                ("safety_score", 8.0, "safety score"),
+            ]
+
+            amenity_fields = [
+                ("has_gym", "gym"),
+                ("has_fitness", "fitness center"),
+                ("has_pool", "pool"),
+                ("has_laundry", "in-unit laundry"),
+                ("has_parking", "parking"),
+                ("has_balcony", "balcony"),
+                ("has_den", "den"),
+                ("has_security", "24hr security"),
+                ("has_concierge", "concierge"),
+            ]
 
             for rank, (idx, row) in enumerate(top3_rows, start=1):
-                label = apt_labels[idx]
-                bullets: list[str] = []
-                seen_criteria: set[str] = set()
-
-                for col, display_name, higher_is_better in tradeoff_criteria:
-                    if display_name in seen_criteria:
-                        continue
-                    if col not in ranked_df.columns:
-                        continue
-                    val = row.get(col)
-                    try:
-                        val = float(val)
-                        if pd.isna(val):
-                            raise ValueError("missing")
-                    except (ValueError, TypeError):
-                        continue
-
-                    seen_criteria.add(display_name)
+                label = apt_label(row)
+                with st.expander(f"{label} — Tradeoffs", expanded=(rank == 1)):
                     for other_idx, other_row in top3_rows:
                         if other_idx == idx:
                             continue
-                        other_label = apt_labels[other_idx]
-                        other_val = other_row.get(col)
-                        try:
-                            other_val = float(other_val)
-                            if pd.isna(other_val):
-                                raise ValueError("missing")
-                        except (ValueError, TypeError):
+
+                        other_label = apt_label(other_row)
+                        major_diffs = []
+
+                        for col, threshold, name in major_metric_rules:
+                            if col not in ranked_df.columns:
+                                continue
+                            v1 = row.get(col)
+                            v2 = other_row.get(col)
+                            if pd.isna(v1) or pd.isna(v2):
+                                continue
+                            diff = float(v1) - float(v2)
+                            if abs(diff) < threshold:
+                                continue
+
+                            if name == "price":
+                                direction = "higher" if diff > 0 else "lower"
+                                major_diffs.append(f"{abs(diff):.0f} {direction} monthly rent")
+                            elif name == "space":
+                                direction = "more" if diff > 0 else "less"
+                                major_diffs.append(f"{abs(diff):.0f} sq ft {direction} space")
+                            else:
+                                direction = "higher" if diff > 0 else "lower"
+                                major_diffs.append(f"{abs(diff):.0f} points {direction} {name}")
+
+                        if major_diffs:
+                            st.write(f"- vs **{other_label}**: " + "; ".join(major_diffs))
                             continue
 
-                        if (higher_is_better and val > other_val) or (
-                            not higher_is_better and val < other_val
-                        ):
-                            bullets.append(f"Better than {other_label} on {display_name}")
-                        elif val == other_val:
-                            bullets.append(f"Equal to {other_label} on {display_name}")
-                        else:
-                            bullets.append(f"Not better than {other_label} on {display_name}")
+                        amenity_diffs = []
+                        for field, name in amenity_fields:
+                            has_current = bool(row.get(field, False))
+                            has_other = bool(other_row.get(field, False))
+                            if has_current and not has_other:
+                                amenity_diffs.append(f"has {name}")
+                            elif has_other and not has_current:
+                                amenity_diffs.append(f"missing {name}")
 
-                with st.expander(f"{label} — Tradeoffs", expanded=(rank == 1)):
-                    for bullet in bullets:
-                        st.write(f"- {bullet}")
+                        if amenity_diffs:
+                            st.write(f"- vs **{other_label}**: " + ", ".join(amenity_diffs))
+                        else:
+                            st.write(f"- vs **{other_label}**: very similar on major metrics and amenities.")
 
         # ── AI Rent Negotiator ─────────────────────────────────────────────
-        if openai_configured():
+        if st.session_state.paid_features_enabled and openai_configured():
             st.markdown("#### 🤝 AI Rent Negotiator")
             st.caption(
                 "Generate a personalized negotiation email and talking points for any unit."
@@ -782,6 +813,8 @@ if not st.session_state.comparison_df.empty:
                                 unsafe_allow_html=True,
                             ),
                         )
+        elif openai_configured():
+            st.caption("Enable paid APIs/models to use the AI Rent Negotiator.")
 
         # ── Full ranked table ──────────────────────────────────────────────
         st.markdown("### <a id='full-table'>📊 Full Ranking Table</a>", unsafe_allow_html=True)

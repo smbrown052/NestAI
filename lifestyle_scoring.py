@@ -89,10 +89,17 @@ class LifestyleScorer:
         - Count nearby restaurants, bars, venues
         - Locations with 15+ entertainment venues nearby = 100
         """
-        nearby_restaurants = row.get("restaurants_count", row.get("nearby_restaurants", 0))
-        nearby_bars = row.get("nearby_bars", 0)
-        nearby_venues = row.get("nearby_venues", 0)
-        
+        nearby_restaurants = row.get("restaurants_count", row.get("nearby_restaurants"))
+        nearby_bars = row.get("nearby_bars")
+        nearby_venues = row.get("nearby_venues")
+
+        if pd.isna(nearby_restaurants) and pd.isna(nearby_bars) and pd.isna(nearby_venues):
+            return 50.0  # Neutral when nightlife inputs are unavailable
+
+        nearby_restaurants = 0 if pd.isna(nearby_restaurants) else nearby_restaurants
+        nearby_bars = 0 if pd.isna(nearby_bars) else nearby_bars
+        nearby_venues = 0 if pd.isna(nearby_venues) else nearby_venues
+
         total_nearby = nearby_restaurants + nearby_bars + nearby_venues
         
         # Cap at 100
@@ -131,9 +138,16 @@ class LifestyleScorer:
         - Building gym = +20
         - Nearby gyms = +score based on count
         """
-        has_gym = row.get("has_gym", False)
-        has_fitness = row.get("has_fitness", False)
-        nearby_gyms = row.get("nearby_gyms", 0)
+        has_gym_raw = row.get("has_gym")
+        has_fitness_raw = row.get("has_fitness")
+        nearby_gyms_raw = row.get("nearby_gyms")
+
+        if has_gym_raw is None and has_fitness_raw is None and pd.isna(nearby_gyms_raw):
+            return 50.0  # Neutral when gym inputs are unavailable
+
+        has_gym = bool(has_gym_raw) if pd.notna(has_gym_raw) else False
+        has_fitness = bool(has_fitness_raw) if pd.notna(has_fitness_raw) else False
+        nearby_gyms = 0 if pd.isna(nearby_gyms_raw) else nearby_gyms_raw
         
         score = 20.0  # Baseline
         

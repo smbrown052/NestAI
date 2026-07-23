@@ -16,6 +16,12 @@ class TradeoffAnalyzer:
     def __init__(self, ranked_df: pd.DataFrame):
         """Initialize with a ranked DataFrame."""
         self.ranked_df = ranked_df
+
+    @staticmethod
+    def _label(row: pd.Series) -> str:
+        prop = row.get("property", "Unknown Property")
+        unit = row.get("unit", "N/A")
+        return f"{prop} · Unit {unit}"
     
     def get_difference_metrics(self, apt1: pd.Series, apt2: pd.Series) -> Dict:
         """
@@ -97,10 +103,13 @@ class TradeoffAnalyzer:
         
         diffs = self.get_difference_metrics(apt1, apt2)
         
-        unit1 = apt1.get("unit", "A")
-        unit2 = apt2.get("unit", "B")
-        
-        explanation = f"**Comparing Unit {unit1} (Rank #{apt1_rank + 1}) vs Unit {unit2} (Rank #{apt2_rank + 1})**\n\n"
+        label1 = self._label(apt1)
+        label2 = self._label(apt2)
+
+        explanation = (
+            f"**Comparing {label1} (Rank #{apt1_rank + 1})**\n"
+            f"**vs {label2} (Rank #{apt2_rank + 1})**\n\n"
+        )
         
         price_diff = diffs["price_diff"]
         
@@ -135,6 +144,11 @@ class TradeoffAnalyzer:
         for amenity in diffs["lost_amenities"]:
             gains.append(f"❌ loses {amenity}")
         
+        if not gains:
+            explanation += "• Major metrics are very similar.\n"
+            explanation += "• Check amenities/availability as tie-breakers.\n"
+            return explanation
+
         for gain in gains:
             explanation += f"• {gain}\n"
         
