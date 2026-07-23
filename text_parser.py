@@ -48,6 +48,67 @@ def parse_has_den(floorplan_name, nearby_text=""):
 
     return False
 
+def extract_amenities_from_text(text):
+    """
+    Extract amenities from full apartment listing text.
+    Searches Apartment Features, Community Amenities, and FAQ sections.
+    """
+    amenities = {
+        "has_laundry": False,
+        "has_gym": False,
+        "has_fitness": False,
+        "has_pool": False,
+        "has_parking": False,
+        "has_balcony": False,
+        "has_patio": False,
+        "has_security": False,
+        "has_concierge": False,
+    }
+    
+    text_lower = text.lower()
+    
+    # Look for laundry mentions
+    if "washer" in text_lower and "dryer" in text_lower:
+        amenities["has_laundry"] = True
+    elif "in-unit laundry" in text_lower or "in unit laundry" in text_lower:
+        amenities["has_laundry"] = True
+    elif re.search(r"washer\s*[/&]\s*dryer", text_lower):
+        amenities["has_laundry"] = True
+    
+    # Look for gym/fitness
+    if "gym" in text_lower or "fitness" in text_lower or "fitness center" in text_lower:
+        if "gym" in text_lower:
+            amenities["has_gym"] = True
+        if "fitness" in text_lower:
+            amenities["has_fitness"] = True
+    
+    # Look for pool
+    if "pool" in text_lower or "swimming pool" in text_lower:
+        amenities["has_pool"] = True
+    
+    # Look for parking
+    if "parking" in text_lower or "garage" in text_lower or "covered parking" in text_lower:
+        amenities["has_parking"] = True
+    
+    # Look for balcony/patio
+    if "balcony" in text_lower or "patio" in text_lower or "deck" in text_lower:
+        if "balcony" in text_lower:
+            amenities["has_balcony"] = True
+        if "patio" in text_lower or "patios" in text_lower:
+            amenities["has_patio"] = True
+    
+    # Look for security/concierge
+    if "24" in text_lower and "hour" in text_lower and "security" in text_lower:
+        amenities["has_security"] = True
+    elif "security" in text_lower:
+        amenities["has_security"] = True
+    
+    if "concierge" in text_lower:
+        amenities["has_concierge"] = True
+    
+    return amenities
+
+
 def parse_nearby_places(lines):
     nearby = []
     current_type = None
@@ -239,6 +300,9 @@ def parse_apartment_text(text):
     if not address:
         address = lines[1] if len(lines) > 1 else ""
 
+    # Extract amenities from full text
+    building_amenities = extract_amenities_from_text(text)
+
     # Nearby uses the FULL page
     nearby_places = parse_nearby_places(lines)
     building_nearby = summarize_building_nearby(nearby_places)
@@ -262,6 +326,7 @@ def parse_apartment_text(text):
             "address": address,
             "nearby_places": nearby_places,
             "building_nearby": building_nearby,
+            "building_amenities": building_amenities,
             "units": [],
             "unit_count": 0,
         }
@@ -390,6 +455,8 @@ def parse_apartment_text(text):
                         "safety_score": safety_score,
                     }
 
+                    # Add building amenities to each unit
+                    unit.update(building_amenities)
                     unit.update(building_nearby)
                     units.append(unit)
 
@@ -403,6 +470,7 @@ def parse_apartment_text(text):
         "address": address,
         "nearby_places": nearby_places,
         "building_nearby": building_nearby,
+        "building_amenities": building_amenities,
         "units": units,
         "unit_count": len(units),
     }
@@ -456,5 +524,17 @@ def filter_units_by_request(df, request):
 
     if "largest" in req or "most sqft" in req:
         filtered = filtered.sort_values("sqft_num", ascending=False)
+
+    if "laundry" in req or "washer" in req or "dryer" in req:
+        filtered = filtered[filtered["has_laundry"] == True]
+
+    if "gym" in req or "fitness" in req:
+        filtered = filtered[(filtered["has_gym"] == True) | (filtered["has_fitness"] == True)]
+
+    if "pool" in req:
+        filtered = filtered[filtered["has_pool"] == True]
+
+    if "parking" in req:
+        filtered = filtered[filtered["has_parking"] == True]
 
     return filtered

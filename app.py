@@ -11,6 +11,10 @@ from enrichment import (
 )
 from ranking import compute_match_score, explain_match, price_position
 from llm_helpers import generate_negotiation_script, advisor_chat_response
+from lifestyle_scoring import LifestyleScorer, get_priority_weights_from_sliders
+from lifestyle_explanations import generate_lifestyle_explanation, generate_amenities_list
+from tradeoff_assistant import TradeoffAnalyzer
+from regret_analyzer import RegretAnalyzer
 
 st.set_page_config(page_title="NestAI", page_icon="🏠", layout="wide")
 st.title("🏠 NestAI")
@@ -30,6 +34,23 @@ def openai_configured() -> bool:
         return bool(st.secrets.get("OPENAI_API_KEY", ""))
     except Exception:
         return False
+
+
+def get_priority_rank(priority_name: str, weights: dict) -> str:
+    sorted_priorities = sorted(weights.items(), key=lambda item: item[1], reverse=True)
+    position = next(
+        (idx for idx, (name, _) in enumerate(sorted_priorities) if name == priority_name),
+        None,
+    )
+
+    if position is None:
+        return "low priority"
+
+    current_weight = weights[priority_name]
+    tied = [name for name, weight in weights.items() if weight == current_weight and name != priority_name]
+    ordinal = ["1st", "2nd", "3rd", "4th", "5th"]
+    rank_str = ordinal[position] if position < len(ordinal) else f"{position + 1}th"
+    return f"tied for {rank_str}" if tied else rank_str
 
 
 # ── Session state ─────────────────────────────────────────────────────────────
@@ -143,6 +164,26 @@ with st.sidebar:
         "walk_score_priority": walk_priority,
     }
 
+    st.divider()
+    st.markdown("## 📑 Navigation")
+    if not st.session_state.comparison_df.empty:
+        st.markdown(
+            """
+- [Parse Listing](#parse-listing)
+- [Property Summary](#property-summary)
+- [Lifestyle Priorities](#lifestyle-priorities)
+- [Rankings](#rankings)
+- [Full Table](#full-table)
+            """
+        )
+        stat_col1, stat_col2 = st.columns(2)
+        with stat_col1:
+            st.metric("Total Units", len(st.session_state.comparison_df))
+        with stat_col2:
+            st.metric("Buildings", st.session_state.comparison_df["property"].nunique())
+    else:
+        st.caption("Paste an apartment listing to get started.")
+
 
 # ── Hero / Intro ──────────────────────────────────────────────────────────────
 
@@ -225,7 +266,7 @@ if st.session_state.last_result:
     result = st.session_state.last_result
     building = result.get("building_nearby", {})
 
-    st.markdown("### 🏠 Property Summary")
+    st.markdown("### <a id='property-summary'>🏠 Property Summary</a>", unsafe_allow_html=True)
 
     property_title = result.get("property_title") or "Unknown"
     st.markdown(f"**{property_title}**")
@@ -307,10 +348,23 @@ if st.session_state.last_result:
 
 # ── Filter & Rank ─────────────────────────────────────────────────────────────
 
-st.markdown("### 🔎 Filter & Rank Your Apartments")
+st.markdown("### <a id='lifestyle-priorities'>🎯 Lifestyle Priorities</a>", unsafe_allow_html=True)
 
 if not st.session_state.comparison_df.empty:
     comp_df = st.session_state.comparison_df.copy()
+
+    st.info("Adjust these sliders to personalize the lifestyle ranking.")
+    priority_col1, priority_col2, priority_col3 = st.columns(3)
+    with priority_col1:
+        commute_priority = st.slider("🚇 Commute", 1, 5, 3, key="commute_slider")
+        safety_priority = st.slider("🛡️ Safety", 1, 5, 3, key="safety_slider")
+    with priority_col2:
+        nightlife_priority = st.slider("🍻 Nightlife", 1, 5, 2, key="nightlife_slider")
+        budget_priority = st.slider("💰 Budget", 1, 5, 4, key="budget_slider")
+    with priority_col3:
+        gym_priority = st.slider("💪 Gym/Fitness", 1, 5, 2, key="gym_slider")
+
+    st.markdown("### 🔎 Filter Your Apartments")
 
     min_price = int(comp_df["price_num"].min())
     max_price = int(comp_df["price_num"].max())
@@ -383,14 +437,22 @@ if not st.session_state.comparison_df.empty:
 
     filtered_comp_df = filter_units_by_request(filtered_comp_df, llm_request)
 
+    weights = get_priority_weights_from_sliders(
+        commute_priority,
+        safety_priority,
+        nightlife_priority,
+        budget_priority,
+        gym_priority,
+    )
+
     # ── Rankings ───────────────────────────────────────────────────────────
-    st.markdown("### 🏆 Nest AI Recommendations")
-    st.caption("Ranked by price, space, commute, walkability, and your personal profile.")
+    st.markdown("### <a id='rankings'>🏆 Nest AI Recommendations</a>", unsafe_allow_html=True)
+    st.caption("Ranked by your lifestyle priorities, live neighborhood data, and your personal profile.")
 
     if filtered_comp_df.empty:
         st.warning("No saved units match your filters.")
     else:
-        ranked_df = filtered_comp_df.copy()
+        ranked_df = LifestyleScorer(weights).score_apartments(filtered_comp_df.copy())
 
         ranked_df["price_score"] = ranked_df["price_num"].rank(ascending=False)
         ranked_df["space_score"] = ranked_df["sqft_num"].rank(ascending=True)
@@ -437,7 +499,10 @@ if not st.session_state.comparison_df.empty:
             + ranked_df["safety_score_rank"] * 0.05
         )
 
-        ranked_df = ranked_df.sort_values("nest_score", ascending=False)
+        ranked_df = ranked_df.sort_values(
+            ["lifestyle_score", "nest_score"],
+            ascending=[False, False],
+        )
         top3 = ranked_df.head(3)
 
         # ── Top-3 badges ───────────────────────────────────────────────────
@@ -466,11 +531,86 @@ if not st.session_state.comparison_df.empty:
 
             st.success(
                 f"#{i} • {row.get('property', 'Unknown')} • Unit {row.get('unit', 'N/A')}"
-                f"{match_badge}  \n"
+                f"{match_badge}  |  Lifestyle {row.get('lifestyle_score', 0):.0f}/100  \n"
                 f"${price_display:,}/mo{price_badge} • {sqft_display} sqft • "
                 f"{row.get('beds', '')} • {row.get('baths', '')}"
                 f"{commute_line}"
             )
+
+        st.markdown("#### 🎯 Lifestyle Breakdown")
+        tradeoff = TradeoffAnalyzer(ranked_df) if len(ranked_df) > 1 else None
+        regret_analyzer = RegretAnalyzer(ranked_df, weights)
+        for rank, (_, row) in enumerate(top3.iterrows(), start=1):
+            unit_id = row.get("unit", f"Unit {rank}")
+            overview_price = row.get("price_num")
+            overview_sqft = row.get("sqft_num")
+            with st.expander(
+                f"Rank #{rank} · {row.get('property', 'Unknown')} · Unit {unit_id}",
+                expanded=(rank == 1),
+            ):
+                tab1, tab2, tab3, tab4 = st.tabs(
+                    ["📊 Overview", "🏠 Amenities", "💡 Tradeoffs", "⚠️ Concerns"]
+                )
+                component_scores = {
+                    "commute": row.get("lifestyle_commute_score", 0),
+                    "safety": row.get("lifestyle_safety_score", 0),
+                    "nightlife": row.get("lifestyle_nightlife_score", 0),
+                    "budget": row.get("lifestyle_budget_score", 0),
+                    "gym": row.get("lifestyle_gym_score", 0),
+                }
+
+                with tab1:
+                    score_cols = st.columns(4)
+                    score_cols[0].metric("Lifestyle Score", f"{row.get('lifestyle_score', 0):.0f}/100")
+                    score_cols[1].metric("Nest Score", f"{row.get('nest_score', 0):.2f}")
+                    score_cols[2].metric(
+                        "Price",
+                        f"${int(overview_price) if pd.notna(overview_price) else 0:,}/mo",
+                    )
+                    score_cols[3].metric(
+                        "Sq Ft",
+                        f"{int(overview_sqft) if pd.notna(overview_sqft) else 0}",
+                    )
+                    st.markdown(
+                        generate_lifestyle_explanation(
+                            rank,
+                            row,
+                            component_scores,
+                            weights,
+                            ranked_df,
+                            priority_rank_fn=lambda name: get_priority_rank(name, weights),
+                        )
+                    )
+
+                with tab2:
+                    st.markdown("**Building Amenities**")
+                    st.markdown(generate_amenities_list(row))
+                    amenity_col1, amenity_col2 = st.columns(2)
+                    with amenity_col1:
+                        st.write(f"🚇 **Metro:** {row.get('metro_min', '—')} min")
+                        st.write(f"🏥 **Hospital:** {row.get('hospital_min', '—')} min")
+                    with amenity_col2:
+                        walk_score_value = row.get("official_walk_score") or row.get("walk_score") or "—"
+                        st.write(f"🚶 **Walk Score:** {walk_score_value}")
+                        st.write(f"💪 **Nearby Gyms:** {row.get('nearby_gyms', '—')}")
+
+                with tab3:
+                    if tradeoff and rank > 1:
+                        st.markdown(tradeoff.generate_tradeoff_explanation(rank - 2, rank - 1))
+                    else:
+                        st.info("This is your current top recommendation.")
+
+                with tab4:
+                    analysis = regret_analyzer.analyze_apartment(rank - 1)
+                    if analysis.get("concerns"):
+                        st.write(f"**Regret Risk: {analysis['regret_risk']:.0f}/100**")
+                        st.write(analysis["recommendation"])
+                        for concern in analysis["concerns"]:
+                            st.warning(
+                                f"{concern['icon']} **{concern['title']}**\n\n{concern['message']}"
+                            )
+                    else:
+                        st.success("✅ No major concerns!")
 
         # ── Neighborhood Profiles for top units ────────────────────────────
         if st.session_state.enrichment_done:
@@ -646,6 +786,8 @@ if not st.session_state.comparison_df.empty:
                         )
 
         # ── Full ranked table ──────────────────────────────────────────────
+        st.markdown("### <a id='full-table'>📊 Full Ranking Table</a>", unsafe_allow_html=True)
+
         display_cols = [
             "property", "floorplan", "unit", "floor",
             "price", "beds", "baths", "sqft",
@@ -658,17 +800,31 @@ if not st.session_state.comparison_df.empty:
             "walk_score", "safety_score",
             "nearby_groceries", "restaurants_count", "nearby_gyms", "nearby_parks",
             "lifestyle_summary",
+            "lifestyle_score",
+            "lifestyle_commute_score",
+            "lifestyle_safety_score",
+            "lifestyle_nightlife_score",
+            "lifestyle_budget_score",
+            "lifestyle_gym_score",
             "nest_score",
         ]
 
         display_cols = [c for c in display_cols if c in ranked_df.columns]
         clean_ranked_df = ranked_df[display_cols].copy()
 
-        if "nest_score" in clean_ranked_df.columns:
-            clean_ranked_df["nest_score"] = clean_ranked_df["nest_score"].round(2)
+        for score_col in (
+            "nest_score",
+            "lifestyle_score",
+            "lifestyle_commute_score",
+            "lifestyle_safety_score",
+            "lifestyle_nightlife_score",
+            "lifestyle_budget_score",
+            "lifestyle_gym_score",
+        ):
+            if score_col in clean_ranked_df.columns:
+                clean_ranked_df[score_col] = clean_ranked_df[score_col].round(2)
 
         st.dataframe(clean_ranked_df, use_container_width=True)
 
 else:
     st.info("Add units to compare first. Paste a listing above and click **Save Units**.")
-
