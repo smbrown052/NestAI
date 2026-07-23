@@ -694,70 +694,6 @@ if not st.session_state.comparison_df.empty:
         working_df = working_df.copy()
         working_df["user_notes"] = st.session_state.comparison_df["user_notes"].values
 
-    # ── Unit Notes & Annotations ───────────────────────────────────────────
-    st.markdown("### 📝 Unit Notes & Annotations")
-    st.caption(
-        "Add custom details to any unit (e.g. metro line, noise level, pet policy notes). "
-        "Notes are included when NestAI filters your apartments."
-    )
-
-    note_display_cols = [c for c in ["property", "unit", "user_notes"] if c in st.session_state.comparison_df.columns]
-    edited_notes = st.data_editor(
-        st.session_state.comparison_df[note_display_cols].copy(),
-        column_config={
-            "property": st.column_config.TextColumn("Property", disabled=True, width="medium"),
-            "unit": st.column_config.TextColumn("Unit", disabled=True, width="small"),
-            "user_notes": st.column_config.TextColumn(
-                "Your Notes",
-                help="E.g. 'Green line metro', 'loud street noise', 'dog-friendly'. Used by NestAI filter.",
-                width="large",
-            ),
-        },
-        use_container_width=True,
-        hide_index=True,
-        key="unit_notes_editor",
-    )
-
-    notes_action_col1, notes_action_col2 = st.columns([2, 1])
-    with notes_action_col1:
-        apply_to_building = st.checkbox(
-            "Apply note to all units in same building",
-            help="When checked, a non-empty note on any row will be copied to every other unit in the same building.",
-        )
-    with notes_action_col2:
-        save_notes_clicked = st.button("💾 Save Notes", use_container_width=True)
-
-    if save_notes_clicked:
-        updated_notes = edited_notes["user_notes"].fillna("").tolist()
-
-        if apply_to_building and "property" in edited_notes.columns:
-            # Build a map: property → first non-empty note
-            building_note_map: dict[str, str] = {}
-            for prop, note in zip(edited_notes["property"].tolist(), updated_notes):
-                if note.strip() and prop not in building_note_map:
-                    building_note_map[str(prop)] = note.strip()
-            # Apply building-level note to all rows in that building
-            updated_notes = [
-                building_note_map.get(str(prop), note)
-                for prop, note in zip(
-                    st.session_state.comparison_df["property"].tolist(),
-                    updated_notes,
-                )
-            ]
-
-        st.session_state.comparison_df["user_notes"] = updated_notes
-
-        # Keep enriched_df in sync so notes survive enrichment
-        if (
-            st.session_state.enrichment_done
-            and not st.session_state.enriched_df.empty
-            and len(st.session_state.enriched_df) == len(st.session_state.comparison_df)
-        ):
-            st.session_state.enriched_df["user_notes"] = updated_notes
-
-        st.success("Notes saved!")
-        st.rerun()
-
     filtered_comp_df = working_df[
         (working_df["price_num"] >= price_range[0])
         & (working_df["price_num"] <= price_range[1])
@@ -1099,9 +1035,20 @@ if not st.session_state.comparison_df.empty:
         # ── Full ranked table ──────────────────────────────────────────────
         st.markdown("### <a id='full-table'>📊 Full Ranking Table</a>", unsafe_allow_html=True)
 
+        # Compute price position vs same-bed average
+        def _fmt_vs_avg(row_):
+            diff, _ = price_position(row_, ranked_df)
+            if diff is None:
+                return ""
+            if diff >= 0:
+                return f"${abs(diff):,} above avg"
+            return f"saves ${abs(diff):,}"
+
+        ranked_df["vs_avg_rent"] = ranked_df.apply(_fmt_vs_avg, axis=1)
+
         display_cols = [
             "property", "floorplan", "unit", "floor",
-            "price", "beds", "baths", "sqft",
+            "price", "vs_avg_rent", "beds", "baths", "sqft",
             "has_den", "availability",
             "nearest_metro", "metro_travel_mode", "metro_min",
             "commute_display",
@@ -1136,7 +1083,74 @@ if not st.session_state.comparison_df.empty:
             if score_col in clean_ranked_df.columns:
                 clean_ranked_df[score_col] = clean_ranked_df[score_col].round(1)
 
-        st.dataframe(clean_ranked_df, use_container_width=True)
+        _disabled_cols = {
+            c: st.column_config.Column(disabled=True)
+            for c in display_cols
+            if c != "user_notes"
+        }
+        _disabled_cols["vs_avg_rent"] = st.column_config.TextColumn(
+            "vs Avg Rent", disabled=True
+        )
+        _disabled_cols["user_notes"] = st.column_config.TextColumn(
+            "Your Notes",
+            help="E.g. 'Green line metro', 'loud street noise', 'dog-friendly'. Used by NestAI filter.",
+            width="medium",
+        )
+
+        edited_full_table = st.data_editor(
+            clean_ranked_df,
+            column_config=_disabled_cols,
+            use_container_width=True,
+            hide_index=True,
+            key="full_table_editor",
+        )
+
+        notes_col1, notes_col2 = st.columns([2, 1])
+        with notes_col1:
+            apply_to_building = st.checkbox(
+                "Apply note to all units in same building",
+                help="When checked, a non-empty note on any row will be copied to every other unit in the same building.",
+                key="full_table_apply_building",
+            )
+        with notes_col2:
+            save_notes_clicked = st.button("💾 Save Notes", use_container_width=True, key="full_table_save_notes")
+
+        if save_notes_clicked:
+            updated_notes_map = dict(
+                zip(clean_ranked_df.index, edited_full_table["user_notes"].fillna("").tolist())
+            )
+
+            if apply_to_building and "property" in edited_full_table.columns:
+                building_note_map: dict[str, str] = {}
+                for idx, row_ in edited_full_table.iterrows():
+                    note = str(row_.get("user_notes", "") or "").strip()
+                    prop = str(row_.get("property", ""))
+                    if note and prop not in building_note_map:
+                        building_note_map[prop] = note
+                # Expand building notes across all rows in comparison_df
+                for idx in st.session_state.comparison_df.index:
+                    prop = str(st.session_state.comparison_df.at[idx, "property"])
+                    if prop in building_note_map:
+                        st.session_state.comparison_df.at[idx, "user_notes"] = building_note_map[prop]
+                # Also apply to ranked rows
+                for idx, note in updated_notes_map.items():
+                    prop = str(ranked_df.at[idx, "property"]) if idx in ranked_df.index else ""
+                    if prop not in building_note_map:
+                        st.session_state.comparison_df.at[idx, "user_notes"] = note
+            else:
+                for idx, note in updated_notes_map.items():
+                    st.session_state.comparison_df.at[idx, "user_notes"] = note
+
+            # Keep enriched_df in sync so notes survive enrichment
+            if (
+                st.session_state.enrichment_done
+                and not st.session_state.enriched_df.empty
+                and len(st.session_state.enriched_df) == len(st.session_state.comparison_df)
+            ):
+                st.session_state.enriched_df["user_notes"] = st.session_state.comparison_df["user_notes"].values
+
+            st.success("Notes saved!")
+            st.rerun()
 
 else:
     st.info("Add units to compare first. Paste a listing above and click **Save Units**.")
