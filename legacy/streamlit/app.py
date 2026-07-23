@@ -98,6 +98,12 @@ for key, default in {
     "show_feedback_form": False,
     "feedback_submitted_ref": None,
     "beta_tester": False,
+    # Ask NestAI filter state
+    "nestai_prompt": "",
+    "nestai_last_applied": "",
+    # Auth state (requires NESTAI_API_URL in Streamlit secrets)
+    "auth_token": None,
+    "auth_user": None,
 }.items():
     if key not in st.session_state:
         st.session_state[key] = default
@@ -281,6 +287,33 @@ with st.sidebar:
         st.session_state.feedback_submitted_ref = None
         st.rerun()
 
+    # ── Account ─────────────────────────────────────────────────────────────
+    st.divider()
+    st.markdown("## 👤 Account")
+    if st.session_state.auth_user:
+        user = st.session_state.auth_user
+        st.caption(f"Signed in as **{user.get('display_name') or user.get('email', '')}**")
+        st.caption(f"Plan: **{user.get('tier', 'free').title()}**")
+        if st.button("🚪 Log Out", use_container_width=True, key="logout_btn"):
+            st.session_state.auth_token = None
+            st.session_state.auth_user = None
+            st.rerun()
+        if st.page_link("pages/1_Account.py", label="📋 My Account", use_container_width=True):
+            pass
+        if user.get("is_admin"):
+            if st.page_link("pages/2_Admin.py", label="⚙️ Admin Portal", use_container_width=True):
+                pass
+    else:
+        try:
+            api_url = st.secrets.get("NESTAI_API_URL", "")
+        except Exception:
+            api_url = ""
+        if api_url:
+            if st.page_link("pages/1_Account.py", label="🔑 Sign In / Sign Up", use_container_width=True):
+                pass
+        else:
+            st.caption("Authentication not configured.")
+
 
 # ── Hero / Intro ──────────────────────────────────────────────────────────────
 
@@ -324,13 +357,13 @@ st.markdown("### 1. Paste Listing Text")
 c1, c2, c3 = st.columns(3)
 
 with c1:
-    if st.button("🏢 Avalon Courthouse Place", use_container_width=True):
+    if st.button("🏢 Avalon (Example 1)", use_container_width=True):
         with open(_EXAMPLE_LISTINGS[0][0], "r", encoding="utf-8") as f:
             st.session_state.listing_text = f.read()
         st.rerun()
 
 with c2:
-    if st.button("🏢 Cortland Bennett Park", use_container_width=True):
+    if st.button("🏢 Cortland (Example 2)", use_container_width=True):
         with open(_EXAMPLE_LISTINGS[1][0], "r", encoding="utf-8") as f:
             st.session_state.listing_text = f.read()
         st.rerun()
@@ -421,28 +454,7 @@ if st.session_state.last_result:
         st.caption("Units extracted from this listing. Save them to add them to your comparison.")
         st.dataframe(st.session_state.parsed_df, use_container_width=True)
 
-        # Cost of living extras for this property
-        with st.expander("💵 Set optional monthly fees for this property"):
-            cols = st.columns(4)
-            parking_fee = cols[0].number_input("Parking ($/mo)", min_value=0, step=25, key="parking_input")
-            utilities = cols[1].number_input("Utilities ($/mo)", min_value=0, step=10, key="utilities_input")
-            pet_fee = cols[2].number_input("Pet Fee ($/mo)", min_value=0, step=10, key="pet_fee_input")
-            insurance = cols[3].number_input("Renter's Insurance ($/mo)", min_value=0, step=5, key="insurance_input")
-            st.session_state.cost_extras = {
-                "parking": parking_fee or None,
-                "utilities": utilities or None,
-                "pet_fee": pet_fee or None,
-                "renters_insurance": insurance or None,
-            }
-            if any(st.session_state.cost_extras.values()):
-                example_price = st.session_state.parsed_df["price_num"].dropna().median()
-                if pd.notna(example_price):
-                    breakdown = compute_monthly_total(example_price, st.session_state.cost_extras)
-                    st.markdown("**Sample cost breakdown (median unit rent):**")
-                    for label, val in breakdown.items():
-                        prefix = "**" if label == "Estimated Total" else ""
-                        suffix = "**" if label == "Estimated Total" else ""
-                        st.write(f"{prefix}{label}: ${int(val):,}{suffix}")
+        # Cost of living extras for this property (UI hidden; fields retained for internal use)
 
         if st.button("➕ Save Units", use_container_width=True):
             new_rows = st.session_state.parsed_df.copy()
@@ -501,10 +513,29 @@ if not st.session_state.comparison_df.empty:
         step=25,
     )
 
-    llm_request = st.text_input(
-        "Ask Nest AI to filter your saved units",
-        value="1 bed not on the first floor within 10 min walk of metro",
-    )
+    with st.form("nestai_filter_form"):
+        nestai_input = st.text_area(
+            "",
+            value=st.session_state.nestai_prompt,
+            placeholder="Show me apartments under $2,500 with at least 700 sq ft near a metro station.",
+            height=80,
+            label_visibility="collapsed",
+        )
+        apply_col, _ = st.columns([1, 3])
+        with apply_col:
+            apply_clicked = st.form_submit_button("🔍 Apply", use_container_width=True)
+
+    if apply_clicked:
+        prompt_stripped = nestai_input.strip()
+        if not prompt_stripped:
+            st.warning("Please enter a filter request before clicking Apply.")
+        else:
+            st.session_state.nestai_prompt = nestai_input
+            st.session_state.nestai_last_applied = prompt_stripped
+            st.rerun()
+
+    if st.session_state.nestai_last_applied:
+        st.caption(f"Active NestAI filter: _{st.session_state.nestai_last_applied}_")
 
     # ── Level 2 Enrichment (cache-first, building-level, credit-gated) ────────
 
@@ -620,7 +651,10 @@ if not st.session_state.comparison_df.empty:
         & (working_df["sqft_num"] <= sqft_range[1])
     ]
 
-    filtered_comp_df = filter_units_by_request(filtered_comp_df, llm_request)
+    last_applied = st.session_state.get("nestai_last_applied", "")
+    if last_applied:
+        with st.spinner("Applying NestAI filter…"):
+            filtered_comp_df = filter_units_by_request(filtered_comp_df, last_applied)
 
     weights = get_priority_weights_from_sliders(
         commute_priority,
@@ -635,7 +669,13 @@ if not st.session_state.comparison_df.empty:
     st.caption("Ranked by your lifestyle priorities, listing data, and your personal profile.")
 
     if filtered_comp_df.empty:
-        st.warning("No saved units match your filters.")
+        if last_applied:
+            st.info(
+                "🏠 No apartments matched your NestAI request. "
+                "Try different criteria or clear the active filter."
+            )
+        else:
+            st.warning("No saved units match your filters.")
     else:
         ranked_df = LifestyleScorer(weights).score_apartments(filtered_comp_df.copy())
 

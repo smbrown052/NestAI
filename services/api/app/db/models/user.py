@@ -21,10 +21,15 @@ class User(Base):
     display_name: Mapped[str | None] = mapped_column(String(120))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    # Tier: "free" | "premium"
+    # role: "user" | "admin"  (kept separate from is_admin for explicit role-based access control)
+    role: Mapped[str] = mapped_column(String(32), default="user", nullable=False)
+    # Tier / plan: "free" | "premium" | "beta"
     tier: Mapped[str] = mapped_column(String(32), default="free", nullable=False)
     beta_tester: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     notes: Mapped[str | None] = mapped_column(Text)
+    last_login: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    premium_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    premium_expiration: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, nullable=False
     )
