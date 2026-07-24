@@ -15,15 +15,17 @@ from dotenv import load_dotenv
 from sqlalchemy import engine_from_config, pool
 
 # Add the services/api directory to sys.path so `app` is importable.
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+# Add the services/api directory to sys.path so `app` is importable.
+api_dir = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(api_dir))
 
-load_dotenv()
+# Explicitly load services/api/.env
+load_dotenv(api_dir / ".env")
 
-# ── Alembic config object ──────────────────────────────────────────────────────
 config = context.config
 
-# Override the sqlalchemy.url placeholder with the real DATABASE_URL.
-database_url = os.environ.get("DATABASE_URL=postgresql+psycopg://postgres:William0520!@localhost:5432/nestai")
+database_url = os.environ.get("DATABASE_URL")
+
 if not database_url:
     raise RuntimeError(
         "DATABASE_URL environment variable is not set. "
