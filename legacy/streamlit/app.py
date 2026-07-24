@@ -235,23 +235,7 @@ with st.sidebar:
 
     st.divider()
     st.markdown("## 📑 Navigation")
-    # ── View navigation ───────────────────────────────────────────────────────
-    active_view = st.session_state.get("nestai_active_view", "apartments")
-    _nav_labels = {
-        "apartments": "🏢 Apartments",
-        "homes": "🏠 Homes",
-        "plans": "💳 Plans",
-    }
-    for _view, _label in _nav_labels.items():
-        _btn_type = "primary" if active_view == _view else "secondary"
-        if st.button(_label, use_container_width=True, key=f"nav_{_view}_btn", type=_btn_type):
-            st.session_state["nestai_active_view"] = _view
-            if _view != "plans":
-                st.session_state["nestai_highlight_plan"] = None
-            st.rerun()
-
-    # ── In-page anchor links (Apartments view only) ───────────────────────────
-    if active_view == "apartments" and not st.session_state.comparison_df.empty:
+    if not st.session_state.comparison_df.empty:
         st.markdown(
             """
 - [Parse Listing](#parse-listing)
@@ -266,7 +250,7 @@ with st.sidebar:
             st.metric("Total Units", len(st.session_state.comparison_df))
         with stat_col2:
             st.metric("Buildings", st.session_state.comparison_df["property"].nunique())
-    elif active_view == "apartments":
+    else:
         st.caption("Paste an apartment listing to get started.")
 
     st.divider()
@@ -281,19 +265,18 @@ with st.sidebar:
 
 
 
-# ── Main content area — view-based rendering ──────────────────────────────────
+# ── Main content area ──────────────────────────────────────────────────────────
 
 _active_view = st.session_state.get("nestai_active_view", "apartments")
+_pricing_expanded = _active_view == "plans"
 
-# Plans view is rendered first (short); Apartments and Homes follow.
-if _active_view == "plans":
-    render_pricing_cards()
+_apt_tab, _homes_tab = st.tabs(["🏢 Apartments", "🏠 Homes"])
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# APARTMENTS VIEW
+# APARTMENTS TAB
 # ─────────────────────────────────────────────────────────────────────────────
-if _active_view == "apartments":
+with _apt_tab:
 
     # ── Hero / Intro ──────────────────────────────────────────────────────────────
 
@@ -978,10 +961,19 @@ if _active_view == "apartments":
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# HOMES VIEW
+# HOMES TAB
 # ─────────────────────────────────────────────────────────────────────────────
-elif _active_view == "homes":
+with _homes_tab:
     render_homes_tab()
+
+
+# ── Pricing section ───────────────────────────────────────────────────────────
+
+st.divider()
+with st.expander("💳 Plans & Pricing", expanded=_pricing_expanded):
+    if _pricing_expanded:
+        st.session_state["nestai_active_view"] = "apartments"
+    render_pricing_cards()
 
 
 # ── Feedback Form — shown on any view ────────────────────────────────────────
