@@ -36,7 +36,7 @@ from parser.home_listing import (
     get_fixture_path,
     parse_home_listing_text,
 )
-from plan_ui import render_upgrade_prompt
+from plan_ui import render_upgrade_prompt, navigate_to_plans
 
 # ── Session-state keys (homes tab only) ──────────────────────────────────────
 
@@ -288,8 +288,8 @@ def _render_save_button(result: ParsedHomeResult) -> None:
                 st.session_state.home_text_should_clear = True
                 st.rerun()
         with c_upgrade:
-            st.button("⬆️ Upgrade to Premium", use_container_width=True, disabled=True)
-            st.caption("_(Coming soon)_")
+            if st.button("⬆️ Upgrade to Premium", use_container_width=True, key="homes_upgrade_btn"):
+                navigate_to_plans(highlight_plan="PREMIUM")
 
 
 # ── Saved homes rendering ─────────────────────────────────────────────────────

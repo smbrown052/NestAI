@@ -425,6 +425,24 @@ def set_beta_overrides(overrides: dict) -> None:
     st.session_state.nestai_beta_overrides = overrides
 
 
+# ── Capability set helpers (used by tests and plan_ui) ───────────────────────
+
+def get_plan_capabilities(plan: str) -> dict:
+    """Return the capability dict for *plan* (does not apply OWNER_TEST bypass)."""
+    return dict(_CAPABILITIES.get(plan, _CAPABILITIES[PLAN_FREE]))
+
+
+def get_bool_capabilities(plan: str) -> set:
+    """Return the set of capability keys that are True (boolean) for *plan*.
+
+    Quota keys (int) are excluded.  Useful for superset assertions::
+
+        assert get_bool_capabilities(PLAN_PREMIUM) <= get_bool_capabilities(PLAN_PREMIUM_PLUS)
+    """
+    caps = _CAPABILITIES.get(plan, _CAPABILITIES[PLAN_FREE])
+    return {k for k, v in caps.items() if v is True}
+
+
 # ── Backwards-compatibility shim for credits.py callers ──────────────────────
 
 def has_feature(feature: str) -> bool:

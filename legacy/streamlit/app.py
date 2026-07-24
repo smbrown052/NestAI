@@ -35,7 +35,7 @@ from credits import (
     analyses_remaining,
 )
 from feature_access import capability as _fa_capability, get_plan as _fa_get_plan
-from plan_ui import render_plan_sidebar, render_pricing_cards
+from plan_ui import render_plan_sidebar, render_pricing_cards, navigate_to_plans
 from cache import get_geocode, _address_key
 from feedback import submit_feedback, send_feedback_email, validate_beta_code
 from homes_tab import render_homes_tab
@@ -92,7 +92,9 @@ for key, default in {
     "enrichment_done": False,
     "commute_destination": "",
     "paid_features_enabled": False,
-    "nestai_show_pricing": False,
+    # Navigation: "apartments" | "homes" | "plans"
+    "nestai_active_view": "apartments",
+    "nestai_highlight_plan": None,
     "nestai_upgrade_intent": None,
     "negotiation_outputs": {},  # unit key -> negotiation text
     # V2: per-building enrichment state: {address: building_dict}
@@ -108,11 +110,10 @@ for key, default in {
         st.session_state[key] = default
 
 
-# ── Sidebar — AI Apartment Advisor ────────────────────────────────────────────
+# ── Sidebar ───────────────────────────────────────────────────────────────────
 
 with st.sidebar:
-    # ── Plan & Credits ───────────────────────────────────────────────────────
-    st.markdown("## 💳 Plan & Credits")
+    # ── Account, Usage & Plan ─────────────────────────────────────────────────
     render_plan_sidebar()
 
     # Backwards-compat: mirror plan into paid_features_enabled flag
@@ -234,7 +235,23 @@ with st.sidebar:
 
     st.divider()
     st.markdown("## 📑 Navigation")
-    if not st.session_state.comparison_df.empty:
+    # ── View navigation ───────────────────────────────────────────────────────
+    active_view = st.session_state.get("nestai_active_view", "apartments")
+    _nav_labels = {
+        "apartments": "🏢 Apartments",
+        "homes": "🏠 Homes",
+        "plans": "💳 Plans",
+    }
+    for _view, _label in _nav_labels.items():
+        _btn_type = "primary" if active_view == _view else "secondary"
+        if st.button(_label, use_container_width=True, key=f"nav_{_view}_btn", type=_btn_type):
+            st.session_state["nestai_active_view"] = _view
+            if _view != "plans":
+                st.session_state["nestai_highlight_plan"] = None
+            st.rerun()
+
+    # ── In-page anchor links (Apartments view only) ───────────────────────────
+    if active_view == "apartments" and not st.session_state.comparison_df.empty:
         st.markdown(
             """
 - [Parse Listing](#parse-listing)
@@ -249,7 +266,7 @@ with st.sidebar:
             st.metric("Total Units", len(st.session_state.comparison_df))
         with stat_col2:
             st.metric("Buildings", st.session_state.comparison_df["property"].nunique())
-    else:
+    elif active_view == "apartments":
         st.caption("Paste an apartment listing to get started.")
 
     st.divider()
@@ -264,14 +281,19 @@ with st.sidebar:
 
 
 
-# ── Property type navigation ──────────────────────────────────────────────────
+# ── Main content area — view-based rendering ──────────────────────────────────
 
-_apt_tab, _homes_tab = st.tabs(["🏢 Apartments", "🏠 Homes"])
+_active_view = st.session_state.get("nestai_active_view", "apartments")
+
+# Plans view is rendered first (short); Apartments and Homes follow.
+if _active_view == "plans":
+    render_pricing_cards()
+
 
 # ─────────────────────────────────────────────────────────────────────────────
-# APARTMENTS TAB — existing workflow, unchanged
+# APARTMENTS VIEW
 # ─────────────────────────────────────────────────────────────────────────────
-with _apt_tab:
+if _active_view == "apartments":
 
     # ── Hero / Intro ──────────────────────────────────────────────────────────────
 
@@ -956,26 +978,13 @@ with _apt_tab:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# HOMES TAB
+# HOMES VIEW
 # ─────────────────────────────────────────────────────────────────────────────
-with _homes_tab:
+elif _active_view == "homes":
     render_homes_tab()
 
 
-# ── Pricing section ───────────────────────────────────────────────────────────
-# Shown when the user clicks "View Plans & Upgrade" in the sidebar,
-# or always visible as a collapsible section for discoverability.
-
-st.divider()
-_pricing_expanded = bool(st.session_state.get("nestai_show_pricing", False))
-with st.expander("💳 Plans & Pricing", expanded=_pricing_expanded):
-    if _pricing_expanded:
-        # Reset the flag so it doesn't auto-expand on next rerun
-        st.session_state.nestai_show_pricing = False
-    render_pricing_cards()
-
-
-# ── Feedback Form ─────────────────────────────────────────────────────────────
+# ── Feedback Form — shown on any view ────────────────────────────────────────
 
 if st.session_state.show_feedback_form:
     st.divider()
