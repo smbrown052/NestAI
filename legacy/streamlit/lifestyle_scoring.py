@@ -4,7 +4,7 @@ Reweights apartment scores based on user priorities across key life domains.
 """
 
 import pandas as pd
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Any
 
 
 class LifestyleScorer:
@@ -19,7 +19,7 @@ class LifestyleScorer:
     - Gym: Fitness amenities and nearby gyms
     """
     
-    # Default priority weights (will be overridden by user input)
+    # Default priority weights (used when user disables every optional priority)
     DEFAULT_WEIGHTS = {
         "commute": 0.20,
         "safety": 0.20,
@@ -28,12 +28,20 @@ class LifestyleScorer:
         "gym": 0.20,
     }
     
-    def __init__(self, user_weights: Dict[str, float] = None):
+    def __init__(self, user_weights: Dict[str, float] = None, user_preferences: Dict[str, Any] = None):
         """Initialize scorer with user priority weights."""
+        self.preferences = user_preferences or {}
         self.weights = user_weights or self.DEFAULT_WEIGHTS
-        # Normalize weights to sum to 1.0
-        weight_sum = sum(self.weights.values())
-        self.weights = {k: v / weight_sum for k, v in self.weights.items()}
+
+        # Normalize only enabled weights; if all disabled, use defaults.
+        positive_weights = {
+            k: float(v) for k, v in self.weights.items()
+            if v is not None and float(v) > 0
+        }
+        if not positive_weights:
+            positive_weights = self.DEFAULT_WEIGHTS.copy()
+        weight_sum = sum(positive_weights.values())
+        self.weights = {k: v / weight_sum for k, v in positive_weights.items()}
     
     def compute_commute_score(self, row: pd.Series) -> float:
         """
@@ -160,6 +168,91 @@ class LifestyleScorer:
         score += min(nearby_gyms * 5, 30.0)
         
         return min(score, 100.0)
+
+    def compute_beds_score(self, row: pd.Series) -> float:
+        """Score how close unit bedrooms are to the user's preferred bedroom count."""
+        target_beds = self.preferences.get("target_beds")
+        if target_beds is None:
+            return 50.0
+
+        beds = row.get("beds_num")
+        if pd.isna(beds):
+            return 50.0
+
+        diff = abs(float(beds) - float(target_beds))
+        if diff == 0:
+            return 100.0
+        if diff <= 0.5:
+            return 85.0
+        if diff <= 1.0:
+            return 65.0
+        if diff <= 2.0:
+            return 40.0
+        return 20.0
+
+    def compute_baths_score(self, row: pd.Series) -> float:
+        """Score how close unit bathrooms are to the user's preferred bathroom count."""
+        target_baths = self.preferences.get("target_baths")
+        if target_baths is None:
+            return 50.0
+
+        baths = row.get("baths_num")
+        if pd.isna(baths):
+            return 50.0
+
+        diff = abs(float(baths) - float(target_baths))
+        if diff == 0:
+            return 100.0
+        if diff <= 0.5:
+            return 85.0
+        if diff <= 1.0:
+            return 65.0
+        if diff <= 2.0:
+            return 40.0
+        return 20.0
+
+    def compute_amenities_score(self, row: pd.Series) -> float:
+        """Score by percentage of user-selected must-have amenities present."""
+        required_amenities = self.preferences.get("required_amenities") or []
+        if not required_amenities:
+            return 50.0
+
+        matched = 0
+        for amenity_col in required_amenities:
+            val = row.get(amenity_col)
+            if pd.notna(val) and bool(val):
+                matched += 1
+
+        return (matched / len(required_amenities)) * 100.0
+
+    def compute_metro_time_score(self, row: pd.Series) -> float:
+        """
+        Score by max acceptable minutes for metro proximity/commute.
+        - Walking mode: uses metro_min
+        - Driving mode: uses commute_driving_min when available
+        """
+        max_minutes = self.preferences.get("metro_max_minutes")
+        if max_minutes is None:
+            return 50.0
+
+        metro_mode = self.preferences.get("metro_mode", "walking")
+        time_val = row.get("metro_min")
+        if metro_mode == "driving":
+            driving_val = row.get("commute_driving_min")
+            if pd.notna(driving_val):
+                time_val = driving_val
+
+        if pd.isna(time_val):
+            return 40.0
+
+        minutes = float(time_val)
+        if minutes <= max_minutes:
+            return 100.0
+        if minutes <= max_minutes + 10:
+            return 70.0
+        if minutes <= max_minutes + 20:
+            return 45.0
+        return 20.0
     
     def compute_lifestyle_score(self, row: pd.Series) -> Tuple[float, Dict[str, float]]:
         """
@@ -172,9 +265,13 @@ class LifestyleScorer:
             "nightlife": self.compute_nightlife_score(row),
             "budget": self.compute_budget_score(row),
             "gym": self.compute_gym_score(row),
+            "beds": self.compute_beds_score(row),
+            "baths": self.compute_baths_score(row),
+            "amenities": self.compute_amenities_score(row),
+            "metro_time": self.compute_metro_time_score(row),
         }
         
-        total_score = sum(scores[k] * self.weights[k] for k in scores)
+        total_score = sum(scores[k] * self.weights.get(k, 0.0) for k in scores)
         
         return round(total_score, 2), scores
     
@@ -183,7 +280,19 @@ class LifestyleScorer:
         df = df.copy()
         
         scores = []
-        component_data = {k: [] for k in ["commute", "safety", "nightlife", "budget", "gym"]}
+        component_data = {
+            k: [] for k in [
+                "commute",
+                "safety",
+                "nightlife",
+                "budget",
+                "gym",
+                "beds",
+                "baths",
+                "amenities",
+                "metro_time",
+            ]
+        }
         
         for _, row in df.iterrows():
             total, components = self.compute_lifestyle_score(row)
@@ -198,16 +307,13 @@ class LifestyleScorer:
         return df.sort_values("lifestyle_score", ascending=False)
 
 
-def get_priority_weights_from_sliders(commute: int, safety: int, nightlife: int, budget: int, gym: int) -> Dict[str, float]:
-    """Convert slider values (1-5 stars) to normalized weights."""
-    raw_weights = {
-        "commute": commute,
-        "safety": safety,
-        "nightlife": nightlife,
-        "budget": budget,
-        "gym": gym,
+def get_priority_weights_from_sliders(priority_values: Dict[str, int]) -> Dict[str, float]:
+    """Convert 0-5 slider values into normalized weights for enabled priorities."""
+    enabled = {
+        k: float(v) for k, v in priority_values.items()
+        if v is not None and float(v) > 0
     }
-    
-    # Normalize to sum to 1
-    total = sum(raw_weights.values())
-    return {k: v / total for k, v in raw_weights.items()}
+    total = sum(enabled.values())
+    if total <= 0:
+        return {}
+    return {k: v / total for k, v in enabled.items()}

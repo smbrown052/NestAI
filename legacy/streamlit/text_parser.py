@@ -537,4 +537,37 @@ def filter_units_by_request(df, request):
     if "parking" in req:
         filtered = filtered[filtered["has_parking"] == True]
 
+    # Search user-supplied notes for any keywords not already matched above
+    if "user_notes" in filtered.columns:
+        notes_col = filtered["user_notes"].fillna("").str.lower()
+        # Build combined text: nearest_metro + user_notes
+        metro_col = (
+            filtered["nearest_metro"].fillna("").str.lower()
+            if "nearest_metro" in filtered.columns
+            else pd.Series("", index=filtered.index)
+        )
+        combined_text = metro_col + " " + notes_col
+
+        # Strip common stop words and structured filter keywords, then match the
+        # remaining phrase as a substring in combined_text.  This lets users type
+        # e.g. "green line" and match only units whose notes contain that phrase.
+        _stop_words = {
+            "show", "me", "apartments", "units", "with", "near", "a", "an", "the",
+            "that", "have", "has", "in", "to", "for", "and", "or", "not", "is",
+            "are", "find", "filter", "looking", "want", "i", "only",
+            "den", "studio", "bed", "bedroom", "beds", "bath", "bathroom", "baths",
+            "floor", "metro", "available", "now", "cheapest", "lowest", "largest",
+            "sqft", "laundry", "washer", "dryer", "gym", "fitness", "pool", "parking",
+            "under", "over", "above", "below", "price", "rent", "one", "two", "three",
+            "1", "2", "3", "first", "within", "min", "minutes", "least", "at",
+        }
+        remaining_words = [w for w in req.split() if w not in _stop_words]
+        search_phrase = " ".join(remaining_words).strip()
+
+        if search_phrase:
+            notes_mask = combined_text.str.contains(re.escape(search_phrase), na=False)
+            if notes_mask.any():
+                filtered = filtered[notes_mask]
+
     return filtered
+
