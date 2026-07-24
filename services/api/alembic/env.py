@@ -23,7 +23,7 @@ load_dotenv()
 config = context.config
 
 # Override the sqlalchemy.url placeholder with the real DATABASE_URL.
-database_url = os.environ.get("DATABASE_URL")
+database_url = os.environ.get("DATABASE_URL=postgresql+psycopg://postgres:William0520!@localhost:5432/nestai")
 if not database_url:
     raise RuntimeError(
         "DATABASE_URL environment variable is not set. "
