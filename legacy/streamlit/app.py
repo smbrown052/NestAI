@@ -11,6 +11,7 @@ _EXAMPLE_LISTINGS = [
 ]
 _HOUSE_EXAMPLE_LISTINGS = sorted(_DATA_DIR.rglob("home_example_*.txt"))
 from text_parser import parse_apartment_text, filter_units_by_request
+from parser.home_listing import parse_house_listing
 from enrichment import (
     enrich_units_df,
     enrich_building,
@@ -125,11 +126,12 @@ with st.sidebar:
     render_tier_badge()
 
     # Backwards-compat: mirror tier into paid_features_enabled flag
-    st.session_state.paid_features_enabled = (get_tier() == "premium")
+    st.session_state.paid_features_enabled = get_tier() in ("premium", "premium_plus")
 
     st.caption(
         "**Free:** 5 building analyses, basic comparison & ranking.  \n"
-        "**Premium ($24.99):** 100 analyses + AI, Walk Score, commute, neighborhood, exports."
+        "**Premium ($24.99):** 100 analyses + AI, Walk Score, commute, neighborhood, exports.  \n"
+        "**Premium Plus ($49.99):** Unlimited analyses + everything in Premium."
     )
 
     # ── Beta Access ─────────────────────────────────────────────────────────
@@ -335,20 +337,21 @@ if active_screen == "Pricing":
         st.markdown("- Negotiation assistant")
 
     with c3:
-        st.markdown("#### Team")
-        st.write("Custom")
+        st.markdown("#### Premium Plus")
+        st.write("$49.99 / month")
+        st.write("Unlimited analyses")
         st.markdown("- Everything in Premium")
-        st.markdown("- Shared workflows")
+        st.markdown("- Unlimited building analyses")
         st.markdown("- Priority support")
-        st.markdown("- Custom rollout")
+        st.markdown("- Early access to new features")
 
     st.info("Add-on: 50 extra analyses for $9.99.")
-    st.caption("For team pricing and onboarding, contact support.")
+    st.caption("For Premium Plus and volume inquiries, contact support.")
     st.stop()
 
 if active_screen == "Houses":
     st.markdown("### 🏡 Houses")
-    st.caption("Analyze house listings with the same parser and comparison workflow.")
+    st.caption("Analyze Zillow house and townhouse listings. Each parsed listing appears as a row.")
 
     house_buttons = st.columns(3)
 
@@ -387,7 +390,7 @@ if active_screen == "Houses":
 
     if analyze_house:
         if house_listing_text.strip():
-            house_result = parse_apartment_text(house_listing_text)
+            house_result = parse_house_listing(house_listing_text)
             st.session_state.last_house_result = house_result
             st.session_state.house_parsed_df = pd.DataFrame(house_result.get("units", []))
         else:
