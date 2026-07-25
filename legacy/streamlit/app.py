@@ -9,6 +9,7 @@ _EXAMPLE_LISTINGS = [
     (_DATA_DIR / "app_listing_1.txt", "Avalon Courthouse Place"),
     (_DATA_DIR / "app_listing_2.txt", "Cortland Bennett Park"),
 ]
+_HOUSE_EXAMPLE_LISTINGS = sorted(_DATA_DIR.rglob("home_example_*.txt"))
 from text_parser import parse_apartment_text, filter_units_by_request
 from enrichment import (
     enrich_units_df,
@@ -78,10 +79,13 @@ def get_priority_rank(priority_name: str, weights: dict) -> str:
 
 for key, default in {
     "listing_text": "",
+    "house_listing_text": "",
     "filtered_df": pd.DataFrame(),
     "comparison_df": pd.DataFrame(),
     "parsed_df": pd.DataFrame(),
+    "house_parsed_df": pd.DataFrame(),
     "last_result": None,
+    "last_house_result": None,
     "advisor_messages": [],
     "user_profile": {},
     "cost_extras": {},       # {parking, utilities, pet_fee, renters_insurance}
@@ -109,7 +113,7 @@ with st.sidebar:
     st.markdown("## 🧭 Screens")
     active_screen = st.radio(
         "Choose screen",
-        ["House", "Login", "Pricing"],
+        ["Apartments", "Houses", "Login", "Pricing"],
         index=0,
         key="screen_selector",
     )
@@ -315,21 +319,121 @@ if active_screen == "Pricing":
         st.markdown("#### Free")
         st.write("$0 / month")
         st.write("5 building analyses")
-        st.write("Core comparison + ranking")
+        st.markdown("- Core comparison + ranking")
+        st.markdown("- Property parsing")
+        st.markdown("- Basic filtering and saved-unit table")
 
     with c2:
         st.markdown("#### Premium")
         st.write("$24.99 / month")
         st.write("100 analyses")
-        st.write("AI advisor + enrichments")
+        st.markdown("- Everything in Free")
+        st.markdown("- AI advisor chat")
+        st.markdown("- Walk/Transit/Bike and neighborhood enrichments")
+        st.markdown("- Commute support")
+        st.markdown("- Decision reports and exports")
+        st.markdown("- Negotiation assistant")
 
     with c3:
         st.markdown("#### Team")
         st.write("Custom")
-        st.write("Shared workflows")
-        st.write("Priority support")
+        st.markdown("- Everything in Premium")
+        st.markdown("- Shared workflows")
+        st.markdown("- Priority support")
+        st.markdown("- Custom rollout")
 
-    st.caption("For team pricing, contact support.")
+    st.info("Add-on: 50 extra analyses for $9.99.")
+    st.caption("For team pricing and onboarding, contact support.")
+    st.stop()
+
+if active_screen == "Houses":
+    st.markdown("### 🏡 Houses")
+    st.caption("Analyze house listings with the same parser and comparison workflow.")
+
+    house_buttons = st.columns(3)
+
+    if len(_HOUSE_EXAMPLE_LISTINGS) > 0:
+        with house_buttons[0]:
+            if st.button("🏡 House Example 1", use_container_width=True):
+                with open(_HOUSE_EXAMPLE_LISTINGS[0], "r", encoding="utf-8") as f:
+                    st.session_state.house_listing_text = f.read()
+                st.rerun()
+
+    if len(_HOUSE_EXAMPLE_LISTINGS) > 1:
+        with house_buttons[1]:
+            if st.button("🏡 House Example 2", use_container_width=True):
+                with open(_HOUSE_EXAMPLE_LISTINGS[1], "r", encoding="utf-8") as f:
+                    st.session_state.house_listing_text = f.read()
+                st.rerun()
+
+    with house_buttons[2]:
+        if st.button("🧹 Clear House Text", use_container_width=True):
+            st.session_state.house_listing_text = ""
+            st.session_state.last_house_result = None
+            st.session_state.house_parsed_df = pd.DataFrame()
+            st.rerun()
+
+    if len(_HOUSE_EXAMPLE_LISTINGS) == 0:
+        st.info("No house examples found. Add `home_example_*.txt` files in the data folder.")
+
+    house_listing_text = st.text_area(
+        "House listing text",
+        key="house_listing_text",
+        height=380,
+        placeholder="Paste copied house listing text here...",
+    )
+
+    analyze_house = st.button("✨ Analyze House", use_container_width=True)
+
+    if analyze_house:
+        if house_listing_text.strip():
+            house_result = parse_apartment_text(house_listing_text)
+            st.session_state.last_house_result = house_result
+            st.session_state.house_parsed_df = pd.DataFrame(house_result.get("units", []))
+        else:
+            st.warning("Paste house listing text first.")
+
+    if st.session_state.last_house_result:
+        house_result = st.session_state.last_house_result
+        house_building = house_result.get("building_nearby", {})
+
+        st.markdown("### 🏠 House Summary")
+        st.markdown(f"**{house_result.get('property_title') or 'Unknown'}**")
+
+        hm1, hm2, hm3 = st.columns(3)
+        hm1.metric("Units Parsed", house_result.get("unit_count", 0))
+        hm2.metric(
+            "Nearest Metro",
+            format_travel(house_building.get("metro_travel_mode"), house_building.get("metro_min")),
+        )
+        hm3.metric(
+            "Nearest Hospital",
+            format_travel(house_building.get("hospital_travel_mode"), house_building.get("hospital_min")),
+        )
+
+        if house_result.get("address"):
+            st.caption(house_result.get("address"))
+
+        if not st.session_state.house_parsed_df.empty:
+            st.markdown("### 📋 Parsed House Units")
+            st.dataframe(st.session_state.house_parsed_df, use_container_width=True)
+
+            if st.button("➕ Save House Units", use_container_width=True):
+                st.session_state.comparison_df = pd.concat(
+                    [st.session_state.comparison_df, st.session_state.house_parsed_df],
+                    ignore_index=True,
+                )
+                st.success("House units added!")
+                st.rerun()
+        else:
+            st.warning("No house unit rows were parsed from this listing.")
+
+    st.stop()
+
+if active_screen == "Apartments":
+    pass
+
+if active_screen not in {"Apartments", "Houses", "Login", "Pricing"}:
     st.stop()
 
 
