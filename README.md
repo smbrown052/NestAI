@@ -1,8 +1,110 @@
 # NestAI
 
-**Live App:** (https://apartment-comparison-and-recommendation.streamlit.app/)
+**Live App:** <https://apartment-comparison-and-recommendation.streamlit.app/>
 
 Find *your* nest.
+
+---
+
+## Where Everything Is
+
+> Full owner instructions are in [`docs/OWNER_CHEAT_SHEET.md`](docs/OWNER_CHEAT_SHEET.md).
+
+### Application components
+
+| Component | Location | Status |
+|-----------|----------|--------|
+| **Streamlit app** (current) | `legacy/streamlit/app.py` | ✅ Working |
+| **FastAPI backend** (new) | `services/api/` | 🏗 In progress |
+| **Next.js website** (future) | `apps/web/` | Not started |
+| **Mobile app** (future) | `apps/mobile/` | Not started |
+
+### Database
+
+| Item | Location |
+|------|----------|
+| SQLAlchemy models | `services/api/app/db/models/` |
+| Database session | `services/api/app/db/session.py` |
+| Alembic migrations | `services/api/alembic/versions/` |
+| Alembic config | `services/api/alembic.ini` |
+| Legacy SQLite cache | `legacy/streamlit/data/nestai_cache.db` |
+
+### Configuration
+
+| Item | Location |
+|------|----------|
+| Environment variable template | `.env.example` |
+| Your local config (never committed) | `.env` |
+| Local database (Docker) | `docker-compose.yml` |
+
+### Running each component locally
+
+```bash
+# ── Streamlit (current working app) ──────────────────────────────
+cd legacy/streamlit
+pip install -r requirements.txt
+streamlit run app.py
+# → http://localhost:8501
+
+# ── Local PostgreSQL database ─────────────────────────────────────
+docker compose up -d db
+
+# ── FastAPI backend ───────────────────────────────────────────────
+cd services/api
+pip install -r requirements.txt
+alembic upgrade head          # run migrations first
+uvicorn main:app --reload
+# → http://localhost:8000
+# → http://localhost:8000/docs  (interactive API explorer)
+```
+
+### Admin dashboard
+
+```bash
+# Start the API, then open:
+http://localhost:8000/docs
+# Click "Authorize" and enter your admin email + password.
+```
+
+### Creating the first admin account
+
+```bash
+cd services/api
+alembic upgrade head   # run migrations first
+
+export ADMIN_BOOTSTRAP_EMAIL=you@example.com
+export ADMIN_BOOTSTRAP_PASSWORD=YourStrongPassword123!
+python -m app.cli.seed_admin
+```
+
+### Inviting beta testers
+
+```bash
+# Create a beta code via the admin API:
+curl -X POST "http://localhost:8000/admin/beta-codes?code=INVITE123" \
+     -u you@example.com:YourPassword
+```
+
+### Inspecting the database
+
+```bash
+# psql command line (with Docker running):
+docker compose exec db psql -U nestai -d nestai
+
+# Apply pending migrations:
+cd services/api && alembic upgrade head
+```
+
+### Deploying each component
+
+| Component | Recommended host | Notes |
+|-----------|-----------------|-------|
+| Streamlit app | [Streamlit Cloud](https://share.streamlit.io/) | Update main file path to `legacy/streamlit/app.py` |
+| FastAPI backend | Railway / Render / Fly.io | Set `DATABASE_URL` env var |
+| PostgreSQL | Supabase / Neon free tier | Free up to 500 MB |
+| Next.js website | Vercel | Not built yet |
+
+---
 
 User Instructions:
 - You may paste text copied from apartments.com (web scraping is not acceptable per apartment.com terms so it must be pasted manually into the app)
