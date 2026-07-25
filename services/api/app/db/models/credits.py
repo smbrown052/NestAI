@@ -25,11 +25,16 @@ class CreditBalance(Base):
         Integer, ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False, index=True
     )
     tier: Mapped[str] = mapped_column(String(32), default="free", nullable=False)
-    # Remaining analysis credits.
+    # Building analysis credits.
     credits_remaining: Mapped[int] = mapped_column(Integer, default=5, nullable=False)
-    # Lifetime totals.
     credits_used: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     credits_purchased: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # AI request credits.
+    ai_credits_remaining: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    ai_credits_used: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # Commute calculation credits.
+    commute_credits_remaining: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    commute_credits_used: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
     )
@@ -44,6 +49,8 @@ class CreditTransaction(Base):
     )
     # "consume" | "grant" | "purchase" | "refund"
     transaction_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    # "building" | "ai" | "commute"
+    credit_type: Mapped[str] = mapped_column(String(32), default="building", nullable=False)
     delta: Mapped[int] = mapped_column(Integer, nullable=False)  # negative = deduction
     balance_after: Mapped[int] = mapped_column(Integer, nullable=False)
     reason: Mapped[str | None] = mapped_column(String(255))

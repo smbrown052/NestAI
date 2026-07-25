@@ -57,23 +57,6 @@ def openai_configured() -> bool:
         return False
 
 
-def get_priority_rank(priority_name: str, weights: dict) -> str:
-    sorted_priorities = sorted(weights.items(), key=lambda item: item[1], reverse=True)
-    position = next(
-        (idx for idx, (name, _) in enumerate(sorted_priorities) if name == priority_name),
-        None,
-    )
-
-    if position is None:
-        return "low priority"
-
-    current_weight = weights[priority_name]
-    tied = [name for name, weight in weights.items() if weight == current_weight and name != priority_name]
-    ordinal = ["1st", "2nd", "3rd", "4th", "5th"]
-    rank_str = ordinal[position] if position < len(ordinal) else f"{position + 1}th"
-    return f"tied for {rank_str}" if tied else rank_str
-
-
 # ── Session state ─────────────────────────────────────────────────────────────
 
 for key, default in {
@@ -98,6 +81,12 @@ for key, default in {
     "show_feedback_form": False,
     "feedback_submitted_ref": None,
     "beta_tester": False,
+    # Ask NestAI filter state
+    "nestai_prompt": "",
+    "nestai_last_applied": "",
+    # Auth state (requires NESTAI_API_URL in Streamlit secrets)
+    "auth_token": None,
+    "auth_user": None,
 }.items():
     if key not in st.session_state:
         st.session_state[key] = default
@@ -281,6 +270,33 @@ with st.sidebar:
         st.session_state.feedback_submitted_ref = None
         st.rerun()
 
+    # ── Account ─────────────────────────────────────────────────────────────
+    st.divider()
+    st.markdown("## 👤 Account")
+    if st.session_state.auth_user:
+        user = st.session_state.auth_user
+        st.caption(f"Signed in as **{user.get('display_name') or user.get('email', '')}**")
+        st.caption(f"Plan: **{user.get('tier', 'free').title()}**")
+        if st.button("🚪 Log Out", use_container_width=True, key="logout_btn"):
+            st.session_state.auth_token = None
+            st.session_state.auth_user = None
+            st.rerun()
+        if st.page_link("pages/1_Account.py", label="📋 My Account", use_container_width=True):
+            pass
+        if user.get("is_admin"):
+            if st.page_link("pages/2_Admin.py", label="⚙️ Admin Portal", use_container_width=True):
+                pass
+    else:
+        try:
+            api_url = st.secrets.get("NESTAI_API_URL", "")
+        except Exception:
+            api_url = ""
+        if api_url:
+            if st.page_link("pages/1_Account.py", label="🔑 Sign In / Sign Up", use_container_width=True):
+                pass
+        else:
+            st.caption("Authentication not configured.")
+
 
 # ── Hero / Intro ──────────────────────────────────────────────────────────────
 
@@ -324,13 +340,13 @@ st.markdown("### 1. Paste Listing Text")
 c1, c2, c3 = st.columns(3)
 
 with c1:
-    if st.button("🏢 Avalon Courthouse Place", use_container_width=True):
+    if st.button("🏢 Avalon (Example 1)", use_container_width=True):
         with open(_EXAMPLE_LISTINGS[0][0], "r", encoding="utf-8") as f:
             st.session_state.listing_text = f.read()
         st.rerun()
 
 with c2:
-    if st.button("🏢 Cortland Bennett Park", use_container_width=True):
+    if st.button("🏢 Cortland (Example 2)", use_container_width=True):
         with open(_EXAMPLE_LISTINGS[1][0], "r", encoding="utf-8") as f:
             st.session_state.listing_text = f.read()
         st.rerun()
@@ -421,38 +437,21 @@ if st.session_state.last_result:
         st.caption("Units extracted from this listing. Save them to add them to your comparison.")
         st.dataframe(st.session_state.parsed_df, use_container_width=True)
 
-        # Cost of living extras for this property
-        with st.expander("💵 Set optional monthly fees for this property"):
-            cols = st.columns(4)
-            parking_fee = cols[0].number_input("Parking ($/mo)", min_value=0, step=25, key="parking_input")
-            utilities = cols[1].number_input("Utilities ($/mo)", min_value=0, step=10, key="utilities_input")
-            pet_fee = cols[2].number_input("Pet Fee ($/mo)", min_value=0, step=10, key="pet_fee_input")
-            insurance = cols[3].number_input("Renter's Insurance ($/mo)", min_value=0, step=5, key="insurance_input")
-            st.session_state.cost_extras = {
-                "parking": parking_fee or None,
-                "utilities": utilities or None,
-                "pet_fee": pet_fee or None,
-                "renters_insurance": insurance or None,
-            }
-            if any(st.session_state.cost_extras.values()):
-                example_price = st.session_state.parsed_df["price_num"].dropna().median()
-                if pd.notna(example_price):
-                    breakdown = compute_monthly_total(example_price, st.session_state.cost_extras)
-                    st.markdown("**Sample cost breakdown (median unit rent):**")
-                    for label, val in breakdown.items():
-                        prefix = "**" if label == "Estimated Total" else ""
-                        suffix = "**" if label == "Estimated Total" else ""
-                        st.write(f"{prefix}{label}: ${int(val):,}{suffix}")
+        # Cost of living extras for this property (UI hidden; fields retained for internal use)
 
         if st.button("➕ Save Units", use_container_width=True):
             new_rows = st.session_state.parsed_df.copy()
             for col, val in (st.session_state.cost_extras or {}).items():
                 if val is not None:
                     new_rows[f"extra_{col}"] = val
+            if "user_notes" not in new_rows.columns:
+                new_rows["user_notes"] = ""
             st.session_state.comparison_df = pd.concat(
                 [st.session_state.comparison_df, new_rows],
                 ignore_index=True,
             )
+            if "user_notes" not in st.session_state.comparison_df.columns:
+                st.session_state.comparison_df["user_notes"] = ""
             st.session_state.enrichment_done = False
             st.success("Units added!")
             st.rerun()
@@ -466,16 +465,64 @@ st.markdown("### <a id='lifestyle-priorities'>🎯 Lifestyle Priorities</a>", un
 if not st.session_state.comparison_df.empty:
     comp_df = st.session_state.comparison_df.copy()
 
-    st.info("Adjust these sliders to personalize the lifestyle ranking.")
+    st.info("All priorities are optional. Set any slider to 0 to disable it.")
     priority_col1, priority_col2, priority_col3 = st.columns(3)
     with priority_col1:
-        commute_priority = st.slider("🚇 Commute", 1, 5, 3, key="commute_slider")
-        safety_priority = st.slider("🛡️ Safety", 1, 5, 3, key="safety_slider")
+        commute_priority = st.slider("🚇 Commute", 0, 5, 3, key="commute_slider")
+        safety_priority = st.slider("🛡️ Safety", 0, 5, 3, key="safety_slider")
+        beds_priority = st.slider("🛏 Bedrooms", 0, 5, 0, key="beds_slider")
     with priority_col2:
-        nightlife_priority = st.slider("🍻 Nightlife", 1, 5, 2, key="nightlife_slider")
-        budget_priority = st.slider("💰 Budget", 1, 5, 4, key="budget_slider")
+        nightlife_priority = st.slider("🍻 Nightlife", 0, 5, 2, key="nightlife_slider")
+        budget_priority = st.slider("💰 Budget", 0, 5, 4, key="budget_slider")
+        baths_priority = st.slider("🛁 Bathrooms", 0, 5, 0, key="baths_slider")
     with priority_col3:
-        gym_priority = st.slider("💪 Gym/Fitness", 1, 5, 2, key="gym_slider")
+        gym_priority = st.slider("💪 Gym/Fitness", 0, 5, 2, key="gym_slider")
+        amenities_priority = st.slider("🏠 Amenities", 0, 5, 0, key="amenities_slider")
+        metro_time_priority = st.slider("🚇 Metro time target", 0, 5, 0, key="metro_time_slider")
+
+    preference_col1, preference_col2 = st.columns(2)
+    with preference_col1:
+        priority_target_beds = st.selectbox(
+            "Preferred beds (for lifestyle priority)",
+            options=[None, 0, 1, 2, 3, 4],
+            format_func=lambda x: "Any" if x is None else ("Studio" if x == 0 else f"{x} bed"),
+            key="priority_target_beds",
+        )
+        priority_target_baths = st.selectbox(
+            "Preferred baths (for lifestyle priority)",
+            options=[None, 1.0, 1.5, 2.0, 2.5, 3.0],
+            format_func=lambda x: "Any" if x is None else f"{x:g} bath",
+            key="priority_target_baths",
+        )
+        metro_mode_preference = st.selectbox(
+            "Metro time mode (for lifestyle priority)",
+            options=["walking", "driving"],
+            key="priority_metro_mode",
+        )
+        metro_max_minutes = st.slider(
+            "Target max minutes (for metro time priority)",
+            min_value=5,
+            max_value=90,
+            step=5,
+            value=30,
+            key="priority_metro_max_minutes",
+        )
+    with preference_col2:
+        amenity_options = {
+            "In-unit Washer/Dryer": "has_laundry",
+            "Gym/Fitness": "has_gym",
+            "Pool": "has_pool",
+            "Parking": "has_parking",
+            "Balcony": "has_balcony",
+            "Patio": "has_patio",
+            "Security": "has_security",
+            "Concierge": "has_concierge",
+        }
+        selected_amenity_labels = st.multiselect(
+            "Preferred amenities (for lifestyle priority)",
+            options=list(amenity_options.keys()),
+            key="priority_amenities",
+        )
 
     st.markdown("### 🔎 Filter Your Apartments")
 
@@ -501,10 +548,29 @@ if not st.session_state.comparison_df.empty:
         step=25,
     )
 
-    llm_request = st.text_input(
-        "Ask Nest AI to filter your saved units",
-        value="1 bed not on the first floor within 10 min walk of metro",
-    )
+    with st.form("nestai_filter_form"):
+        nestai_input = st.text_area(
+            "",
+            value=st.session_state.nestai_prompt,
+            placeholder="Show me apartments under $2,500 with at least 700 sq ft near a metro station.",
+            height=80,
+            label_visibility="collapsed",
+        )
+        apply_col, _ = st.columns([1, 3])
+        with apply_col:
+            apply_clicked = st.form_submit_button("🔍 Apply", use_container_width=True)
+
+    if apply_clicked:
+        prompt_stripped = nestai_input.strip()
+        if not prompt_stripped:
+            st.warning("Please enter a filter request before clicking Apply.")
+        else:
+            st.session_state.nestai_prompt = nestai_input
+            st.session_state.nestai_last_applied = prompt_stripped
+            st.rerun()
+
+    if st.session_state.nestai_last_applied:
+        st.caption(f"Active NestAI filter: _{st.session_state.nestai_last_applied}_")
 
     # ── Level 2 Enrichment (cache-first, building-level, credit-gated) ────────
 
@@ -613,6 +679,21 @@ if not st.session_state.comparison_df.empty:
         else comp_df
     )
 
+    # Ensure user_notes column exists in both comparison_df and working_df
+    if "user_notes" not in st.session_state.comparison_df.columns:
+        st.session_state.comparison_df["user_notes"] = ""
+    if "user_notes" not in working_df.columns:
+        working_df = working_df.copy()
+        working_df["user_notes"] = ""
+
+    # Propagate user_notes from comparison_df into working_df (keeps notes visible after enrichment)
+    if (
+        len(working_df) == len(st.session_state.comparison_df)
+        and working_df is not st.session_state.comparison_df
+    ):
+        working_df = working_df.copy()
+        working_df["user_notes"] = st.session_state.comparison_df["user_notes"].values
+
     filtered_comp_df = working_df[
         (working_df["price_num"] >= price_range[0])
         & (working_df["price_num"] <= price_range[1])
@@ -620,24 +701,53 @@ if not st.session_state.comparison_df.empty:
         & (working_df["sqft_num"] <= sqft_range[1])
     ]
 
-    filtered_comp_df = filter_units_by_request(filtered_comp_df, llm_request)
+    last_applied = st.session_state.get("nestai_last_applied", "")
+    if last_applied:
+        with st.spinner("Applying NestAI filter…"):
+            filtered_comp_df = filter_units_by_request(filtered_comp_df, last_applied)
 
     weights = get_priority_weights_from_sliders(
-        commute_priority,
-        safety_priority,
-        nightlife_priority,
-        budget_priority,
-        gym_priority,
+        {
+            "commute": commute_priority,
+            "safety": safety_priority,
+            "nightlife": nightlife_priority,
+            "budget": budget_priority,
+            "gym": gym_priority,
+            "beds": beds_priority,
+            "baths": baths_priority,
+            "amenities": amenities_priority,
+            "metro_time": metro_time_priority,
+        }
     )
+    if not weights:
+        st.caption("No lifestyle priorities selected; using balanced default priorities.")
+        weights = LifestyleScorer.DEFAULT_WEIGHTS.copy()
+
+    lifestyle_preferences = {
+        "target_beds": priority_target_beds,
+        "target_baths": priority_target_baths,
+        "required_amenities": [amenity_options[label] for label in selected_amenity_labels],
+        "metro_mode": metro_mode_preference,
+        "metro_max_minutes": metro_max_minutes,
+    }
 
     # ── Rankings ───────────────────────────────────────────────────────────
     st.markdown("### <a id='rankings'>🏆 Nest AI Recommendations</a>", unsafe_allow_html=True)
     st.caption("Ranked by your lifestyle priorities, listing data, and your personal profile.")
 
     if filtered_comp_df.empty:
-        st.warning("No saved units match your filters.")
+        if last_applied:
+            st.info(
+                "🏠 No apartments matched your NestAI request. "
+                "Try different criteria or clear the active filter."
+            )
+        else:
+            st.warning("No saved units match your filters.")
     else:
-        ranked_df = LifestyleScorer(weights).score_apartments(filtered_comp_df.copy())
+        ranked_df = LifestyleScorer(
+            weights,
+            user_preferences=lifestyle_preferences,
+        ).score_apartments(filtered_comp_df.copy())
 
         ranked_df["price_score"] = ranked_df["price_num"].rank(ascending=False)
         ranked_df["space_score"] = ranked_df["sqft_num"].rank(ascending=True)
@@ -724,9 +834,9 @@ if not st.session_state.comparison_df.empty:
             diff, avg = price_position(row, ranked_df)
             if diff is not None:
                 if diff >= 0:
-                    price_badge = f"  |  ${abs(diff):,} above avg"
+                    price_badge = f"  |  ${abs(diff):,}/mo above avg rent"
                 else:
-                    price_badge = f"  |  ${abs(diff):,} below avg"
+                    price_badge = f"  |  saves ${abs(diff):,}/mo vs avg rent"
             else:
                 price_badge = ""
 
@@ -765,6 +875,10 @@ if not st.session_state.comparison_df.empty:
                     "nightlife": row.get("lifestyle_nightlife_score", 0),
                     "budget": row.get("lifestyle_budget_score", 0),
                     "gym": row.get("lifestyle_gym_score", 0),
+                    "beds": row.get("lifestyle_beds_score", 0),
+                    "baths": row.get("lifestyle_baths_score", 0),
+                    "amenities": row.get("lifestyle_amenities_score", 0),
+                    "metro_time": row.get("lifestyle_metro_time_score", 0),
                 }
 
                 with tab1:
@@ -785,7 +899,6 @@ if not st.session_state.comparison_df.empty:
                             component_scores,
                             weights,
                             ranked_df,
-                            priority_rank_fn=lambda name: get_priority_rank(name, weights),
                         )
                     )
 
@@ -922,9 +1035,20 @@ if not st.session_state.comparison_df.empty:
         # ── Full ranked table ──────────────────────────────────────────────
         st.markdown("### <a id='full-table'>📊 Full Ranking Table</a>", unsafe_allow_html=True)
 
+        # Compute price position vs same-bed average
+        def _fmt_vs_avg(row_):
+            diff, _ = price_position(row_, ranked_df)
+            if diff is None:
+                return ""
+            if diff >= 0:
+                return f"${abs(diff):,} above avg"
+            return f"saves ${abs(diff):,}"
+
+        ranked_df["vs_avg_rent"] = ranked_df.apply(_fmt_vs_avg, axis=1)
+
         display_cols = [
             "property", "floorplan", "unit", "floor",
-            "price", "beds", "baths", "sqft",
+            "price", "vs_avg_rent", "beds", "baths", "sqft",
             "has_den", "availability",
             "nearest_metro", "metro_travel_mode", "metro_min",
             "commute_display",
@@ -934,6 +1058,7 @@ if not st.session_state.comparison_df.empty:
             "walk_score", "safety_score",
             "nearby_groceries", "restaurants_count", "nearby_gyms", "nearby_parks",
             "lifestyle_summary",
+            "user_notes",
             "nestai_score",
             "lifestyle_score",
             "lifestyle_commute_score",
@@ -958,7 +1083,74 @@ if not st.session_state.comparison_df.empty:
             if score_col in clean_ranked_df.columns:
                 clean_ranked_df[score_col] = clean_ranked_df[score_col].round(1)
 
-        st.dataframe(clean_ranked_df, use_container_width=True)
+        _disabled_cols = {
+            c: st.column_config.Column(disabled=True)
+            for c in display_cols
+            if c != "user_notes"
+        }
+        _disabled_cols["vs_avg_rent"] = st.column_config.TextColumn(
+            "vs Avg Rent", disabled=True
+        )
+        _disabled_cols["user_notes"] = st.column_config.TextColumn(
+            "Your Notes",
+            help="E.g. 'Green line metro', 'loud street noise', 'dog-friendly'. Used by NestAI filter.",
+            width="medium",
+        )
+
+        edited_full_table = st.data_editor(
+            clean_ranked_df,
+            column_config=_disabled_cols,
+            use_container_width=True,
+            hide_index=True,
+            key="full_table_editor",
+        )
+
+        notes_col1, notes_col2 = st.columns([2, 1])
+        with notes_col1:
+            apply_to_building = st.checkbox(
+                "Apply note to all units in same building",
+                help="When checked, a non-empty note on any row will be copied to every other unit in the same building.",
+                key="full_table_apply_building",
+            )
+        with notes_col2:
+            save_notes_clicked = st.button("💾 Save Notes", use_container_width=True, key="full_table_save_notes")
+
+        if save_notes_clicked:
+            updated_notes_map = dict(
+                zip(clean_ranked_df.index, edited_full_table["user_notes"].fillna("").tolist())
+            )
+
+            if apply_to_building and "property" in edited_full_table.columns:
+                building_note_map: dict[str, str] = {}
+                for idx, row_ in edited_full_table.iterrows():
+                    note = str(row_.get("user_notes", "") or "").strip()
+                    prop = str(row_.get("property", ""))
+                    if note and prop not in building_note_map:
+                        building_note_map[prop] = note
+                # Expand building notes across all rows in comparison_df
+                for idx in st.session_state.comparison_df.index:
+                    prop = str(st.session_state.comparison_df.at[idx, "property"])
+                    if prop in building_note_map:
+                        st.session_state.comparison_df.at[idx, "user_notes"] = building_note_map[prop]
+                # Also apply to ranked rows
+                for idx, note in updated_notes_map.items():
+                    prop = str(ranked_df.at[idx, "property"]) if idx in ranked_df.index else ""
+                    if prop not in building_note_map:
+                        st.session_state.comparison_df.at[idx, "user_notes"] = note
+            else:
+                for idx, note in updated_notes_map.items():
+                    st.session_state.comparison_df.at[idx, "user_notes"] = note
+
+            # Keep enriched_df in sync so notes survive enrichment
+            if (
+                st.session_state.enrichment_done
+                and not st.session_state.enriched_df.empty
+                and len(st.session_state.enriched_df) == len(st.session_state.comparison_df)
+            ):
+                st.session_state.enriched_df["user_notes"] = st.session_state.comparison_df["user_notes"].values
+
+            st.success("Notes saved!")
+            st.rerun()
 
 else:
     st.info("Add units to compare first. Paste a listing above and click **Save Units**.")
