@@ -1,6 +1,6 @@
 # NestAI
 
-**Live App:** <https://apartment-comparison-and-recommendation.streamlit.app/>
+**Live App:** <https://nest--ai--v1.streamlit.app>
 
 Find *your* nest.
 
@@ -43,6 +43,7 @@ Find *your* nest.
 # ── Streamlit (current working app) ──────────────────────────────
 cd legacy/streamlit
 pip install -r requirements.txt
+export NESTAI_API_BASE_URL=http://127.0.0.1:8001
 streamlit run app.py
 # → http://localhost:8501
 
@@ -53,12 +54,18 @@ docker compose up -d db
 cd services/api
 pip install -r requirements.txt
 alembic upgrade head          # run migrations first
-uvicorn main:app --reload --port 8001
+uvicorn main:app --reload --host 0.0.0.0 --port 8001
 # → http://127.0.0.1:8001
 # → http://127.0.0.1:8001/docs  (interactive API explorer)
 ```
 
 Set `NESTAI_API_BASE_URL=http://127.0.0.1:8001` in your local `.env` before starting Streamlit.
+
+For hosted Streamlit Cloud, set this secret:
+
+```toml
+NESTAI_API_BASE_URL = "https://YOUR-RENDER-FASTAPI-URL"
+```
 
 ### Admin dashboard
 
@@ -83,8 +90,10 @@ python -m app.cli.seed_admin
 
 ```bash
 # Create a beta code via the admin API:
-curl -X POST "http://127.0.0.1:8001/admin/beta-codes?code=INVITE123" \
-     -u you@example.com:YourPassword
+curl -X POST "http://127.0.0.1:8001/admin/beta-codes" \
+     -u you@example.com:YourPassword \
+     -H "Content-Type: application/json" \
+     -d '{"email_restriction":"tester@example.com","max_uses":1}'
 ```
 
 ### Inspecting the database
@@ -101,10 +110,29 @@ cd services/api && alembic upgrade head
 
 | Component | Recommended host | Notes |
 |-----------|-----------------|-------|
-| Streamlit app | [Streamlit Cloud](https://share.streamlit.io/) | Update main file path to `legacy/streamlit/app.py` |
-| FastAPI backend | Railway / Render / Fly.io | Set `DATABASE_URL` env var |
+| Streamlit app | [Streamlit Cloud](https://share.streamlit.io/) | Main file path: `legacy/streamlit/app.py` |
+| FastAPI backend | Render | Use `services/api` as root and run migrations during build |
 | PostgreSQL | Supabase / Neon free tier | Free up to 500 MB |
 | Next.js website | Vercel | Not built yet |
+
+### Render FastAPI Configuration
+
+Root directory:
+`services/api`
+
+Build command:
+`pip install -r requirements.txt && alembic upgrade head`
+
+Start command:
+`uvicorn main:app --host 0.0.0.0 --port $PORT`
+
+Required Render environment variables:
+
+- `DATABASE_URL`
+- `NESTAI_OWNER_EMAIL`
+- `JWT_SECRET_KEY`
+- `JWT_ALGORITHM`
+- `ACCESS_TOKEN_EXPIRE_MINUTES`
 
 ---
 

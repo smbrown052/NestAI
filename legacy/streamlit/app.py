@@ -53,6 +53,7 @@ from auth_service import (
     login_error_message,
     registration_error_message,
     payment_required_message,
+    SERVICE_UNAVAILABLE_MESSAGE,
 )
 
 st.set_page_config(page_title="NestAI", page_icon="🏠", layout="wide")
@@ -170,11 +171,15 @@ for key, default in {
 auth.initialize()
 auth.restore_from_session()
 auth.sync_user_tier()
+api_available = auth.is_api_available()
 
 if auth.is_authenticated():
     st.session_state.paid_features_enabled = (get_tier() in {"beta", "premium", "premium_plus"})
 else:
     st.session_state.paid_features_enabled = False
+
+if not api_available:
+    st.warning(SERVICE_UNAVAILABLE_MESSAGE)
 
 if st.session_state.auth_notice:
     st.success(st.session_state.auth_notice)
@@ -195,6 +200,13 @@ active_screen = st.segmented_control(
     default=st.session_state.main_nav,
 )
 st.session_state.main_nav = active_screen
+
+if active_screen == "Logout":
+    if auth.is_authenticated():
+        auth.logout()
+        st.session_state.auth_notice = "Signed out successfully."
+    st.session_state.main_nav = "Apartments"
+    st.rerun()
 
 
 # ── Sidebar — AI Apartment Advisor ────────────────────────────────────────────
@@ -372,7 +384,11 @@ if active_screen == "Profile":
             checkout_url = st.session_state.get("pending_checkout_url")
             if checkout_url:
                 st.markdown(f"[Open checkout]({checkout_url})")
-            if checkout_session_id and st.button("Confirm payment completed", use_container_width=True):
+            if checkout_session_id and st.button(
+                "Confirm payment completed",
+                use_container_width=True,
+                disabled=not api_available,
+            ):
                 if auth.confirm_pending_payment():
                     st.session_state.auth_notice = "Payment verified. Premium access activated."
                     st.rerun()
@@ -398,10 +414,12 @@ if active_screen == "Profile":
 
 if active_screen == "Login":
     st.markdown("### 🔐 Login")
+    if not api_available:
+        st.info(SERVICE_UNAVAILABLE_MESSAGE)
     with st.form("login_form"):
         login_email = st.text_input("Email", key="login_email")
         login_password = st.text_input("Password", type="password", key="login_password")
-        login_submit = st.form_submit_button("Sign In", use_container_width=True)
+        login_submit = st.form_submit_button("Sign In", use_container_width=True, disabled=not api_available)
 
     if login_submit:
         with st.spinner("Signing you in..."):
@@ -424,6 +442,8 @@ if active_screen == "Login":
 
 if active_screen == "Create Account":
     st.markdown("### ✨ Create Account")
+    if not api_available:
+        st.info(SERVICE_UNAVAILABLE_MESSAGE)
     account_type_options = get_account_type_options()
     selected_account_type = st.selectbox(
         "Account type",
@@ -437,9 +457,9 @@ if active_screen == "Create Account":
     if selected_account_type == "beta":
         st.info("Beta access is invite-only. A valid invite code is required.")
     elif selected_account_type == "premium":
-        st.info("Payment required to activate Premium.")
+        st.info("Payment setup is coming soon. Your account will be created as Free with Premium requested.")
     elif selected_account_type == "premium_plus":
-        st.info("Payment required to activate Premium Plus.")
+        st.info("Payment setup is coming soon. Your account will be created as Free with Premium Plus requested.")
 
     with st.form("register_form"):
         register_name = st.text_input("Display name", key="register_name")
@@ -448,7 +468,7 @@ if active_screen == "Create Account":
         beta_invite_code = None
         if selected_account_type == "beta":
             beta_invite_code = st.text_input("Beta invite code", type="password", key="beta_invite_code")
-        register_submit = st.form_submit_button("Create Account", use_container_width=True)
+        register_submit = st.form_submit_button("Create Account", use_container_width=True, disabled=not api_available)
 
     if register_submit:
         with st.spinner("Creating your account..."):
@@ -490,42 +510,74 @@ if active_screen == "Pricing":
     c1, c2, c3, c4 = st.columns(4)
 
     with c1:
-        st.markdown("#### Free")
+        st.markdown("#### FREE")
         st.write("$0 / month")
-        st.write("Existing Free limits")
+        st.markdown("- Create an account")
+        st.markdown("- 1 active saved property")
+        st.markdown("- Up to 5 property analyses per month")
+        st.markdown("- Basic apartment parsing")
+        st.markdown("- Basic house parsing")
+        st.markdown("- Basic rankings and filters")
+        st.markdown("- Example listings")
+        st.markdown("- No AI recommendations")
+        st.markdown("- No commute or neighborhood enrichment")
+        st.markdown("- No multi-property comparison")
         if st.button("Create Free Account", key="pricing_free", use_container_width=True):
             st.session_state.signup_account_type = "free"
             st.session_state.main_nav = "Create Account"
             st.rerun()
 
     with c2:
-        st.markdown("#### Beta")
+        st.markdown("#### BETA")
         st.write("Invite only")
-        st.write("Early access with invite code")
-        if st.button("Join Beta with Invite Code", key="pricing_beta", use_container_width=True):
+        st.markdown("- Everything in Free")
+        st.markdown("- Beta invite-code access")
+        st.markdown("- Early access to new features")
+        st.markdown("- Higher configurable usage limits")
+        st.markdown("- AI features according to beta quotas")
+        st.markdown("- Comparison tools")
+        st.markdown("- Feedback and bug-report access")
+        st.markdown("- No payment required during beta")
+        if st.button("Join with Invite Code", key="pricing_beta", use_container_width=True):
             st.session_state.signup_account_type = "beta"
             st.session_state.main_nav = "Create Account"
             st.rerun()
 
     with c3:
-        st.markdown("#### Premium")
+        st.markdown("#### PREMIUM")
         st.write("$12 / month")
-        st.write("Payment required to activate Premium")
+        st.markdown("- Higher or unlimited property-analysis limits according to configured quotas")
+        st.markdown("- Multiple saved properties")
+        st.markdown("- Apartment and house comparisons")
+        st.markdown("- Lifestyle Score")
+        st.markdown("- AI recommendations and explanations")
+        st.markdown("- Commute analysis")
+        st.markdown("- Neighborhood enrichment")
+        st.markdown("- Decision reports")
+        st.markdown("- Filterable notes in the Full Ranking Table")
+        st.markdown("- Premium support according to existing product rules")
         if st.button("Choose Premium", key="pricing_premium", use_container_width=True):
             st.session_state.signup_account_type = "premium"
             st.session_state.main_nav = "Create Account"
             st.rerun()
 
     with c4:
-        st.markdown("#### Premium Plus")
+        st.markdown("#### PREMIUM PLUS")
         st.write("$25 / month")
-        st.write("Everything in Premium plus additional features")
+        st.markdown("Everything in Premium, plus:")
+        st.markdown("- Higher AI usage limits")
+        st.markdown("- Higher commute and enrichment limits")
+        st.markdown("- Advanced reports")
+        st.markdown("- Advanced comparison insights")
+        st.markdown("- Early access to premium features")
+        st.markdown("- Future portfolio and investment tools")
+        st.markdown("- Priority support")
         if st.button("Choose Premium Plus", key="pricing_premium_plus", use_container_width=True):
             st.session_state.signup_account_type = "premium_plus"
             st.session_state.main_nav = "Create Account"
             st.rerun()
 
-    st.caption("Premium Plus includes everything in Premium plus additional features.")
+    st.caption("Premium and Premium Plus require payment setup before activation. Accounts are created as Free with your selected plan recorded.")
     st.stop()
 
 if active_screen == "Houses":
@@ -615,7 +667,7 @@ if active_screen == "Houses":
 if active_screen == "Apartments":
     pass
 
-if active_screen not in {"Apartments", "Houses", "Pricing", "Profile", "Login", "Create Account"}:
+if active_screen not in {"Apartments", "Houses", "Pricing", "Profile", "Login", "Create Account", "Logout"}:
     st.stop()
 
 

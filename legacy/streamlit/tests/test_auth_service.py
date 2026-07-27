@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -15,8 +16,10 @@ if str(STREAMLIT_ROOT) not in sys.path:
 
 from auth_service import (  # noqa: E402
     AUTH_STATE_DEFAULTS,
+    API_BASE_URL_ENV,
     NestAIAPIClient,
     StreamlitAuthManager,
+    get_api_base_url,
     login_error_message,
     registration_error_message,
 )
@@ -119,7 +122,20 @@ class StreamlitAuthServiceTests(unittest.TestCase):
         self.assertIsNone(state["auth_user"])
 
     def test_error_message_mappings_and_default_navigation(self) -> None:
+        self.assertEqual(login_error_message(0), "Account services are temporarily unavailable.")
         self.assertEqual(login_error_message(401), "Invalid email or password.")
+        self.assertEqual(registration_error_message(0), "Account services are temporarily unavailable.")
         self.assertEqual(registration_error_message(409), "That email is already registered.")
         self.assertEqual(registration_error_message(422), "Please check the registration fields and try again.")
         self.assertEqual(AUTH_STATE_DEFAULTS["main_nav"], "Apartments")
+
+    def test_api_base_url_uses_environment_value(self) -> None:
+        prior = os.environ.get(API_BASE_URL_ENV)
+        try:
+            os.environ[API_BASE_URL_ENV] = "https://example-render-api.onrender.com"
+            self.assertEqual(get_api_base_url(), "https://example-render-api.onrender.com")
+        finally:
+            if prior is None:
+                os.environ.pop(API_BASE_URL_ENV, None)
+            else:
+                os.environ[API_BASE_URL_ENV] = prior

@@ -5,15 +5,22 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import os
 import secrets
-from dataclasses import dataclass
+import time
 from typing import Any, Mapping
 
 import requests
 
 DEFAULT_API_BASE_URL = "http://127.0.0.1:8001"
 API_BASE_URL_ENV = "NESTAI_API_BASE_URL"
+SERVICE_UNAVAILABLE_MESSAGE = "Account services are temporarily unavailable."
+API_REQUEST_TIMEOUT_SECONDS = 20
+API_HEALTH_TIMEOUT_SECONDS = 3
+API_HEALTH_TTL_SECONDS = 20
+
+logger = logging.getLogger(__name__)
 
 AUTH_STATE_DEFAULTS = {
     "auth_token": None,
@@ -24,21 +31,40 @@ AUTH_STATE_DEFAULTS = {
     "signup_account_type": "free",
     "pending_checkout_session_id": None,
     "pending_checkout_url": None,
+    "api_available": True,
+    "api_last_health_check": 0.0,
 }
 
 
 def login_error_message(status_code: int) -> str:
+    if status_code == 0:
+        return SERVICE_UNAVAILABLE_MESSAGE
     if status_code == 401:
         return "Invalid email or password."
     return "Could not sign in right now. Please try again."
 
 
 def registration_error_message(status_code: int) -> str:
+    if status_code == 0:
+        return SERVICE_UNAVAILABLE_MESSAGE
     if status_code == 409:
         return "That email is already registered."
     if status_code == 422:
         return "Please check the registration fields and try again."
     return "Could not create the account right now. Please try again."
+
+
+def _streamlit_secret_value(key: str) -> str | None:
+    try:
+        import streamlit as st
+
+        value = st.secrets.get(key)
+    except Exception:
+        return None
+    if value is None:
+        return None
+    stripped = str(value).strip()
+    return stripped or None
 
 
 def payment_required_message(plan: str) -> str:
@@ -60,7 +86,22 @@ def sign_webhook_payload(raw_payload: bytes) -> str:
 
 
 def get_api_base_url() -> str:
-    return os.getenv(API_BASE_URL_ENV, DEFAULT_API_BASE_URL).rstrip("/")
+    secret_value = _streamlit_secret_value(API_BASE_URL_ENV)
+    if secret_value:
+        return secret_value.rstrip("/")
+    env_value = os.getenv(API_BASE_URL_ENV, "").strip()
+    if env_value:
+        return env_value.rstrip("/")
+    return DEFAULT_API_BASE_URL
+
+
+class APIErrorResponse:
+    def __init__(self, message: str = SERVICE_UNAVAILABLE_MESSAGE):
+        self.status_code = 0
+        self._payload = {"detail": message}
+
+    def json(self) -> dict[str, Any]:
+        return self._payload
 
 
 class NestAIAPIClient:
@@ -88,7 +129,28 @@ class NestAIAPIClient:
         headers: dict[str, str] = {}
         if self.access_token:
             headers["Authorization"] = f"Bearer {self.access_token}"
-        return self.session.request(method, self._url(path), json=json, headers=headers, timeout=20)
+        try:
+            return self.session.request(
+                method,
+                self._url(path),
+                json=json,
+                headers=headers,
+                timeout=API_REQUEST_TIMEOUT_SECONDS,
+            )
+        except (requests.ConnectionError, requests.Timeout, requests.RequestException) as exc:
+            logger.warning("API request failed for %s %s: %s", method, path, exc.__class__.__name__)
+            return APIErrorResponse()
+
+    def health_check(self) -> bool:
+        try:
+            response = self.session.get(
+                self._url("/health"),
+                timeout=API_HEALTH_TIMEOUT_SECONDS,
+            )
+        except (requests.ConnectionError, requests.Timeout, requests.RequestException) as exc:
+            logger.warning("API health check failed: %s", exc.__class__.__name__)
+            return False
+        return response.status_code == 200
 
     def register(self, email: str, password: str, display_name: str) -> requests.Response:
         return self.request(
@@ -149,6 +211,17 @@ class StreamlitAuthManager:
             if key not in session_state:
                 session_state[key] = default
 
+    def is_api_available(self, force: bool = False) -> bool:
+        session_state = self._session_state
+        now = time.time()
+        last_check = float(session_state.get("api_last_health_check") or 0.0)
+        if not force and (now - last_check) < API_HEALTH_TTL_SECONDS:
+            return bool(session_state.get("api_available", True))
+        available = self.api_client.health_check()
+        session_state["api_available"] = available
+        session_state["api_last_health_check"] = now
+        return available
+
     def is_authenticated(self) -> bool:
         session_state = self._session_state
         return bool(session_state.get("auth_token") and session_state.get("auth_user"))
@@ -182,6 +255,9 @@ class StreamlitAuthManager:
             return False
         self.api_client.set_token(token)
         response = self.api_client.me()
+        if response.status_code == 0:
+            self._session_state["api_available"] = False
+            return False
         if response.status_code != 200:
             self.clear_authenticated()
             return False
@@ -233,9 +309,12 @@ class StreamlitAuthManager:
     def refresh_billing_status(self) -> dict[str, Any] | None:
         response = self.api_client.billing_status()
         if response.status_code != 200:
+            if response.status_code == 0:
+                self._session_state["api_available"] = False
             return None
         status_payload = response.json()
         self.store_checkout(status_payload.get("checkout_session_id"), status_payload.get("checkout_url"))
+        self._session_state["api_available"] = True
         return status_payload
 
     def confirm_pending_payment(self) -> bool:
@@ -246,6 +325,8 @@ class StreamlitAuthManager:
             return False
         response = self.api_client.confirm_payment(session_id, requested_plan)
         if response.status_code != 200:
+            if response.status_code == 0:
+                self._session_state["api_available"] = False
             return False
         refreshed = self.fetch_current_user()
         if refreshed.status_code == 200:

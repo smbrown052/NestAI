@@ -1,20 +1,21 @@
 """Account plans and hashed beta invites
 
-Revision ID: 0002
-Revises: 0001
+Revision ID: 0003_account_plans
+Revises: 0002_property_platform
 Create Date: 2026-07-27
 
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Sequence, Union
 
 import sqlalchemy as sa
 from alembic import op
 from pwdlib import PasswordHash
 
-revision: str = "0002"
-down_revision: Union[str, None] = "0001"
+revision: str = "0003_account_plans"
+down_revision: Union[str, None] = "0002_property_platform"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -45,9 +46,10 @@ def upgrade() -> None:
         sa.Column("beta_approved_at", sa.DateTime(timezone=True), nullable=True),
     )
 
-    op.alter_column("beta_access", "code", existing_type=sa.String(length=64), type_=sa.String(length=255), existing_nullable=False)
-
     connection = op.get_bind()
+    if connection.dialect.name != "sqlite":
+        op.alter_column("beta_access", "code", existing_type=sa.String(length=64), type_=sa.String(length=255), existing_nullable=False)
+
     password_hasher = PasswordHash.recommended()
 
     user_rows = connection.execute(sa.text("SELECT id, tier, beta_tester FROM users")).fetchall()
@@ -59,11 +61,16 @@ def upgrade() -> None:
                 UPDATE users
                 SET active_plan = :active_plan,
                     subscription_status = 'active',
-                    beta_approved_at = CASE WHEN :is_beta THEN COALESCE(beta_approved_at, now()) ELSE beta_approved_at END
+                    beta_approved_at = CASE WHEN :is_beta THEN COALESCE(beta_approved_at, :beta_approved_at) ELSE beta_approved_at END
                 WHERE id = :user_id
                 """
             ),
-            {"active_plan": active_plan, "is_beta": bool(row.beta_tester), "user_id": row.id},
+            {
+                "active_plan": active_plan,
+                "is_beta": bool(row.beta_tester),
+                "beta_approved_at": datetime.now(timezone.utc),
+                "user_id": row.id,
+            },
         )
 
     beta_rows = connection.execute(sa.text("SELECT id, code FROM beta_access")).fetchall()
@@ -77,7 +84,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.alter_column("beta_access", "code", existing_type=sa.String(length=255), type_=sa.String(length=64), existing_nullable=False)
+    connection = op.get_bind()
+    if connection.dialect.name != "sqlite":
+        op.alter_column("beta_access", "code", existing_type=sa.String(length=255), type_=sa.String(length=64), existing_nullable=False)
     op.drop_column("users", "beta_approved_at")
     op.drop_column("users", "payment_subscription_id")
     op.drop_column("users", "payment_customer_id")

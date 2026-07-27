@@ -13,9 +13,9 @@ from typing import Any
 from pwdlib import PasswordHash
 
 PASSWORD_HASHER = PasswordHash.recommended()
-JWT_ALGORITHM = "HS256"
+JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 JWT_TOKEN_TYPE = "access"
-DEFAULT_TOKEN_EXPIRE_DAYS = 7
+DEFAULT_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "10080"))
 
 
 def hash_password(password: str) -> str:
@@ -47,7 +47,7 @@ def create_access_token(
     expires_delta: timedelta | None = None,
 ) -> str:
     now = datetime.now(timezone.utc)
-    expires_at = now + (expires_delta or timedelta(days=DEFAULT_TOKEN_EXPIRE_DAYS))
+    expires_at = now + (expires_delta or timedelta(minutes=DEFAULT_TOKEN_EXPIRE_MINUTES))
     header = {"alg": JWT_ALGORITHM, "typ": "JWT"}
     payload = {
         **claims,

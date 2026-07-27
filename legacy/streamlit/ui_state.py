@@ -5,7 +5,9 @@ from __future__ import annotations
 
 def get_navigation_options(authenticated: bool) -> list[str]:
     options = ["Apartments", "Houses", "Pricing", "Profile"]
-    if not authenticated:
+    if authenticated:
+        options.append("Logout")
+    else:
         options.extend(["Login", "Create Account"])
     return options
 
