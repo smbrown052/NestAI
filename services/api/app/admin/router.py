@@ -11,13 +11,11 @@ at /docs to explore them.
 """
 
 from datetime import datetime, timezone, timedelta
-from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
-from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 
+from app.core.dependencies import require_admin
 from app.db.session import get_db
 from app.db.models.user import User
 from app.db.models.feedback import FeedbackReport
@@ -27,27 +25,6 @@ from app.db.models.billing import BillingEvent
 from app.db.models.ai_feedback import AICallLog
 
 router = APIRouter(prefix="/admin", tags=["admin"])
-
-security = HTTPBasic()
-pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-
-# ── Auth dependency ────────────────────────────────────────────────────────────
-
-def require_admin(
-    credentials: Annotated[HTTPBasicCredentials, Depends(security)],
-    db: Session = Depends(get_db),
-) -> User:
-    user = db.query(User).filter(User.email == credentials.username).first()
-    if not user or not pwd_ctx.verify(credentials.password, user.hashed_password):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid credentials",
-            headers={"WWW-Authenticate": "Basic"},
-        )
-    if not user.is_admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
-    return user
 
 
 # ── Overview ───────────────────────────────────────────────────────────────────

@@ -25,6 +25,8 @@ import sys
 
 from dotenv import load_dotenv
 
+from app.core.security import hash_password, normalize_email
+
 load_dotenv()
 
 
@@ -37,7 +39,7 @@ def _require_env(name: str) -> str:
 
 
 def main() -> None:
-    email = _require_env("ADMIN_BOOTSTRAP_EMAIL")
+    email = normalize_email(_require_env("ADMIN_BOOTSTRAP_EMAIL"))
     password = _require_env("ADMIN_BOOTSTRAP_PASSWORD")
 
     if len(password) < 12:
@@ -47,14 +49,9 @@ def main() -> None:
         )
         sys.exit(1)
 
-    # Import here so the module can be imported without a live DB for testing.
-    from passlib.context import CryptContext
-
     from app.db.session import SessionLocal
     from app.db.models.user import User
     from app.db.models.credits import CreditBalance
-
-    pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
     db = SessionLocal()
     try:
@@ -68,7 +65,7 @@ def main() -> None:
                 print(f"ℹ️   Admin account {email!r} already exists. No changes made.")
             return
 
-        hashed = pwd_ctx.hash(password)
+        hashed = hash_password(password)
         user = User(
             email=email,
             hashed_password=hashed,
@@ -76,6 +73,7 @@ def main() -> None:
             is_active=True,
             is_admin=True,
             tier="premium",
+            plan="PREMIUM",
         )
         db.add(user)
         db.flush()  # populate user.id
