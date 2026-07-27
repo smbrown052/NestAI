@@ -41,6 +41,10 @@ class Settings(BaseSettings):
             raise ValueError(
                 "JWT_SECRET_KEY must be set to a secure value outside development/test environments."
             )
+        if not self.is_development and len(self.jwt_secret_key) < 32:
+            raise ValueError(
+                "JWT_SECRET_KEY must be at least 32 characters outside development/test environments."
+            )
         return self
 
 

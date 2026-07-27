@@ -5,7 +5,7 @@ from pathlib import Path
 
 os.environ["DATABASE_URL"] = f"sqlite:///{Path(tempfile.gettempdir()) / 'nestai-api-auth-tests.db'}"
 os.environ["ENVIRONMENT"] = "test"
-os.environ["JWT_SECRET_KEY"] = "test-secret-key"
+os.environ["JWT_SECRET_KEY"] = "test-secret-key-with-32-plus-characters"
 os.environ["NESTAI_OWNER_EMAIL"] = "owner@example.com"
 
 import app.db.models  # noqa: F401
