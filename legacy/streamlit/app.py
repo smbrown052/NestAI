@@ -9,7 +9,9 @@ _EXAMPLE_LISTINGS = [
     (_DATA_DIR / "app_listing_1.txt", "Avalon Courthouse Place"),
     (_DATA_DIR / "app_listing_2.txt", "Cortland Bennett Park"),
 ]
+_HOUSE_EXAMPLE_LISTINGS = sorted(_DATA_DIR.rglob("home_example_*.txt"))
 from text_parser import parse_apartment_text, filter_units_by_request
+from parser.home_listing import parse_house_listing
 from enrichment import (
     enrich_units_df,
     enrich_building,
@@ -81,10 +83,13 @@ def get_priority_rank(priority_name: str, weights: dict) -> str:
 
 for key, default in {
     "listing_text": "",
+    "house_listing_text": "",
     "filtered_df": pd.DataFrame(),
     "comparison_df": pd.DataFrame(),
     "parsed_df": pd.DataFrame(),
+    "house_parsed_df": pd.DataFrame(),
     "last_result": None,
+    "last_house_result": None,
     "advisor_messages": [],
     "user_profile": {},
     "cost_extras": {},       # {parking, utilities, pet_fee, renters_insurance}
