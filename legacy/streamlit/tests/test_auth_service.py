@@ -139,3 +139,20 @@ class StreamlitAuthServiceTests(unittest.TestCase):
                 os.environ.pop(API_BASE_URL_ENV, None)
             else:
                 os.environ[API_BASE_URL_ENV] = prior
+
+    def test_api_base_url_does_not_default_to_localhost_on_streamlit_cloud(self) -> None:
+        prior_api = os.environ.get(API_BASE_URL_ENV)
+        prior_cloud = os.environ.get("STREAMLIT_SHARING_MODE")
+        try:
+            os.environ.pop(API_BASE_URL_ENV, None)
+            os.environ["STREAMLIT_SHARING_MODE"] = "community"
+            self.assertIsNone(get_api_base_url())
+        finally:
+            if prior_api is None:
+                os.environ.pop(API_BASE_URL_ENV, None)
+            else:
+                os.environ[API_BASE_URL_ENV] = prior_api
+            if prior_cloud is None:
+                os.environ.pop("STREAMLIT_SHARING_MODE", None)
+            else:
+                os.environ["STREAMLIT_SHARING_MODE"] = prior_cloud

@@ -7,6 +7,7 @@ import hmac
 import json
 import logging
 import os
+import socket
 import secrets
 import time
 from typing import Any, Mapping
@@ -67,6 +68,22 @@ def _streamlit_secret_value(key: str) -> str | None:
     return stripped or None
 
 
+def _looks_like_streamlit_cloud() -> bool:
+    markers = [
+        os.getenv("STREAMLIT_SHARING_MODE", ""),
+        os.getenv("STREAMLIT_RUNTIME", ""),
+        os.getenv("IS_STREAMLIT_CLOUD", ""),
+    ]
+    for marker in markers:
+        value = marker.strip().lower()
+        if value in {"1", "true", "yes", "cloud", "community", "streamlit_cloud"}:
+            return True
+    hostname = socket.gethostname().lower()
+    if "streamlit" in hostname and "app" in hostname:
+        return True
+    return False
+
+
 def payment_required_message(plan: str) -> str:
     normalized = (plan or "free").strip().lower().replace(" ", "_").replace("-", "_")
     if normalized == "premium_plus":
@@ -85,13 +102,15 @@ def sign_webhook_payload(raw_payload: bytes) -> str:
     return hmac.new(secret.encode("utf-8"), raw_payload, hashlib.sha256).hexdigest()
 
 
-def get_api_base_url() -> str:
+def get_api_base_url() -> str | None:
     secret_value = _streamlit_secret_value(API_BASE_URL_ENV)
     if secret_value:
         return secret_value.rstrip("/")
     env_value = os.getenv(API_BASE_URL_ENV, "").strip()
     if env_value:
         return env_value.rstrip("/")
+    if _looks_like_streamlit_cloud():
+        return None
     return DEFAULT_API_BASE_URL
 
 
@@ -108,7 +127,8 @@ class NestAIAPIClient:
     """Thin API client that attaches the bearer token when available."""
 
     def __init__(self, base_url: str | None = None, session: requests.Session | None = None):
-        self.base_url = (base_url or get_api_base_url()).rstrip("/")
+        resolved = base_url if base_url is not None else get_api_base_url()
+        self.base_url = resolved.rstrip("/") if resolved else None
         self.session = session or requests.Session()
         self.access_token: str | None = None
 
@@ -119,6 +139,8 @@ class NestAIAPIClient:
         self.access_token = None
 
     def _url(self, path: str) -> str:
+        if not self.base_url:
+            return ""
         if path.startswith("http://") or path.startswith("https://"):
             return path
         if not path.startswith("/"):
@@ -126,6 +148,9 @@ class NestAIAPIClient:
         return f"{self.base_url}{path}"
 
     def request(self, method: str, path: str, *, json: dict[str, Any] | None = None) -> requests.Response:
+        if not self.base_url:
+            logger.warning("API request skipped because %s is not configured", API_BASE_URL_ENV)
+            return APIErrorResponse()
         headers: dict[str, str] = {}
         if self.access_token:
             headers["Authorization"] = f"Bearer {self.access_token}"
@@ -142,6 +167,9 @@ class NestAIAPIClient:
             return APIErrorResponse()
 
     def health_check(self) -> bool:
+        if not self.base_url:
+            logger.warning("API health check skipped because %s is not configured", API_BASE_URL_ENV)
+            return False
         try:
             response = self.session.get(
                 self._url("/health"),

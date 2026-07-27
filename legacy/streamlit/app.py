@@ -35,7 +35,19 @@ from llm_helpers import generate_negotiation_script, advisor_chat_response
 from lifestyle_scoring import LifestyleScorer, get_priority_weights_from_sliders
 from lifestyle_explanations import generate_lifestyle_explanation, generate_amenities_list
 from tradeoff_assistant import TradeoffAnalyzer
-from regret_analyzer import RegretAnalyzer
+try:
+    from regret_analyzer import RegretAnalyzer
+except Exception:
+    import importlib.util
+
+    _regret_path = Path(__file__).with_name("regret_analyzer.py")
+    _spec = importlib.util.spec_from_file_location("regret_analyzer", _regret_path)
+    if _spec and _spec.loader:
+        _module = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_module)
+        RegretAnalyzer = _module.RegretAnalyzer
+    else:
+        raise
 from credits import (
     render_tier_badge,
     get_tier,
