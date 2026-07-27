@@ -35,7 +35,8 @@ config.set_main_option("sqlalchemy.url", database_url)
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Import the shared Base so all models are registered before autogenerate.
+# Import all models before loading Base.metadata so autogenerate sees them.
+import app.db.models  # noqa: E402, F401
 from app.db.base import Base  # noqa: E402
 
 target_metadata = Base.metadata
