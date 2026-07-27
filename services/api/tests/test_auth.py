@@ -34,6 +34,8 @@ class AuthApiTests(unittest.TestCase):
         for module_name in [
             "app.db.session",
             "app.db.base",
+            "app.db.models.user",
+            "app.db.models.beta_access",
             "app.auth.security",
             "app.auth.plans",
             "app.auth.dependencies",
@@ -47,6 +49,8 @@ class AuthApiTests(unittest.TestCase):
 
         cls.session_module = importlib.import_module("app.db.session")
         cls.base_module = importlib.import_module("app.db.base")
+        cls.user_module = importlib.import_module("app.db.models.user")
+        cls.beta_access_module = importlib.import_module("app.db.models.beta_access")
         cls.billing_service = importlib.import_module("app.billing.service")
         cls.main_module = importlib.import_module("main")
         cls.base_module.Base.metadata.create_all(bind=cls.session_module.engine)
@@ -54,7 +58,7 @@ class AuthApiTests(unittest.TestCase):
 
         db = cls.session_module.SessionLocal()
         try:
-            admin_user = cls.base_module.User(
+            admin_user = cls.user_module.User(
                 email="admin@example.com",
                 hashed_password=hash_password("AdminPassword123!"),
                 display_name="Admin User",
@@ -142,7 +146,7 @@ class AuthApiTests(unittest.TestCase):
 
         db = self.session_module.SessionLocal()
         try:
-            user_count = db.query(self.base_module.User).filter(self.base_module.User.email == email).count()
+            user_count = db.query(self.user_module.User).filter(self.user_module.User.email == email).count()
             self.assertEqual(user_count, 1)
         finally:
             db.close()
@@ -151,7 +155,7 @@ class AuthApiTests(unittest.TestCase):
         db = self.session_module.SessionLocal()
         try:
             invite_code = "NEST-BETA-ACCESS"
-            beta_invite = self.base_module.BetaAccess(
+            beta_invite = self.beta_access_module.BetaAccess(
                 code_hash=hash_password(invite_code),
                 created_by_id=1,
                 email_hint="beta@example.com",
