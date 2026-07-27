@@ -53,16 +53,18 @@ docker compose up -d db
 cd services/api
 pip install -r requirements.txt
 alembic upgrade head          # run migrations first
-uvicorn main:app --reload
-# → http://localhost:8000
-# → http://localhost:8000/docs  (interactive API explorer)
+uvicorn main:app --reload --port 8001
+# → http://127.0.0.1:8001
+# → http://127.0.0.1:8001/docs  (interactive API explorer)
 ```
+
+Set `NESTAI_API_BASE_URL=http://127.0.0.1:8001` in your local `.env` before starting Streamlit.
 
 ### Admin dashboard
 
 ```bash
 # Start the API, then open:
-http://localhost:8000/docs
+http://127.0.0.1:8001/docs
 # Click "Authorize" and enter your admin email + password.
 ```
 
@@ -81,7 +83,7 @@ python -m app.cli.seed_admin
 
 ```bash
 # Create a beta code via the admin API:
-curl -X POST "http://localhost:8000/admin/beta-codes?code=INVITE123" \
+curl -X POST "http://127.0.0.1:8001/admin/beta-codes?code=INVITE123" \
      -u you@example.com:YourPassword
 ```
 

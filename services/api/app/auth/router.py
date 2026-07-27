@@ -1,91 +1,159 @@
-"""Public authentication endpoints."""
+"""FastAPI auth routes for NestAI users."""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.config import get_settings
-from app.core.dependencies import get_current_user
-from app.core.security import (
-    create_access_token,
-    hash_password,
-    normalize_email,
-    verify_password,
+from app.auth.plans import (
+    BETA_PLAN,
+    FREE_PLAN,
+    PAYMENT_PLANS,
+    current_plan,
+    is_valid_plan,
+    normalize_plan,
+    plan_requires_payment,
+    requested_plan,
+    set_user_plan,
 )
-from app.db.models.credits import CreditBalance
+from app.billing.service import create_checkout_session, payment_required_message
+from app.auth.security import create_access_token, hash_password, verify_password
 from app.db.models.user import User
+from app.db.models.beta_access import BetaAccess
 from app.db.session import get_db
-from app.schemas.user import TokenResponse, UserLogin, UserRegister, UserResponse
+
+from .dependencies import get_current_user
+from .schemas import AccessTokenResponse, AuthUserRead, LoginRequest, RegisterRequest
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-def register_user(payload: UserRegister, db: Session = Depends(get_db)) -> User:
-    normalized_email = normalize_email(payload.email)
-    display_name = payload.display_name.strip() if payload.display_name else None
-    if display_name == "":
-        display_name = None
-
-    if db.query(User).filter(User.email == normalized_email).first():
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="An account with this email already exists.",
-        )
-
-    settings = get_settings()
-    owner_email = (
-        normalize_email(settings.nestai_owner_email)
-        if settings.nestai_owner_email and settings.nestai_owner_email.strip()
-        else None
+def _serialize_user(user: User) -> AuthUserRead:
+    selected_account_type = requested_plan(user) or current_plan(user)
+    return AuthUserRead(
+        id=user.id,
+        email=user.email,
+        display_name=user.display_name,
+        tier=current_plan(user),
+        active_plan=current_plan(user),
+        requested_plan=requested_plan(user),
+        selected_account_type=selected_account_type,
+        subscription_status=user.subscription_status,
+        payment_customer_id=user.payment_customer_id,
+        payment_subscription_id=user.payment_subscription_id,
+        beta_approved_at=user.beta_approved_at,
+        beta_access=bool(user.beta_tester),
+        is_admin=user.is_admin,
+        is_active=user.is_active,
     )
+
+
+def _find_valid_beta_access(db: Session, invite_code: str, email: str) -> BetaAccess | None:
+    beta_codes = db.query(BetaAccess).filter(BetaAccess.is_active == True).all()  # noqa: E712
+    now = datetime.now(timezone.utc)
+    for beta_access in beta_codes:
+        if not verify_password(invite_code, beta_access.code_hash):
+            continue
+        if beta_access.expires_at and beta_access.expires_at < now:
+            continue
+        if beta_access.use_count >= beta_access.max_uses:
+            continue
+        if beta_access.email_hint and beta_access.email_hint.lower() != email.lower():
+            continue
+        return beta_access
+    return None
+
+
+@router.post("/register", status_code=status.HTTP_201_CREATED)
+def register_user(payload: RegisterRequest, db: Session = Depends(get_db)):
+    account_type = normalize_plan(payload.account_type)
+    if not is_valid_plan(account_type):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid account type")
+
+    existing = db.query(User).filter(User.email == payload.email).first()
+    if existing:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
 
     user = User(
-        email=normalized_email,
+        email=payload.email,
         hashed_password=hash_password(payload.password),
-        display_name=display_name,
+        display_name=payload.display_name.strip() or None,
         is_active=True,
-        is_admin=owner_email == normalized_email,
-        tier="free",
-        plan="FREE",
+        is_admin=False,
+        tier=FREE_PLAN,
+        active_plan=FREE_PLAN,
+        requested_plan=None,
+        subscription_status="active",
+        beta_tester=False,
     )
+
+    checkout_session_info = None
+    if account_type == FREE_PLAN:
+        set_user_plan(user, FREE_PLAN, requested=None, subscription_status="active")
+    elif account_type == BETA_PLAN:
+        if not payload.beta_invite_code:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Beta invite code required")
+        beta_access = _find_valid_beta_access(db, payload.beta_invite_code, payload.email)
+        if not beta_access:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid beta invite code")
+        beta_access.use_count += 1
+        beta_access.redeemed_at = datetime.now(timezone.utc)
+        user.beta_tester = True
+        user.beta_approved_at = datetime.now(timezone.utc)
+        set_user_plan(user, BETA_PLAN, requested=None, subscription_status="active")
+    else:
+        if not plan_requires_payment(account_type):
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid account type")
+        set_user_plan(user, FREE_PLAN, requested=account_type, subscription_status="pending_payment")
+
     db.add(user)
+    db.flush()
 
-    try:
-        db.flush()
-        db.add(
-            CreditBalance(
-                user_id=user.id,
-                tier=user.tier,
-            )
-        )
-        db.commit()
-    except IntegrityError as exc:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="An account with this email already exists.",
-        ) from exc
+    if account_type == BETA_PLAN:
+        beta_access.redeemed_by_id = user.id
 
+    db.commit()
     db.refresh(user)
-    return user
+
+    token = create_access_token({"sub": str(user.id), "email": user.email})
+    response = {
+        "user": _serialize_user(user).model_dump(mode="json"),
+        "access_token": token,
+        "token_type": "bearer",
+    }
+
+    if account_type in PAYMENT_PLANS:
+        checkout_session_info = create_checkout_session(db, user, account_type)
+        db.refresh(user)
+        response.update(
+            {
+                "user": _serialize_user(user).model_dump(mode="json"),
+                **checkout_session_info,
+                "payment_required_message": payment_required_message(account_type),
+            }
+        )
+
+    return response
 
 
-@router.post("/login", response_model=TokenResponse)
-def login_user(payload: UserLogin, db: Session = Depends(get_db)) -> TokenResponse:
-    normalized_email = normalize_email(payload.email)
-    user = db.query(User).filter(User.email == normalized_email).first()
-    if not user or not verify_password(payload.password, user.password_hash) or not user.is_active:
+@router.post("/login", response_model=AccessTokenResponse)
+def login_user(payload: LoginRequest, db: Session = Depends(get_db)) -> AccessTokenResponse:
+    user = db.query(User).filter(User.email == payload.email).first()
+    if not user or not verify_password(payload.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid credentials",
+            detail="Invalid email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    if not user.is_active:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account is disabled")
 
-    access_token = create_access_token(subject=str(user.id))
-    return TokenResponse(access_token=access_token, token_type="bearer")
+    token = create_access_token({"sub": str(user.id), "email": user.email})
+    return AccessTokenResponse(access_token=token)
 
 
-@router.get("/me", response_model=UserResponse)
-def read_current_user(current_user: User = Depends(get_current_user)) -> User:
-    return current_user
+@router.get("/me", response_model=AuthUserRead)
+def read_current_user(current_user: User = Depends(get_current_user)) -> AuthUserRead:
+    return _serialize_user(current_user)

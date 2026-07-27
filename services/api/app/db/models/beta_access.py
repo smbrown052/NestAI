@@ -1,4 +1,4 @@
-"""BetaAccess model — beta invite codes and their redemption state."""
+"""BetaAccess model — hashed beta invite codes and redemption state."""
 
 from datetime import datetime, timezone
 
@@ -16,7 +16,7 @@ class BetaAccess(Base):
     __tablename__ = "beta_access"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    code: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    code_hash: Mapped[str] = mapped_column("code", String(255), unique=True, nullable=False, index=True)
     # The user who created / owns this code.
     created_by_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("users.id", ondelete="SET NULL")

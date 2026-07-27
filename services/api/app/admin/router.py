@@ -11,11 +11,15 @@ at /docs to explore them.
 """
 
 from datetime import datetime, timezone, timedelta
+from typing import Annotated
+import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from sqlalchemy.orm import Session
+from pydantic import BaseModel, Field
 
-from app.core.dependencies import require_admin
+from app.auth.security import hash_password, verify_password
 from app.db.session import get_db
 from app.db.models.user import User
 from app.db.models.feedback import FeedbackReport
@@ -25,6 +29,66 @@ from app.db.models.billing import BillingEvent
 from app.db.models.ai_feedback import AICallLog
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+security = HTTPBasic()
+
+
+class BetaInviteCreateRequest(BaseModel):
+    email_restriction: str | None = None
+    max_uses: int = Field(default=1, ge=1, le=1000)
+    expires_at: datetime | None = None
+
+
+class BetaInviteRead(BaseModel):
+    id: int
+    email_restriction: str | None = None
+    is_active: bool
+    max_uses: int
+    use_count: int
+    expires_at: datetime | None = None
+    created_by_id: int | None = None
+    redeemed_by_id: int | None = None
+    redeemed_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class BetaInviteCreateResponse(BetaInviteRead):
+    invite_code: str
+
+
+def _serialize_beta_invite(invite: BetaAccess) -> BetaInviteRead:
+    return BetaInviteRead(
+        id=invite.id,
+        email_restriction=invite.email_hint,
+        is_active=invite.is_active,
+        max_uses=invite.max_uses,
+        use_count=invite.use_count,
+        expires_at=invite.expires_at,
+        created_by_id=invite.created_by_id,
+        redeemed_by_id=invite.redeemed_by_id,
+        redeemed_at=invite.redeemed_at,
+        created_at=invite.created_at,
+        updated_at=invite.updated_at,
+    )
+
+
+# ── Auth dependency ────────────────────────────────────────────────────────────
+
+def require_admin(
+    credentials: Annotated[HTTPBasicCredentials, Depends(security)],
+    db: Session = Depends(get_db),
+) -> User:
+    user = db.query(User).filter(User.email == credentials.username).first()
+    if not user or not verify_password(credentials.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    if not user.is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+    return user
 
 
 # ── Overview ───────────────────────────────────────────────────────────────────
@@ -127,47 +191,49 @@ def list_feedback(
 
 # ── Beta codes ─────────────────────────────────────────────────────────────────
 
-@router.get("/beta-codes")
+@router.get("/beta-codes", response_model=list[BetaInviteRead])
 def list_beta_codes(
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     codes = db.query(BetaAccess).order_by(BetaAccess.created_at.desc()).all()
-    return [
-        {
-            "id": c.id,
-            "code": c.code,
-            "email_hint": c.email_hint,
-            "is_active": c.is_active,
-            "use_count": c.use_count,
-            "max_uses": c.max_uses,
-            "redeemed_at": c.redeemed_at,
-            "expires_at": c.expires_at,
-        }
-        for c in codes
-    ]
+    return [_serialize_beta_invite(c) for c in codes]
 
 
-@router.post("/beta-codes")
+@router.post("/beta-codes", response_model=BetaInviteCreateResponse)
 def create_beta_code(
-    code: str,
-    email_hint: str | None = None,
-    max_uses: int = 1,
+    payload: BetaInviteCreateRequest,
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    existing = db.query(BetaAccess).filter(BetaAccess.code == code).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="Code already exists")
+    invite_code = f"NEST-{secrets.token_urlsafe(9).upper()}"
+    code_hash = hash_password(invite_code)
     beta = BetaAccess(
-        code=code,
+        code_hash=code_hash,
         created_by_id=admin.id,
-        email_hint=email_hint,
-        max_uses=max_uses,
+        email_hint=payload.email_restriction,
+        max_uses=payload.max_uses,
+        expires_at=payload.expires_at,
     )
     db.add(beta)
     db.commit()
-    return {"message": f"Beta code {code!r} created"}
+    db.refresh(beta)
+    return BetaInviteCreateResponse(**_serialize_beta_invite(beta).model_dump(), invite_code=invite_code)
+
+
+@router.post("/beta-codes/{invite_id}/deactivate", response_model=BetaInviteRead)
+def deactivate_beta_code(
+    invite_id: int,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    beta = db.query(BetaAccess).filter(BetaAccess.id == invite_id).first()
+    if not beta:
+        raise HTTPException(status_code=404, detail="Invite code not found")
+    beta.is_active = False
+    db.commit()
+    db.refresh(beta)
+    return _serialize_beta_invite(beta)
 
 
 # ── AI cost tracking ───────────────────────────────────────────────────────────

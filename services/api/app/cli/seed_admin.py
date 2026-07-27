@@ -25,8 +25,6 @@ import sys
 
 from dotenv import load_dotenv
 
-from app.core.security import hash_password, normalize_email
-
 load_dotenv()
 
 
@@ -39,7 +37,7 @@ def _require_env(name: str) -> str:
 
 
 def main() -> None:
-    email = normalize_email(_require_env("ADMIN_BOOTSTRAP_EMAIL"))
+    email = _require_env("ADMIN_BOOTSTRAP_EMAIL")
     password = _require_env("ADMIN_BOOTSTRAP_PASSWORD")
 
     if len(password) < 12:
@@ -49,6 +47,8 @@ def main() -> None:
         )
         sys.exit(1)
 
+    # Import here so the module can be imported without a live DB for testing.
+    from app.auth.security import hash_password
     from app.db.session import SessionLocal
     from app.db.models.user import User
     from app.db.models.credits import CreditBalance
@@ -73,7 +73,8 @@ def main() -> None:
             is_active=True,
             is_admin=True,
             tier="premium",
-            plan="PREMIUM",
+            active_plan="premium",
+            subscription_status="active",
         )
         db.add(user)
         db.flush()  # populate user.id

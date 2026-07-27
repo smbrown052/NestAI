@@ -538,3 +538,9 @@ def filter_units_by_request(df, request):
         filtered = filtered[filtered["has_parking"] == True]
 
     return filtered
+
+
+def parse_house_listing(text):
+    result = parse_apartment_text(text)
+    result["listing_type"] = "house"
+    return result

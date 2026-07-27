@@ -1,1 +1,1 @@
-"""Authentication routes."""
+"""Authentication helpers and routers for NestAI."""
