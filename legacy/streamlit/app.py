@@ -36,8 +36,11 @@ from credits import (
     consume_analysis,
     analyses_remaining,
 )
+from feature_access import capability as _fa_capability, get_plan as _fa_get_plan
+from plan_ui import render_plan_sidebar, render_pricing_cards, navigate_to_plans
 from cache import get_geocode, _address_key
 from feedback import submit_feedback, send_feedback_email, validate_beta_code
+from homes_tab import render_homes_tab
 
 st.set_page_config(page_title="NestAI", page_icon="🏠", layout="wide")
 st.title("🏠 NestAI")
@@ -94,6 +97,10 @@ for key, default in {
     "enrichment_done": False,
     "commute_destination": "",
     "paid_features_enabled": False,
+    # Navigation: "apartments" | "homes" | "plans"
+    "nestai_active_view": "apartments",
+    "nestai_highlight_plan": None,
+    "nestai_upgrade_intent": None,
     "negotiation_outputs": {},  # unit key -> negotiation text
     # V2: per-building enrichment state: {address: building_dict}
     "building_cache": {},
@@ -108,50 +115,14 @@ for key, default in {
         st.session_state[key] = default
 
 
-# ── Sidebar — AI Apartment Advisor ────────────────────────────────────────────
+# ── Sidebar ───────────────────────────────────────────────────────────────────
 
 with st.sidebar:
-    st.markdown("## 🧭 Screens")
-    active_screen = st.radio(
-        "Choose screen",
-        ["Apartments", "Houses", "Login", "Pricing"],
-        index=0,
-        key="screen_selector",
-    )
+    # ── Account, Usage & Plan ─────────────────────────────────────────────────
+    render_plan_sidebar()
 
-    st.divider()
-
-    # ── Tier / Credits ───────────────────────────────────────────────────────
-    st.markdown("## 💳 Plan & Credits")
-    render_tier_badge()
-
-    # Backwards-compat: mirror tier into paid_features_enabled flag
-    st.session_state.paid_features_enabled = get_tier() in ("premium", "premium_plus")
-
-    st.caption(
-        "**Free:** 5 building analyses, basic comparison & ranking.  \n"
-        "**Premium ($24.99):** 100 analyses + AI, Walk Score, commute, neighborhood, exports.  \n"
-        "**Premium Plus ($49.99):** Unlimited analyses + everything in Premium."
-    )
-
-    # ── Beta Access ─────────────────────────────────────────────────────────
-    with st.expander("🔬 Beta Access", expanded=False):
-        if st.session_state.beta_tester:
-            st.success("✅ Beta features unlocked!")
-        else:
-            beta_code_input = st.text_input(
-                "Enter invite code",
-                placeholder="e.g. NEST-BETA-2025",
-                type="password",
-                key="beta_code_input",
-            )
-            if st.button("Activate Beta Access", use_container_width=True):
-                if validate_beta_code(beta_code_input):
-                    st.session_state.beta_tester = True
-                    st.success("✅ Beta access activated!")
-                    st.rerun()
-                else:
-                    st.error("Invalid invite code.")
+    # Backwards-compat: mirror plan into paid_features_enabled flag
+    st.session_state.paid_features_enabled = has_feature("walk_score")
 
     st.divider()
 
@@ -298,831 +269,719 @@ with st.sidebar:
         st.rerun()
 
 
-if active_screen == "Login":
-    st.markdown("### 🔐 Login")
-    username = st.text_input("Email or Username", key="screen_login_username")
-    password = st.text_input("Password", type="password", key="screen_login_password")
-    remember_me = st.checkbox("Remember me", key="screen_login_remember")
 
-    if st.button("Sign In", key="screen_login_submit"):
-        if username and password:
-            st.success("Login submitted.")
-            if remember_me:
-                st.caption("Your sign-in preference was saved for this session.")
-        else:
-            st.warning("Please enter both username and password.")
-    st.stop()
+# ── Main content area ──────────────────────────────────────────────────────────
 
-if active_screen == "Pricing":
-    st.markdown("### 💵 Pricing")
+_active_view = st.session_state.get("nestai_active_view", "apartments")
+_pricing_expanded = _active_view == "plans"
+
+_apt_tab, _homes_tab = st.tabs(["🏢 Apartments", "🏠 Homes"])
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# APARTMENTS TAB
+# ─────────────────────────────────────────────────────────────────────────────
+with _apt_tab:
+
+    # ── Hero / Intro ──────────────────────────────────────────────────────────────
+
+    st.markdown("""
+    <div class="hero">
+        <p>
+        Find your next apartment in seconds. Compare floor plans, pricing,
+        square footage, metro access, and amenities without building spreadsheets.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    with st.expander("Why Nest AI?", expanded=False):
+        st.write("""
+    Apartment hunting means comparing dozens of tabs, prices, floor plans, fees, locations, and
+    availability dates — manually. Nest AI turns raw Apartments.com listing text into ranked,
+    enriched, personalized recommendations with commute times, neighborhood data, and AI-powered
+    negotiation tools.
+    """)
+
+    with st.expander("ℹ️ How to use NestAI", expanded=False):
+        st.write("""
+        **Try an example or paste your own listing:**
+
+        1. Open an apartment listing on Apartments.com.
+        2. Expand all floor plans and click **Show More** so all units are visible.
+        3. Press **Ctrl + A** then **Ctrl + C** to copy everything on the page.
+        4. Paste the text in the box below and click **✨ Analyze Apartment**.
+        5. Click **➕ Save Units** to add them to your comparison table.
+        6. Repeat for each building you want to compare (or load Example 1/2).
+        7. Optionally enable paid APIs for AI + official Walk/Transit/Bike scores.
+        8. Adjust Lifestyle Priority sliders, then review Rankings, Tradeoffs, and Concerns.
+
+        **To remove a building** from your search, use the 🗑 Remove Building panel in the sidebar.
+        """)
+
+    # ── Paste & Analyze ───────────────────────────────────────────────────────────
+
+    st.markdown("### 1. Paste Listing Text")
+
     c1, c2, c3 = st.columns(3)
 
     with c1:
-        st.markdown("#### Free")
-        st.write("$0 / month")
-        st.write("5 building analyses")
-        st.markdown("- Core comparison + ranking")
-        st.markdown("- Property parsing")
-        st.markdown("- Basic filtering and saved-unit table")
+        if st.button("🏢 Avalon Courthouse Place", use_container_width=True):
+            with open(_EXAMPLE_LISTINGS[0][0], "r", encoding="utf-8") as f:
+                st.session_state.listing_text = f.read()
+            st.rerun()
 
     with c2:
-        st.markdown("#### Premium")
-        st.write("$24.99 / month")
-        st.write("100 analyses")
-        st.markdown("- Everything in Free")
-        st.markdown("- AI advisor chat")
-        st.markdown("- Walk/Transit/Bike and neighborhood enrichments")
-        st.markdown("- Commute support")
-        st.markdown("- Decision reports and exports")
-        st.markdown("- Negotiation assistant")
+        if st.button("🏢 Cortland Bennett Park", use_container_width=True):
+            with open(_EXAMPLE_LISTINGS[1][0], "r", encoding="utf-8") as f:
+                st.session_state.listing_text = f.read()
+            st.rerun()
 
     with c3:
-        st.markdown("#### Premium Plus")
-        st.write("$49.99 / month")
-        st.write("Unlimited analyses")
-        st.markdown("- Everything in Premium")
-        st.markdown("- Unlimited building analyses")
-        st.markdown("- Priority support")
-        st.markdown("- Early access to new features")
-
-    st.info("Add-on: 50 extra analyses for $9.99.")
-    st.caption("For Premium Plus and volume inquiries, contact support.")
-    st.stop()
-
-if active_screen == "Houses":
-    st.markdown("### 🏡 Houses")
-    st.caption("Analyze Zillow house and townhouse listings. Each parsed listing appears as a row.")
-
-    house_buttons = st.columns(3)
-
-    if len(_HOUSE_EXAMPLE_LISTINGS) > 0:
-        with house_buttons[0]:
-            if st.button("🏡 House Example 1", use_container_width=True):
-                with open(_HOUSE_EXAMPLE_LISTINGS[0], "r", encoding="utf-8") as f:
-                    st.session_state.house_listing_text = f.read()
-                st.rerun()
-
-    if len(_HOUSE_EXAMPLE_LISTINGS) > 1:
-        with house_buttons[1]:
-            if st.button("🏡 House Example 2", use_container_width=True):
-                with open(_HOUSE_EXAMPLE_LISTINGS[1], "r", encoding="utf-8") as f:
-                    st.session_state.house_listing_text = f.read()
-                st.rerun()
-
-    with house_buttons[2]:
-        if st.button("🧹 Clear House Text", use_container_width=True):
-            st.session_state.house_listing_text = ""
-            st.session_state.last_house_result = None
-            st.session_state.house_parsed_df = pd.DataFrame()
+        if st.button("🧹 Clear Text", use_container_width=True):
+            st.session_state.listing_text = ""
+            st.session_state.last_result = None
+            st.session_state.parsed_df = pd.DataFrame()
             st.rerun()
 
-    if len(_HOUSE_EXAMPLE_LISTINGS) == 0:
-        st.info("No house examples found. Add `home_example_*.txt` files in the data folder.")
-
-    house_listing_text = st.text_area(
-        "House listing text",
-        key="house_listing_text",
+    listing_text = st.text_area(
+        "Apartment listing text",
+        key="listing_text",
         height=380,
-        placeholder="Paste copied house listing text here...",
+        placeholder="Paste copied Apartments.com listing text here…",
     )
 
-    analyze_house = st.button("✨ Analyze House", use_container_width=True)
+    analyze = st.button("✨ Analyze Apartment", use_container_width=True)
 
-    if analyze_house:
-        if house_listing_text.strip():
-            house_result = parse_house_listing(house_listing_text)
-            st.session_state.last_house_result = house_result
-            st.session_state.house_parsed_df = pd.DataFrame(house_result.get("units", []))
+    if analyze:
+        if st.session_state.listing_text.strip():
+            result = parse_apartment_text(st.session_state.listing_text)
+            st.session_state.last_result = result
+            st.session_state.parsed_df = pd.DataFrame(result.get("units", []))
         else:
-            st.warning("Paste house listing text first.")
+            st.warning("Paste listing text first.")
 
-    if st.session_state.last_house_result:
-        house_result = st.session_state.last_house_result
-        house_building = house_result.get("building_nearby", {})
+    # ── Property Summary ──────────────────────────────────────────────────────────
 
-        st.markdown("### 🏠 House Summary")
-        st.markdown(f"**{house_result.get('property_title') or 'Unknown'}**")
+    if st.session_state.last_result:
+        result = st.session_state.last_result
+        building = result.get("building_nearby", {})
 
-        hm1, hm2, hm3 = st.columns(3)
-        hm1.metric("Units Parsed", house_result.get("unit_count", 0))
-        hm2.metric(
+        st.markdown("### <a id='property-summary'>🏠 Property Summary</a>", unsafe_allow_html=True)
+
+        property_title = result.get("property_title") or "Unknown"
+        st.markdown(f"**{property_title}**")
+
+        m2, m3, m4, m5 = st.columns(4)
+
+        m2.metric("Units Parsed", result.get("unit_count", 0))
+
+        # Use text-parsed metro data; fall back to API-enriched data if not found
+        metro_min = building.get("metro_min")
+        metro_travel_mode = building.get("metro_travel_mode")
+        if metro_min is None:
+            address_key = result.get("address", "")
+            enriched_building = st.session_state.building_cache.get(address_key, {})
+            if enriched_building.get("metro_min") is not None:
+                metro_min = enriched_building["metro_min"]
+                metro_travel_mode = enriched_building.get("metro_travel_mode")
+
+        metro_val = format_travel(metro_travel_mode, metro_min)
+        m3.metric(
             "Nearest Metro",
-            format_travel(house_building.get("metro_travel_mode"), house_building.get("metro_min")),
+            metro_val if metro_val != "—" else "Not found",
         )
-        hm3.metric(
+        if metro_val == "—":
+            m3.caption("No transit stop found within ~30 min or transit data unavailable.")
+        m4.metric(
             "Nearest Hospital",
-            format_travel(house_building.get("hospital_travel_mode"), house_building.get("hospital_min")),
+            format_travel(building.get("hospital_travel_mode"), building.get("hospital_min")),
         )
 
-        if house_result.get("address"):
-            st.caption(house_result.get("address"))
+        walk_score = (
+            result.get("units", [{}])[0].get("walk_score") if result.get("units") else None
+        )
+        safety_score = (
+            result.get("units", [{}])[0].get("safety_score") if result.get("units") else None
+        )
+        m5.metric(
+            "Walk Score",
+            f"{walk_score} / 100" if walk_score is not None else "—",
+        )
 
-        if not st.session_state.house_parsed_df.empty:
-            st.markdown("### 📋 Parsed House Units")
-            st.dataframe(st.session_state.house_parsed_df, use_container_width=True)
+        if result.get("address"):
+            st.caption(result.get("address"))
+        if safety_score is not None:
+            st.caption(f"Safety Score: {safety_score} / 100 (derived from renter rating)")
 
-            if st.button("➕ Save House Units", use_container_width=True):
+        if result.get("nearby_places"):
+            with st.expander("View nearby building-level places"):
+                st.dataframe(pd.DataFrame(result["nearby_places"]), use_container_width=True)
+
+        if not st.session_state.parsed_df.empty:
+            st.markdown("### 📋 Parsed Units")
+            st.caption("Units extracted from this listing. Save them to add them to your comparison.")
+            st.dataframe(st.session_state.parsed_df, use_container_width=True)
+
+            # Cost of living extras for this property
+            with st.expander("💵 Set optional monthly fees for this property"):
+                cols = st.columns(4)
+                parking_fee = cols[0].number_input("Parking ($/mo)", min_value=0, step=25, key="parking_input")
+                utilities = cols[1].number_input("Utilities ($/mo)", min_value=0, step=10, key="utilities_input")
+                pet_fee = cols[2].number_input("Pet Fee ($/mo)", min_value=0, step=10, key="pet_fee_input")
+                insurance = cols[3].number_input("Renter's Insurance ($/mo)", min_value=0, step=5, key="insurance_input")
+                st.session_state.cost_extras = {
+                    "parking": parking_fee or None,
+                    "utilities": utilities or None,
+                    "pet_fee": pet_fee or None,
+                    "renters_insurance": insurance or None,
+                }
+                if any(st.session_state.cost_extras.values()):
+                    example_price = st.session_state.parsed_df["price_num"].dropna().median()
+                    if pd.notna(example_price):
+                        breakdown = compute_monthly_total(example_price, st.session_state.cost_extras)
+                        st.markdown("**Sample cost breakdown (median unit rent):**")
+                        for label, val in breakdown.items():
+                            prefix = "**" if label == "Estimated Total" else ""
+                            suffix = "**" if label == "Estimated Total" else ""
+                            st.write(f"{prefix}{label}: ${int(val):,}{suffix}")
+
+            if st.button("➕ Save Units", use_container_width=True):
+                new_rows = st.session_state.parsed_df.copy()
+                for col, val in (st.session_state.cost_extras or {}).items():
+                    if val is not None:
+                        new_rows[f"extra_{col}"] = val
                 st.session_state.comparison_df = pd.concat(
-                    [st.session_state.comparison_df, st.session_state.house_parsed_df],
+                    [st.session_state.comparison_df, new_rows],
                     ignore_index=True,
                 )
-                st.success("House units added!")
+                st.session_state.enrichment_done = False
+                st.success("Units added!")
                 st.rerun()
         else:
-            st.warning("No house unit rows were parsed from this listing.")
+            st.warning("No unit rows were parsed from this listing.")
 
-    st.stop()
+    # ── Filter & Rank ─────────────────────────────────────────────────────────────
 
-if active_screen == "Apartments":
-    pass
+    st.markdown("### <a id='lifestyle-priorities'>🎯 Lifestyle Priorities</a>", unsafe_allow_html=True)
 
-if active_screen not in {"Apartments", "Houses", "Login", "Pricing"}:
-    st.stop()
+    if not st.session_state.comparison_df.empty:
+        comp_df = st.session_state.comparison_df.copy()
 
+        st.info("Adjust these sliders to personalize the lifestyle ranking.")
+        priority_col1, priority_col2, priority_col3 = st.columns(3)
+        with priority_col1:
+            commute_priority = st.slider("🚇 Commute", 1, 5, 3, key="commute_slider")
+            safety_priority = st.slider("🛡️ Safety", 1, 5, 3, key="safety_slider")
+        with priority_col2:
+            nightlife_priority = st.slider("🍻 Nightlife", 1, 5, 2, key="nightlife_slider")
+            budget_priority = st.slider("💰 Budget", 1, 5, 4, key="budget_slider")
+        with priority_col3:
+            gym_priority = st.slider("💪 Gym/Fitness", 1, 5, 2, key="gym_slider")
 
-# ── Hero / Intro ──────────────────────────────────────────────────────────────
+        st.markdown("### 🔎 Filter Your Apartments")
 
-st.markdown("""
-<div class="hero">
-    <p>
-    Find your next apartment in seconds. Compare floor plans, pricing,
-    square footage, metro access, and amenities without building spreadsheets.
-    </p>
-</div>
-""", unsafe_allow_html=True)
+        min_price = int(comp_df["price_num"].min())
+        max_price = int(comp_df["price_num"].max())
 
-with st.expander("Why Nest AI?", expanded=False):
-    st.write("""
-Apartment hunting means comparing dozens of tabs, prices, floor plans, fees, locations, and
-availability dates — manually. Nest AI turns raw Apartments.com listing text into ranked,
-enriched, personalized recommendations with commute times, neighborhood data, and AI-powered
-negotiation tools.
-""")
-
-with st.expander("ℹ️ How to use NestAI", expanded=False):
-    st.write("""
-    **Try an example or paste your own listing:**
-
-    1. Open an apartment listing on Apartments.com.
-    2. Expand all floor plans and click **Show More** so all units are visible.
-    3. Press **Ctrl + A** then **Ctrl + C** to copy everything on the page.
-    4. Paste the text in the box below and click **✨ Analyze Apartment**.
-    5. Click **➕ Save Units** to add them to your comparison table.
-    6. Repeat for each building you want to compare (or load Example 1/2).
-    7. Optionally enable paid APIs for AI + official Walk/Transit/Bike scores.
-    8. Adjust Lifestyle Priority sliders, then review Rankings, Tradeoffs, and Concerns.
-
-    **To remove a building** from your search, use the 🗑 Remove Building panel in the sidebar.
-    """)
-
-# ── Paste & Analyze ───────────────────────────────────────────────────────────
-
-st.markdown("### 1. Paste Listing Text")
-
-c1, c2, c3 = st.columns(3)
-
-with c1:
-    if st.button("🏢 Avalon Courthouse Place", use_container_width=True):
-        with open(_EXAMPLE_LISTINGS[0][0], "r", encoding="utf-8") as f:
-            st.session_state.listing_text = f.read()
-        st.rerun()
-
-with c2:
-    if st.button("🏢 Cortland Bennett Park", use_container_width=True):
-        with open(_EXAMPLE_LISTINGS[1][0], "r", encoding="utf-8") as f:
-            st.session_state.listing_text = f.read()
-        st.rerun()
-
-with c3:
-    if st.button("🧹 Clear Text", use_container_width=True):
-        st.session_state.listing_text = ""
-        st.session_state.last_result = None
-        st.session_state.parsed_df = pd.DataFrame()
-        st.rerun()
-
-listing_text = st.text_area(
-    "Apartment listing text",
-    key="listing_text",
-    height=380,
-    placeholder="Paste copied Apartments.com listing text here…",
-)
-
-analyze = st.button("✨ Analyze Apartment", use_container_width=True)
-
-if analyze:
-    if st.session_state.listing_text.strip():
-        result = parse_apartment_text(st.session_state.listing_text)
-        st.session_state.last_result = result
-        st.session_state.parsed_df = pd.DataFrame(result.get("units", []))
-    else:
-        st.warning("Paste listing text first.")
-
-# ── Property Summary ──────────────────────────────────────────────────────────
-
-if st.session_state.last_result:
-    result = st.session_state.last_result
-    building = result.get("building_nearby", {})
-
-    st.markdown("### <a id='property-summary'>🏠 Property Summary</a>", unsafe_allow_html=True)
-
-    property_title = result.get("property_title") or "Unknown"
-    st.markdown(f"**{property_title}**")
-
-    m2, m3, m4, m5 = st.columns(4)
-
-    m2.metric("Units Parsed", result.get("unit_count", 0))
-
-    # Use text-parsed metro data; fall back to API-enriched data if not found
-    metro_min = building.get("metro_min")
-    metro_travel_mode = building.get("metro_travel_mode")
-    if metro_min is None:
-        address_key = result.get("address", "")
-        enriched_building = st.session_state.building_cache.get(address_key, {})
-        if enriched_building.get("metro_min") is not None:
-            metro_min = enriched_building["metro_min"]
-            metro_travel_mode = enriched_building.get("metro_travel_mode")
-
-    metro_val = format_travel(metro_travel_mode, metro_min)
-    m3.metric(
-        "Nearest Metro",
-        metro_val if metro_val != "—" else "Not found",
-    )
-    if metro_val == "—":
-        m3.caption("No transit stop found within ~30 min or transit data unavailable.")
-    m4.metric(
-        "Nearest Hospital",
-        format_travel(building.get("hospital_travel_mode"), building.get("hospital_min")),
-    )
-
-    walk_score = (
-        result.get("units", [{}])[0].get("walk_score") if result.get("units") else None
-    )
-    safety_score = (
-        result.get("units", [{}])[0].get("safety_score") if result.get("units") else None
-    )
-    m5.metric(
-        "Walk Score",
-        f"{walk_score} / 100" if walk_score is not None else "—",
-    )
-
-    if result.get("address"):
-        st.caption(result.get("address"))
-    if safety_score is not None:
-        st.caption(f"Safety Score: {safety_score} / 100 (derived from renter rating)")
-
-    if result.get("nearby_places"):
-        with st.expander("View nearby building-level places"):
-            st.dataframe(pd.DataFrame(result["nearby_places"]), use_container_width=True)
-
-    if not st.session_state.parsed_df.empty:
-        st.markdown("### 📋 Parsed Units")
-        st.caption("Units extracted from this listing. Save them to add them to your comparison.")
-        st.dataframe(st.session_state.parsed_df, use_container_width=True)
-
-        # Cost of living extras for this property
-        with st.expander("💵 Set optional monthly fees for this property"):
-            cols = st.columns(4)
-            parking_fee = cols[0].number_input("Parking ($/mo)", min_value=0, step=25, key="parking_input")
-            utilities = cols[1].number_input("Utilities ($/mo)", min_value=0, step=10, key="utilities_input")
-            pet_fee = cols[2].number_input("Pet Fee ($/mo)", min_value=0, step=10, key="pet_fee_input")
-            insurance = cols[3].number_input("Renter's Insurance ($/mo)", min_value=0, step=5, key="insurance_input")
-            st.session_state.cost_extras = {
-                "parking": parking_fee or None,
-                "utilities": utilities or None,
-                "pet_fee": pet_fee or None,
-                "renters_insurance": insurance or None,
-            }
-            if any(st.session_state.cost_extras.values()):
-                example_price = st.session_state.parsed_df["price_num"].dropna().median()
-                if pd.notna(example_price):
-                    breakdown = compute_monthly_total(example_price, st.session_state.cost_extras)
-                    st.markdown("**Sample cost breakdown (median unit rent):**")
-                    for label, val in breakdown.items():
-                        prefix = "**" if label == "Estimated Total" else ""
-                        suffix = "**" if label == "Estimated Total" else ""
-                        st.write(f"{prefix}{label}: ${int(val):,}{suffix}")
-
-        if st.button("➕ Save Units", use_container_width=True):
-            new_rows = st.session_state.parsed_df.copy()
-            for col, val in (st.session_state.cost_extras or {}).items():
-                if val is not None:
-                    new_rows[f"extra_{col}"] = val
-            st.session_state.comparison_df = pd.concat(
-                [st.session_state.comparison_df, new_rows],
-                ignore_index=True,
-            )
-            st.session_state.enrichment_done = False
-            st.success("Units added!")
-            st.rerun()
-    else:
-        st.warning("No unit rows were parsed from this listing.")
-
-# ── Filter & Rank ─────────────────────────────────────────────────────────────
-
-st.markdown("### <a id='lifestyle-priorities'>🎯 Lifestyle Priorities</a>", unsafe_allow_html=True)
-
-if not st.session_state.comparison_df.empty:
-    comp_df = st.session_state.comparison_df.copy()
-
-    st.info("Adjust these sliders to personalize the lifestyle ranking.")
-    priority_col1, priority_col2, priority_col3 = st.columns(3)
-    with priority_col1:
-        commute_priority = st.slider("🚇 Commute", 1, 5, 3, key="commute_slider")
-        safety_priority = st.slider("🛡️ Safety", 1, 5, 3, key="safety_slider")
-    with priority_col2:
-        nightlife_priority = st.slider("🍻 Nightlife", 1, 5, 2, key="nightlife_slider")
-        budget_priority = st.slider("💰 Budget", 1, 5, 4, key="budget_slider")
-    with priority_col3:
-        gym_priority = st.slider("💪 Gym/Fitness", 1, 5, 2, key="gym_slider")
-
-    st.markdown("### 🔎 Filter Your Apartments")
-
-    min_price = int(comp_df["price_num"].min())
-    max_price = int(comp_df["price_num"].max())
-
-    price_range = st.slider(
-        "Monthly rent range",
-        min_value=min_price,
-        max_value=max_price,
-        value=(min_price, max_price),
-        step=50,
-    )
-
-    min_sqft = int(comp_df["sqft_num"].min())
-    max_sqft = int(comp_df["sqft_num"].max())
-
-    sqft_range = st.slider(
-        "Square footage range",
-        min_value=min_sqft,
-        max_value=max_sqft,
-        value=(min_sqft, max_sqft),
-        step=25,
-    )
-
-    llm_request = st.text_input(
-        "Ask Nest AI to filter your saved units",
-        value="1 bed not on the first floor within 10 min walk of metro",
-    )
-
-    # ── Level 2 Enrichment (cache-first, building-level, credit-gated) ────────
-
-    enrich_col, status_col = st.columns([1, 2])
-
-    # Determine which buildings still need enrichment
-    addresses_in_view = (
-        comp_df["address"].dropna().unique().tolist()
-        if "address" in comp_df.columns
-        else []
-    )
-    already_enriched = {
-        addr
-        for addr in addresses_in_view
-        if addr in st.session_state.building_cache
-    }
-    needs_enrichment = [a for a in addresses_in_view if a not in already_enriched]
-
-    # Rate-limit: 10-second cooldown per address per session
-    _ENRICH_COOLDOWN = 10
-    now_ts = _time.time()
-
-    can_enrich = (
-        has_feature("walk_score")
-        and (maps_api_configured() or walkscore_api_configured())
-        and len(needs_enrichment) > 0
-        and analyses_remaining() > 0
-    )
-
-    with enrich_col:
-        enrich_clicked = st.button(
-            "🌐 Enrich Neighborhoods",
-            use_container_width=True,
-            disabled=not can_enrich,
-            help=(
-                "Fetches Walk Score, neighborhood amenities, and commute data. "
-                "Uses 1 credit per unique building. Results are cached for all users."
-            ),
+        price_range = st.slider(
+            "Monthly rent range",
+            min_value=min_price,
+            max_value=max_price,
+            value=(min_price, max_price),
+            step=50,
         )
-    with status_col:
-        if not has_feature("walk_score"):
-            st.caption(
-                f"🔒 Neighborhood enrichment requires Premium. "
-                f"Upgrade to unlock Walk Score, commute & amenities."
-            )
-        elif not maps_api_configured() and not walkscore_api_configured():
-            st.caption("Add API keys to Streamlit secrets to enable enrichment.")
-        elif analyses_remaining() == 0:
-            st.caption("⚠️ No analysis credits remaining. Purchase more to continue.")
-        elif st.session_state.enrichment_done and not needs_enrichment:
-            st.caption("✅ All buildings enriched — showing cached neighborhood data.")
-        elif needs_enrichment:
-            st.caption(
-                f"Ready to enrich {len(needs_enrichment)} building(s). "
-                f"Uses {len(needs_enrichment)} credit(s). "
-                f"{analyses_remaining()} remaining."
-            )
-        else:
-            st.caption("✅ Enrichment complete.")
 
-    if enrich_clicked and can_enrich:
-        enriched_count = 0
-        throttled = []
-        with st.spinner("Enriching neighborhoods (cache-first)…"):
-            for addr in needs_enrichment:
-                # Per-address rate limit
-                last_ts = st.session_state.last_enrich_time.get(addr, 0)
-                if now_ts - last_ts < _ENRICH_COOLDOWN:
-                    throttled.append(addr)
-                    continue
+        min_sqft = int(comp_df["sqft_num"].min())
+        max_sqft = int(comp_df["sqft_num"].max())
 
-                # Determine a stable building_id for credit tracking
-                geo = get_geocode(addr)
-                building_id = (
-                    geo.get("google_place_id") or geo.get("building_id") or _address_key(addr)
-                    if geo
-                    else _address_key(addr)
+        sqft_range = st.slider(
+            "Square footage range",
+            min_value=min_sqft,
+            max_value=max_sqft,
+            value=(min_sqft, max_sqft),
+            step=25,
+        )
+
+        llm_request = st.text_input(
+            "Ask Nest AI to filter your saved units",
+            value="1 bed not on the first floor within 10 min walk of metro",
+        )
+
+        # ── Level 2 Enrichment (cache-first, building-level, credit-gated) ────────
+
+        enrich_col, status_col = st.columns([1, 2])
+
+        # Determine which buildings still need enrichment
+        addresses_in_view = (
+            comp_df["address"].dropna().unique().tolist()
+            if "address" in comp_df.columns
+            else []
+        )
+        already_enriched = {
+            addr
+            for addr in addresses_in_view
+            if addr in st.session_state.building_cache
+        }
+        needs_enrichment = [a for a in addresses_in_view if a not in already_enriched]
+
+        # Rate-limit: 10-second cooldown per address per session
+        _ENRICH_COOLDOWN = 10
+        now_ts = _time.time()
+
+        can_enrich = (
+            has_feature("walk_score")
+            and (maps_api_configured() or walkscore_api_configured())
+            and len(needs_enrichment) > 0
+            and analyses_remaining() > 0
+        )
+
+        with enrich_col:
+            enrich_clicked = st.button(
+                "🌐 Enrich Neighborhoods",
+                use_container_width=True,
+                disabled=not can_enrich,
+                help=(
+                    "Fetches Walk Score, neighborhood amenities, and commute data. "
+                    "Uses 1 credit per unique building. Results are cached for all users."
+                ),
+            )
+        with status_col:
+            if not has_feature("walk_score"):
+                st.caption(
+                    f"🔒 Neighborhood enrichment requires Premium. "
+                    f"Upgrade to unlock Walk Score, commute & amenities."
                 )
-
-                if not can_enrich_building(building_id):
-                    st.warning("Credit limit reached during enrichment.")
-                    break
-
-                building_data = enrich_building(addr)
-                if building_data:
-                    consume_analysis(building_id)
-                    st.session_state.building_cache[addr] = building_data
-                    st.session_state.last_enrich_time[addr] = now_ts
-                    enriched_count += 1
-
-        if throttled:
-            st.info(f"⏳ {len(throttled)} address(es) throttled (retry in {_ENRICH_COOLDOWN}s).")
-
-        if enriched_count > 0 or already_enriched:
-            st.session_state.enriched_df = enrich_units_df(
-                st.session_state.comparison_df,
-                st.session_state.commute_destination,
-            )
-            st.session_state.enrichment_done = True
-        st.rerun()
-
-    # Use enriched data if available, otherwise fall back to raw comparison data
-    working_df = (
-        st.session_state.enriched_df
-        if st.session_state.enrichment_done and not st.session_state.enriched_df.empty
-        else comp_df
-    )
-
-    filtered_comp_df = working_df[
-        (working_df["price_num"] >= price_range[0])
-        & (working_df["price_num"] <= price_range[1])
-        & (working_df["sqft_num"] >= sqft_range[0])
-        & (working_df["sqft_num"] <= sqft_range[1])
-    ]
-
-    filtered_comp_df = filter_units_by_request(filtered_comp_df, llm_request)
-
-    weights = get_priority_weights_from_sliders(
-        commute_priority,
-        safety_priority,
-        nightlife_priority,
-        budget_priority,
-        gym_priority,
-    )
-
-    # ── Rankings ───────────────────────────────────────────────────────────
-    st.markdown("### <a id='rankings'>🏆 Nest AI Recommendations</a>", unsafe_allow_html=True)
-    st.caption("Ranked by your lifestyle priorities, listing data, and your personal profile.")
-
-    if filtered_comp_df.empty:
-        st.warning("No saved units match your filters.")
-    else:
-        ranked_df = LifestyleScorer(weights).score_apartments(filtered_comp_df.copy())
-
-        ranked_df["price_score"] = ranked_df["price_num"].rank(ascending=False)
-        ranked_df["space_score"] = ranked_df["sqft_num"].rank(ascending=True)
-
-        if "metro_min" in ranked_df.columns:
-            ranked_df["metro_score"] = ranked_df["metro_min"].fillna(99).rank(ascending=False)
-        else:
-            ranked_df["metro_score"] = 0
-
-        if "floor" in ranked_df.columns:
-            ranked_df["floor_score"] = ranked_df["floor"].fillna(0).rank(ascending=True)
-        else:
-            ranked_df["floor_score"] = 0
-
-        for ws_col in ("official_walk_score", "walk_score"):
-            if ws_col in ranked_df.columns:
-                ranked_df["walk_score_score"] = ranked_df[ws_col].fillna(0).rank(ascending=True)
-                break
-        else:
-            ranked_df["walk_score_score"] = 0
-
-        if "safety_score" in ranked_df.columns:
-            ranked_df["safety_score_rank"] = ranked_df["safety_score"].fillna(0).rank(ascending=True)
-        else:
-            ranked_df["safety_score_rank"] = 0
-
-        # Boost score when commute data is available
-        if "commute_transit_min" in ranked_df.columns:
-            ranked_df["commute_score"] = ranked_df["commute_transit_min"].fillna(99).rank(ascending=False)
-            commute_weight = 0.15
-            metro_weight = 0.05
-        else:
-            ranked_df["commute_score"] = 0
-            commute_weight = 0.0
-            metro_weight = 0.20
-
-        ranked_df["nest_score"] = (
-            ranked_df["price_score"] * 0.30
-            + ranked_df["space_score"] * 0.25
-            + ranked_df["metro_score"] * metro_weight
-            + ranked_df["commute_score"] * commute_weight
-            + ranked_df["floor_score"] * 0.10
-            + ranked_df["walk_score_score"] * 0.10
-            + ranked_df["safety_score_rank"] * 0.05
-        )
-
-        # ── Compute unified NestAI Score (0–100) ───────────────────────────
-        # Normalise raw nest_score rank sum to 0–1 range
-        ns_max = ranked_df["nest_score"].max()
-        ns_min = ranked_df["nest_score"].min()
-        ns_range = ns_max - ns_min if ns_max != ns_min else 1.0
-        ranked_df["nest_score_norm"] = (
-            (ranked_df["nest_score"] - ns_min) / ns_range
-        ) * 100.0
-
-        profile_set = any(st.session_state.user_profile.values())
-
-        def _compute_nestai_score(row_: pd.Series) -> float:
-            lifestyle = float(row_.get("lifestyle_score", 0) or 0)
-            nest_norm = float(row_.get("nest_score_norm", 0) or 0)
-            if profile_set:
-                match = compute_match_score(row_, st.session_state.user_profile)
-                return round(0.60 * lifestyle + 0.25 * match + 0.15 * nest_norm, 1)
-            return round(0.85 * lifestyle + 0.15 * nest_norm, 1)
-
-        ranked_df["nestai_score"] = ranked_df.apply(_compute_nestai_score, axis=1)
-
-        ranked_df = ranked_df.sort_values(
-            ["nestai_score", "lifestyle_score"],
-            ascending=[False, False],
-        )
-        top3 = ranked_df.head(3)
-
-        # ── Top-3 badges ───────────────────────────────────────────────────
-        for i, (_, row) in enumerate(top3.iterrows(), start=1):
-            price_num = row.get("price_num")
-            sqft_num = row.get("sqft_num")
-            price_display = int(price_num) if pd.notna(price_num) else 0
-            sqft_display = int(sqft_num) if pd.notna(sqft_num) else 0
-
-            nestai_score = row.get("nestai_score", 0)
-
-            # Price position vs same-bed-count average (no leading minus)
-            diff, avg = price_position(row, ranked_df)
-            if diff is not None:
-                if diff >= 0:
-                    price_badge = f"  |  ${abs(diff):,} above avg"
-                else:
-                    price_badge = f"  |  ${abs(diff):,} below avg"
+            elif not maps_api_configured() and not walkscore_api_configured():
+                st.caption("Add API keys to Streamlit secrets to enable enrichment.")
+            elif analyses_remaining() == 0:
+                st.caption("⚠️ No analysis credits remaining. Purchase more to continue.")
+            elif st.session_state.enrichment_done and not needs_enrichment:
+                st.caption("✅ All buildings enriched — showing cached neighborhood data.")
+            elif needs_enrichment:
+                st.caption(
+                    f"Ready to enrich {len(needs_enrichment)} building(s). "
+                    f"Uses {len(needs_enrichment)} credit(s). "
+                    f"{analyses_remaining()} remaining."
+                )
             else:
-                price_badge = ""
+                st.caption("✅ Enrichment complete.")
 
-            # Commute display
-            commute_display = row.get("commute_display", "")
-            commute_line = f"\n🗺 Morning commute: {commute_display}" if commute_display and commute_display != "—" else ""
+        if enrich_clicked and can_enrich:
+            enriched_count = 0
+            throttled = []
+            with st.spinner("Enriching neighborhoods (cache-first)…"):
+                for addr in needs_enrichment:
+                    # Per-address rate limit
+                    last_ts = st.session_state.last_enrich_time.get(addr, 0)
+                    if now_ts - last_ts < _ENRICH_COOLDOWN:
+                        throttled.append(addr)
+                        continue
 
-            st.success(
-                f"#{i} • {row.get('property', 'Unknown')} • Unit {row.get('unit', 'N/A')}"
-                f"  |  NestAI Score {nestai_score:.0f}/100  \n"
-                f"${price_display:,}/mo{price_badge} • {sqft_display} sqft • "
-                f"{row.get('beds', '')} • {row.get('baths', '')}"
-                f"{commute_line}"
-            )
+                    # Determine a stable building_id for credit tracking
+                    geo = get_geocode(addr)
+                    building_id = (
+                        geo.get("google_place_id") or geo.get("building_id") or _address_key(addr)
+                        if geo
+                        else _address_key(addr)
+                    )
 
-        st.markdown("#### 🎯 Breakdown")
-        st.caption(
-            "NestAI Score = 60% Lifestyle + 25% Profile Match + 15% Relative Rank (or 85%/15% when no profile is set)."
-        )
-        tradeoff = TradeoffAnalyzer(ranked_df) if len(ranked_df) > 1 else None
-        regret_analyzer = RegretAnalyzer(ranked_df, weights)
-        for rank, (_, row) in enumerate(top3.iterrows(), start=1):
-            unit_id = row.get("unit", f"Unit {rank}")
-            overview_price = row.get("price_num")
-            overview_sqft = row.get("sqft_num")
-            with st.expander(
-                f"Rank #{rank} · {row.get('property', 'Unknown')} · Unit {unit_id}",
-                expanded=(rank == 1),
-            ):
-                tab1, tab2, tab3, tab4 = st.tabs(
-                    ["📊 Overview", "🏠 Amenities", "💡 Tradeoffs", "⚠️ Concerns"]
+                    if not can_enrich_building(building_id):
+                        st.warning("Credit limit reached during enrichment.")
+                        break
+
+                    building_data = enrich_building(addr)
+                    if building_data:
+                        consume_analysis(building_id)
+                        st.session_state.building_cache[addr] = building_data
+                        st.session_state.last_enrich_time[addr] = now_ts
+                        enriched_count += 1
+
+            if throttled:
+                st.info(f"⏳ {len(throttled)} address(es) throttled (retry in {_ENRICH_COOLDOWN}s).")
+
+            if enriched_count > 0 or already_enriched:
+                st.session_state.enriched_df = enrich_units_df(
+                    st.session_state.comparison_df,
+                    st.session_state.commute_destination,
                 )
-                component_scores = {
-                    "commute": row.get("lifestyle_commute_score", 0),
-                    "safety": row.get("lifestyle_safety_score", 0),
-                    "nightlife": row.get("lifestyle_nightlife_score", 0),
-                    "budget": row.get("lifestyle_budget_score", 0),
-                    "gym": row.get("lifestyle_gym_score", 0),
-                }
+                st.session_state.enrichment_done = True
+            st.rerun()
 
-                with tab1:
-                    score_cols = st.columns(3)
-                    score_cols[0].metric("NestAI Score", f"{row.get('nestai_score', 0):.0f}/100")
-                    score_cols[1].metric(
-                        "Price",
-                        f"${int(overview_price) if pd.notna(overview_price) else 0:,}/mo",
-                    )
-                    score_cols[2].metric(
-                        "Sq Ft",
-                        f"{int(overview_sqft) if pd.notna(overview_sqft) else 0}",
-                    )
-                    st.markdown(
-                        generate_lifestyle_explanation(
-                            rank,
-                            row,
-                            component_scores,
-                            weights,
-                            ranked_df,
-                            priority_rank_fn=lambda name: get_priority_rank(name, weights),
-                        )
-                    )
+        # Use enriched data if available, otherwise fall back to raw comparison data
+        working_df = (
+            st.session_state.enriched_df
+            if st.session_state.enrichment_done and not st.session_state.enriched_df.empty
+            else comp_df
+        )
 
-                with tab2:
-                    st.markdown("**Building Amenities**")
-                    st.markdown(generate_amenities_list(row))
-                    amenity_col1, amenity_col2 = st.columns(2)
-                    with amenity_col1:
-                        metro_min_val = row.get("metro_min")
-                        if metro_min_val is not None and pd.notna(metro_min_val):
-                            st.write(f"🚇 **Metro:** {metro_min_val} min")
-                        else:
-                            st.write("🚇 **Metro:** Not found")
-                            st.caption("No transit stop found within ~30 min or transit data unavailable.")
-                        st.write(f"🏥 **Hospital:** {row.get('hospital_min', '—')} min")
-                    with amenity_col2:
-                        walk_score_value = row.get("official_walk_score") or row.get("walk_score") or "—"
-                        st.write(f"🚶 **Walk Score:** {walk_score_value}")
-                        st.write(f"💪 **Nearby Gyms:** {row.get('nearby_gyms', '—')}")
-
-                with tab3:
-                    if tradeoff and rank > 1:
-                        st.markdown(tradeoff.generate_tradeoff_explanation(rank - 2, rank - 1))
-                    else:
-                        st.info("This is your current top recommendation.")
-
-                with tab4:
-                    analysis = regret_analyzer.analyze_apartment(rank - 1)
-                    if analysis.get("concerns"):
-                        st.write(f"**Regret Risk: {analysis['regret_risk']:.0f}/100**")
-                        st.write(analysis["recommendation"])
-                        for concern in analysis["concerns"]:
-                            st.warning(
-                                f"{concern['icon']} **{concern['title']}**\n\n{concern['message']}"
-                            )
-                    else:
-                        st.success("✅ No major concerns!")
-
-        # ── Neighborhood Profiles for top units ────────────────────────────
-        if st.session_state.enrichment_done:
-            st.markdown("#### 🏘 Neighborhood Profiles")
-            nb_cols = st.columns(min(len(top3), 3))
-            for col_idx, (_, row) in enumerate(top3.iterrows()):
-                with nb_cols[col_idx]:
-                    unit_label = f"Unit {row.get('unit', 'N/A')}"
-                    st.markdown(f"**{unit_label}**")
-                    summary = row.get("lifestyle_summary") or generate_lifestyle_summary(row.to_dict())
-                    st.write(summary)
-                    ws = row.get("official_walk_score") or row.get("walk_score")
-                    ts = row.get("transit_score")
-                    bs = row.get("bike_score")
-                    if ws:
-                        st.metric("Walk", f"{int(ws)}/100")
-                    if ts:
-                        st.metric("Transit", f"{int(ts)}/100")
-                    if bs:
-                        st.metric("Bike", f"{int(bs)}/100")
-                    groceries = row.get("nearby_groceries")
-                    restaurants = row.get("restaurants_count")
-                    parks = row.get("nearby_parks")
-                    gyms = row.get("nearby_gyms")
-                    details = []
-                    if groceries is not None:
-                        details.append(f"🛒 {groceries} grocery stores")
-                    if restaurants is not None:
-                        details.append(f"🍽 {restaurants} restaurants")
-                    if parks is not None:
-                        details.append(f"🌳 {parks} parks")
-                    if gyms is not None:
-                        details.append(f"💪 {gyms} gyms")
-                    for d in details:
-                        st.caption(d)
-
-        # ── Cost of Living breakdowns ──────────────────────────────────────
-        extras = st.session_state.cost_extras
-        if any(v for v in extras.values() if v):
-            st.markdown("#### 💰 Monthly Cost Breakdown (Top Units)")
-            cost_cols = st.columns(min(len(top3), 3))
-            for col_idx, (_, row) in enumerate(top3.iterrows()):
-                with cost_cols[col_idx]:
-                    price_num = row.get("price_num")
-                    if pd.notna(price_num):
-                        breakdown = compute_monthly_total(price_num, extras)
-                        st.markdown(f"**Unit {row.get('unit', 'N/A')}**")
-                        for label, val in breakdown.items():
-                            if label == "Estimated Total":
-                                st.markdown(f"**Total: ${int(val):,}/mo**")
-                            else:
-                                st.write(f"{label}: ${int(val):,}")
-
-        # ── AI Rent Negotiator ─────────────────────────────────────────────
-        if has_feature("negotiation") and openai_configured():
-            st.markdown("#### 🤝 AI Rent Negotiator")
-            st.caption(
-                "Generate a personalized negotiation email and talking points for any unit."
-            )
-            top3_rows_list = list(top3.iterrows())
-            neg_cols = st.columns(min(len(top3_rows_list), 3))
-            for col_idx, (_, row) in enumerate(top3_rows_list):
-                unit_key = f"{row.get('property', '')}_{row.get('unit', '')}"
-                with neg_cols[col_idx]:
-                    st.markdown(f"**Unit {row.get('unit', 'N/A')}**  \n{row.get('price', '')}")
-                    if st.button(
-                        "✍️ Generate Script",
-                        key=f"neg_{unit_key}",
-                        use_container_width=True,
-                    ):
-                        comparables = [
-                            r.to_dict()
-                            for _, r in ranked_df.iterrows()
-                            if r.get("unit") != row.get("unit")
-                        ][:5]
-                        with st.spinner("Generating negotiation script…"):
-                            try:
-                                script = generate_negotiation_script(row.to_dict(), comparables)
-                                st.session_state.negotiation_outputs[unit_key] = script
-                            except Exception as e:
-                                st.session_state.negotiation_outputs[unit_key] = f"⚠️ Error: {e}"
-
-                if unit_key in st.session_state.negotiation_outputs:
-                    with st.expander(f"📋 Negotiation Script — Unit {row.get('unit', 'N/A')}", expanded=True):
-                        st.markdown(st.session_state.negotiation_outputs[unit_key])
-                        st.button(
-                            "📋 Copy to clipboard",
-                            key=f"copy_{unit_key}",
-                            on_click=lambda k=unit_key: st.write(
-                                f"<textarea style='opacity:0;position:absolute'>{st.session_state.negotiation_outputs[k]}</textarea>",
-                                unsafe_allow_html=True,
-                            ),
-                        )
-        elif openai_configured():
-            st.caption("Upgrade to Premium to use the AI Rent Negotiator.")
-
-        # ── Full ranked table ──────────────────────────────────────────────
-        st.markdown("### <a id='full-table'>📊 Full Ranking Table</a>", unsafe_allow_html=True)
-
-        display_cols = [
-            "property", "floorplan", "unit", "floor",
-            "price", "beds", "baths", "sqft",
-            "has_den", "availability",
-            "nearest_metro", "metro_travel_mode", "metro_min",
-            "commute_display",
-            "commute_driving_min", "commute_transit_min",
-            "nearest_hospital", "hospital_travel_mode", "hospital_min",
-            "official_walk_score", "transit_score", "bike_score",
-            "walk_score", "safety_score",
-            "nearby_groceries", "restaurants_count", "nearby_gyms", "nearby_parks",
-            "lifestyle_summary",
-            "nestai_score",
-            "lifestyle_score",
-            "lifestyle_commute_score",
-            "lifestyle_safety_score",
-            "lifestyle_nightlife_score",
-            "lifestyle_budget_score",
-            "lifestyle_gym_score",
+        filtered_comp_df = working_df[
+            (working_df["price_num"] >= price_range[0])
+            & (working_df["price_num"] <= price_range[1])
+            & (working_df["sqft_num"] >= sqft_range[0])
+            & (working_df["sqft_num"] <= sqft_range[1])
         ]
 
-        display_cols = [c for c in display_cols if c in ranked_df.columns]
-        clean_ranked_df = ranked_df[display_cols].copy()
+        filtered_comp_df = filter_units_by_request(filtered_comp_df, llm_request)
 
-        for score_col in (
-            "nestai_score",
-            "lifestyle_score",
-            "lifestyle_commute_score",
-            "lifestyle_safety_score",
-            "lifestyle_nightlife_score",
-            "lifestyle_budget_score",
-            "lifestyle_gym_score",
-        ):
-            if score_col in clean_ranked_df.columns:
-                clean_ranked_df[score_col] = clean_ranked_df[score_col].round(1)
+        weights = get_priority_weights_from_sliders(
+            commute_priority,
+            safety_priority,
+            nightlife_priority,
+            budget_priority,
+            gym_priority,
+        )
 
-        st.dataframe(clean_ranked_df, use_container_width=True)
+        # ── Rankings ───────────────────────────────────────────────────────────
+        st.markdown("### <a id='rankings'>🏆 Nest AI Recommendations</a>", unsafe_allow_html=True)
+        st.caption("Ranked by your lifestyle priorities, listing data, and your personal profile.")
 
-else:
-    st.info("Add units to compare first. Paste a listing above and click **Save Units**.")
+        if filtered_comp_df.empty:
+            st.warning("No saved units match your filters.")
+        else:
+            ranked_df = LifestyleScorer(weights).score_apartments(filtered_comp_df.copy())
+
+            ranked_df["price_score"] = ranked_df["price_num"].rank(ascending=False)
+            ranked_df["space_score"] = ranked_df["sqft_num"].rank(ascending=True)
+
+            if "metro_min" in ranked_df.columns:
+                ranked_df["metro_score"] = ranked_df["metro_min"].fillna(99).rank(ascending=False)
+            else:
+                ranked_df["metro_score"] = 0
+
+            if "floor" in ranked_df.columns:
+                ranked_df["floor_score"] = ranked_df["floor"].fillna(0).rank(ascending=True)
+            else:
+                ranked_df["floor_score"] = 0
+
+            for ws_col in ("official_walk_score", "walk_score"):
+                if ws_col in ranked_df.columns:
+                    ranked_df["walk_score_score"] = ranked_df[ws_col].fillna(0).rank(ascending=True)
+                    break
+            else:
+                ranked_df["walk_score_score"] = 0
+
+            if "safety_score" in ranked_df.columns:
+                ranked_df["safety_score_rank"] = ranked_df["safety_score"].fillna(0).rank(ascending=True)
+            else:
+                ranked_df["safety_score_rank"] = 0
+
+            # Boost score when commute data is available
+            if "commute_transit_min" in ranked_df.columns:
+                ranked_df["commute_score"] = ranked_df["commute_transit_min"].fillna(99).rank(ascending=False)
+                commute_weight = 0.15
+                metro_weight = 0.05
+            else:
+                ranked_df["commute_score"] = 0
+                commute_weight = 0.0
+                metro_weight = 0.20
+
+            ranked_df["nest_score"] = (
+                ranked_df["price_score"] * 0.30
+                + ranked_df["space_score"] * 0.25
+                + ranked_df["metro_score"] * metro_weight
+                + ranked_df["commute_score"] * commute_weight
+                + ranked_df["floor_score"] * 0.10
+                + ranked_df["walk_score_score"] * 0.10
+                + ranked_df["safety_score_rank"] * 0.05
+            )
+
+            # ── Compute unified NestAI Score (0–100) ───────────────────────────
+            # Normalise raw nest_score rank sum to 0–1 range
+            ns_max = ranked_df["nest_score"].max()
+            ns_min = ranked_df["nest_score"].min()
+            ns_range = ns_max - ns_min if ns_max != ns_min else 1.0
+            ranked_df["nest_score_norm"] = (
+                (ranked_df["nest_score"] - ns_min) / ns_range
+            ) * 100.0
+
+            profile_set = any(st.session_state.user_profile.values())
+
+            def _compute_nestai_score(row_: pd.Series) -> float:
+                lifestyle = float(row_.get("lifestyle_score", 0) or 0)
+                nest_norm = float(row_.get("nest_score_norm", 0) or 0)
+                if profile_set:
+                    match = compute_match_score(row_, st.session_state.user_profile)
+                    return round(0.60 * lifestyle + 0.25 * match + 0.15 * nest_norm, 1)
+                return round(0.85 * lifestyle + 0.15 * nest_norm, 1)
+
+            ranked_df["nestai_score"] = ranked_df.apply(_compute_nestai_score, axis=1)
+
+            ranked_df = ranked_df.sort_values(
+                ["nestai_score", "lifestyle_score"],
+                ascending=[False, False],
+            )
+            top3 = ranked_df.head(3)
+
+            # ── Top-3 badges ───────────────────────────────────────────────────
+            for i, (_, row) in enumerate(top3.iterrows(), start=1):
+                price_num = row.get("price_num")
+                sqft_num = row.get("sqft_num")
+                price_display = int(price_num) if pd.notna(price_num) else 0
+                sqft_display = int(sqft_num) if pd.notna(sqft_num) else 0
+
+                nestai_score = row.get("nestai_score", 0)
+
+                # Price position vs same-bed-count average (no leading minus)
+                diff, avg = price_position(row, ranked_df)
+                if diff is not None:
+                    if diff >= 0:
+                        price_badge = f"  |  ${abs(diff):,} above avg"
+                    else:
+                        price_badge = f"  |  ${abs(diff):,} below avg"
+                else:
+                    price_badge = ""
+
+                # Commute display
+                commute_display = row.get("commute_display", "")
+                commute_line = f"\n🗺 Morning commute: {commute_display}" if commute_display and commute_display != "—" else ""
+
+                st.success(
+                    f"#{i} • {row.get('property', 'Unknown')} • Unit {row.get('unit', 'N/A')}"
+                    f"  |  NestAI Score {nestai_score:.0f}/100  \n"
+                    f"${price_display:,}/mo{price_badge} • {sqft_display} sqft • "
+                    f"{row.get('beds', '')} • {row.get('baths', '')}"
+                    f"{commute_line}"
+                )
+
+            st.markdown("#### 🎯 Breakdown")
+            st.caption(
+                "NestAI Score = 60% Lifestyle + 25% Profile Match + 15% Relative Rank (or 85%/15% when no profile is set)."
+            )
+            tradeoff = TradeoffAnalyzer(ranked_df) if len(ranked_df) > 1 else None
+            regret_analyzer = RegretAnalyzer(ranked_df, weights)
+            for rank, (_, row) in enumerate(top3.iterrows(), start=1):
+                unit_id = row.get("unit", f"Unit {rank}")
+                overview_price = row.get("price_num")
+                overview_sqft = row.get("sqft_num")
+                with st.expander(
+                    f"Rank #{rank} · {row.get('property', 'Unknown')} · Unit {unit_id}",
+                    expanded=(rank == 1),
+                ):
+                    tab1, tab2, tab3, tab4 = st.tabs(
+                        ["📊 Overview", "🏠 Amenities", "💡 Tradeoffs", "⚠️ Concerns"]
+                    )
+                    component_scores = {
+                        "commute": row.get("lifestyle_commute_score", 0),
+                        "safety": row.get("lifestyle_safety_score", 0),
+                        "nightlife": row.get("lifestyle_nightlife_score", 0),
+                        "budget": row.get("lifestyle_budget_score", 0),
+                        "gym": row.get("lifestyle_gym_score", 0),
+                    }
+
+                    with tab1:
+                        score_cols = st.columns(3)
+                        score_cols[0].metric("NestAI Score", f"{row.get('nestai_score', 0):.0f}/100")
+                        score_cols[1].metric(
+                            "Price",
+                            f"${int(overview_price) if pd.notna(overview_price) else 0:,}/mo",
+                        )
+                        score_cols[2].metric(
+                            "Sq Ft",
+                            f"{int(overview_sqft) if pd.notna(overview_sqft) else 0}",
+                        )
+                        st.markdown(
+                            generate_lifestyle_explanation(
+                                rank,
+                                row,
+                                component_scores,
+                                weights,
+                                ranked_df,
+                                priority_rank_fn=lambda name: get_priority_rank(name, weights),
+                            )
+                        )
+
+                    with tab2:
+                        st.markdown("**Building Amenities**")
+                        st.markdown(generate_amenities_list(row))
+                        amenity_col1, amenity_col2 = st.columns(2)
+                        with amenity_col1:
+                            metro_min_val = row.get("metro_min")
+                            if metro_min_val is not None and pd.notna(metro_min_val):
+                                st.write(f"🚇 **Metro:** {metro_min_val} min")
+                            else:
+                                st.write("🚇 **Metro:** Not found")
+                                st.caption("No transit stop found within ~30 min or transit data unavailable.")
+                            st.write(f"🏥 **Hospital:** {row.get('hospital_min', '—')} min")
+                        with amenity_col2:
+                            walk_score_value = row.get("official_walk_score") or row.get("walk_score") or "—"
+                            st.write(f"🚶 **Walk Score:** {walk_score_value}")
+                            st.write(f"💪 **Nearby Gyms:** {row.get('nearby_gyms', '—')}")
+
+                    with tab3:
+                        if tradeoff and rank > 1:
+                            st.markdown(tradeoff.generate_tradeoff_explanation(rank - 2, rank - 1))
+                        else:
+                            st.info("This is your current top recommendation.")
+
+                    with tab4:
+                        analysis = regret_analyzer.analyze_apartment(rank - 1)
+                        if analysis.get("concerns"):
+                            st.write(f"**Regret Risk: {analysis['regret_risk']:.0f}/100**")
+                            st.write(analysis["recommendation"])
+                            for concern in analysis["concerns"]:
+                                st.warning(
+                                    f"{concern['icon']} **{concern['title']}**\n\n{concern['message']}"
+                                )
+                        else:
+                            st.success("✅ No major concerns!")
+
+            # ── Neighborhood Profiles for top units ────────────────────────────
+            if st.session_state.enrichment_done:
+                st.markdown("#### 🏘 Neighborhood Profiles")
+                nb_cols = st.columns(min(len(top3), 3))
+                for col_idx, (_, row) in enumerate(top3.iterrows()):
+                    with nb_cols[col_idx]:
+                        unit_label = f"Unit {row.get('unit', 'N/A')}"
+                        st.markdown(f"**{unit_label}**")
+                        summary = row.get("lifestyle_summary") or generate_lifestyle_summary(row.to_dict())
+                        st.write(summary)
+                        ws = row.get("official_walk_score") or row.get("walk_score")
+                        ts = row.get("transit_score")
+                        bs = row.get("bike_score")
+                        if ws:
+                            st.metric("Walk", f"{int(ws)}/100")
+                        if ts:
+                            st.metric("Transit", f"{int(ts)}/100")
+                        if bs:
+                            st.metric("Bike", f"{int(bs)}/100")
+                        groceries = row.get("nearby_groceries")
+                        restaurants = row.get("restaurants_count")
+                        parks = row.get("nearby_parks")
+                        gyms = row.get("nearby_gyms")
+                        details = []
+                        if groceries is not None:
+                            details.append(f"🛒 {groceries} grocery stores")
+                        if restaurants is not None:
+                            details.append(f"🍽 {restaurants} restaurants")
+                        if parks is not None:
+                            details.append(f"🌳 {parks} parks")
+                        if gyms is not None:
+                            details.append(f"💪 {gyms} gyms")
+                        for d in details:
+                            st.caption(d)
+
+            # ── Cost of Living breakdowns ──────────────────────────────────────
+            extras = st.session_state.cost_extras
+            if any(v for v in extras.values() if v):
+                st.markdown("#### 💰 Monthly Cost Breakdown (Top Units)")
+                cost_cols = st.columns(min(len(top3), 3))
+                for col_idx, (_, row) in enumerate(top3.iterrows()):
+                    with cost_cols[col_idx]:
+                        price_num = row.get("price_num")
+                        if pd.notna(price_num):
+                            breakdown = compute_monthly_total(price_num, extras)
+                            st.markdown(f"**Unit {row.get('unit', 'N/A')}**")
+                            for label, val in breakdown.items():
+                                if label == "Estimated Total":
+                                    st.markdown(f"**Total: ${int(val):,}/mo**")
+                                else:
+                                    st.write(f"{label}: ${int(val):,}")
+
+            # ── AI Rent Negotiator ─────────────────────────────────────────────
+            if has_feature("negotiation") and openai_configured():
+                st.markdown("#### 🤝 AI Rent Negotiator")
+                st.caption(
+                    "Generate a personalized negotiation email and talking points for any unit."
+                )
+                top3_rows_list = list(top3.iterrows())
+                neg_cols = st.columns(min(len(top3_rows_list), 3))
+                for col_idx, (_, row) in enumerate(top3_rows_list):
+                    unit_key = f"{row.get('property', '')}_{row.get('unit', '')}"
+                    with neg_cols[col_idx]:
+                        st.markdown(f"**Unit {row.get('unit', 'N/A')}**  \n{row.get('price', '')}")
+                        if st.button(
+                            "✍️ Generate Script",
+                            key=f"neg_{unit_key}",
+                            use_container_width=True,
+                        ):
+                            comparables = [
+                                r.to_dict()
+                                for _, r in ranked_df.iterrows()
+                                if r.get("unit") != row.get("unit")
+                            ][:5]
+                            with st.spinner("Generating negotiation script…"):
+                                try:
+                                    script = generate_negotiation_script(row.to_dict(), comparables)
+                                    st.session_state.negotiation_outputs[unit_key] = script
+                                except Exception as e:
+                                    st.session_state.negotiation_outputs[unit_key] = f"⚠️ Error: {e}"
+
+                    if unit_key in st.session_state.negotiation_outputs:
+                        with st.expander(f"📋 Negotiation Script — Unit {row.get('unit', 'N/A')}", expanded=True):
+                            st.markdown(st.session_state.negotiation_outputs[unit_key])
+                            st.button(
+                                "📋 Copy to clipboard",
+                                key=f"copy_{unit_key}",
+                                on_click=lambda k=unit_key: st.write(
+                                    f"<textarea style='opacity:0;position:absolute'>{st.session_state.negotiation_outputs[k]}</textarea>",
+                                    unsafe_allow_html=True,
+                                ),
+                            )
+            elif openai_configured():
+                st.caption("Upgrade to Premium to use the AI Rent Negotiator.")
+
+            # ── Full ranked table ──────────────────────────────────────────────
+            st.markdown("### <a id='full-table'>📊 Full Ranking Table</a>", unsafe_allow_html=True)
+
+            display_cols = [
+                "property", "floorplan", "unit", "floor",
+                "price", "beds", "baths", "sqft",
+                "has_den", "availability",
+                "nearest_metro", "metro_travel_mode", "metro_min",
+                "commute_display",
+                "commute_driving_min", "commute_transit_min",
+                "nearest_hospital", "hospital_travel_mode", "hospital_min",
+                "official_walk_score", "transit_score", "bike_score",
+                "walk_score", "safety_score",
+                "nearby_groceries", "restaurants_count", "nearby_gyms", "nearby_parks",
+                "lifestyle_summary",
+                "nestai_score",
+                "lifestyle_score",
+                "lifestyle_commute_score",
+                "lifestyle_safety_score",
+                "lifestyle_nightlife_score",
+                "lifestyle_budget_score",
+                "lifestyle_gym_score",
+            ]
+
+            display_cols = [c for c in display_cols if c in ranked_df.columns]
+            clean_ranked_df = ranked_df[display_cols].copy()
+
+            for score_col in (
+                "nestai_score",
+                "lifestyle_score",
+                "lifestyle_commute_score",
+                "lifestyle_safety_score",
+                "lifestyle_nightlife_score",
+                "lifestyle_budget_score",
+                "lifestyle_gym_score",
+            ):
+                if score_col in clean_ranked_df.columns:
+                    clean_ranked_df[score_col] = clean_ranked_df[score_col].round(1)
+
+            st.dataframe(clean_ranked_df, use_container_width=True)
+
+    else:
+        st.info("Add units to compare first. Paste a listing above and click **Save Units**.")
 
 
-# ── Feedback Form ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# HOMES TAB
+# ─────────────────────────────────────────────────────────────────────────────
+with _homes_tab:
+    render_homes_tab()
+
+
+# ── Pricing section ───────────────────────────────────────────────────────────
+
+st.divider()
+with st.expander("💳 Plans & Pricing", expanded=_pricing_expanded):
+    if _pricing_expanded:
+        st.session_state["nestai_active_view"] = "apartments"
+    render_pricing_cards()
+
+
+# ── Feedback Form — shown on any view ────────────────────────────────────────
 
 if st.session_state.show_feedback_form:
     st.divider()
@@ -1243,7 +1102,7 @@ if st.session_state.show_feedback_form:
                     "what_was_unclear": what_unclear,
                     "contact_email": contact_email,
                     "user_contact_allowed": user_contact_allowed,
-                    "user_plan": get_tier(),
+                    "user_plan": _fa_get_plan(),
                     "beta_tester": st.session_state.beta_tester,
                     "platform": "web",
                     "unit_count": unit_count,

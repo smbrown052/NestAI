@@ -17,11 +17,14 @@ load_dotenv()
 
 DATABASE_URL: str = os.environ["DATABASE_URL"]
 
-engine = create_engine(
-    DATABASE_URL,
-    pool_pre_ping=True,
-    echo=os.getenv("SQL_ECHO", "false").lower() == "true",
-)
+engine_kwargs = {
+    "pool_pre_ping": True,
+    "echo": os.getenv("SQL_ECHO", "false").lower() == "true",
+}
+if DATABASE_URL.startswith("sqlite"):
+    engine_kwargs["connect_args"] = {"check_same_thread": False}
+
+engine = create_engine(DATABASE_URL, **engine_kwargs)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

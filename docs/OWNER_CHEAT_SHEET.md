@@ -242,6 +242,13 @@ alembic revision --autogenerate -m "describe your change"
 | Working Streamlit app    | `legacy/streamlit/app.py` |
 | Streamlit dependencies   | `legacy/streamlit/requirements.txt` |
 | Streamlit data / cache   | `legacy/streamlit/data/` |
+| Zillow fixture 1         | `legacy/streamlit/data/home_example_1.txt` |
+| Zillow fixture 2         | `legacy/streamlit/data/home_example_2.txt` |
+| Homes tab UI             | `legacy/streamlit/homes_tab.py` |
+| Home parser              | `legacy/streamlit/parser/home_listing.py` |
+| Home storage (SQLite)    | `legacy/streamlit/home_storage.py` |
+| Plan/capability gates    | `legacy/streamlit/feature_access.py` |
+| Tests                    | `legacy/streamlit/tests/` |
 | FastAPI backend          | `services/api/` |
 | Database models          | `services/api/app/db/models/` |
 | Database session setup   | `services/api/app/db/session.py` |
