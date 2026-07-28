@@ -209,7 +209,8 @@ def render_decision_brief(top3: pd.DataFrame, ranked_df: pd.DataFrame, weights: 
     best_match = explain_match(best, st.session_state.user_profile, compute_match_score(best, st.session_state.user_profile))
     best_reasons = best_match[:2] or [f"Highest NestAI Score at {best.get('nestai_score', 0):.0f}/100"]
     regret = regret_analyzer.analyze_apartment(0)
-    concern = regret.get("concerns", [None])[0]
+    concerns = regret.get("concerns") or []
+    concern = concerns[0] if concerns else None
 
     if alternative is not None and tradeoff:
         alt_summary = tradeoff.generate_tradeoff_explanation(0, 1).split("\n")
