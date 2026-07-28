@@ -53,10 +53,17 @@ except Exception:
 from credits import get_tier, has_feature, can_enrich_building, consume_analysis, analyses_remaining
 from cache import get_geocode, _address_key
 from feedback import submit_feedback, send_feedback_email
-from feature_access import get_effective_plan, get_quota, get_plan, is_dev_mode, is_owner_mode_env
-from plan_ui import render_plan_sidebar, render_pricing_cards, render_upgrade_prompt, _render_dev_plan_switcher
+from feature_access import get_effective_plan, get_quota, get_plan, is_dev_mode, is_owner_mode_env, capability
+from plan_ui import render_plan_sidebar, render_pricing_cards, render_upgrade_prompt
 from ui_state import get_account_type_options, get_navigation_options, plan_display_name
 from ui_theme import feature_pill, inject_global_styles, metric_card_html, normalize_plan, render_badge, tier_class
+from time_saved import (
+    get_session_actions,
+    calculate_minutes,
+    format_display as ts_format,
+    build_breakdown as ts_breakdown,
+    DISCLAIMER as TS_DISCLAIMER,
+)
 from auth_service import (
     NestAIAPIClient,
     StreamlitAuthManager,
@@ -173,6 +180,218 @@ def current_effective_plan_key(user: dict | None = None) -> str:
             beta_access=bool(user.get("beta_access") and not user.get("active_plan")),
         )
     return get_effective_plan()
+
+
+def _is_premium_plus_active(visual_tier: str) -> bool:
+    """Return True when Premium Plus (or Owner Test) features should be shown."""
+    return visual_tier == "premium_plus"
+
+
+def render_time_saved_card(*, compact: bool = False, session_scope_label: str = "This session") -> None:
+    """Render the estimated Time Saved card.
+
+    Args:
+        compact:             When True, renders a narrower inline format.
+        session_scope_label: Label displayed when persistence is session-only.
+    """
+    actions = get_session_actions(st.session_state)
+    total = calculate_minutes(actions)
+    display = ts_format(total)
+    breakdown = ts_breakdown(actions)
+
+    if compact:
+        st.markdown(
+            (
+                "<div class='nestai-time-saved-card'>"
+                "<div class='nestai-time-saved-label'>Estimated time saved · " + html_escape(session_scope_label) + "</div>"
+                "<div class='nestai-time-saved-value'>" + html_escape(display) + "</div>"
+                "<div class='nestai-time-saved-note'>Conservative estimate · based on tracked session activity</div>"
+                "</div>"
+            ),
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            (
+                "<div class='nestai-time-saved-card'>"
+                "<div class='nestai-time-saved-label'>⏱ Time Saved with NestAI · " + html_escape(session_scope_label) + "</div>"
+                "<div class='nestai-time-saved-value'>" + html_escape(display) + "</div>"
+                + (
+                    "<ul style='margin:0.5rem 0 0.3rem 1.3rem;padding:0;color:var(--nest-text-soft);font-size:0.88rem;'>"
+                    + "".join(f"<li>{html_escape(b)}</li>" for b in breakdown)
+                    + "</ul>"
+                    if breakdown else ""
+                )
+                + "<div class='nestai-time-saved-note'>This is a conservative estimate based on typical time required to manually organize listing details, compare options, and prepare decision notes. Your actual time saved may vary.</div>"
+                "</div>"
+            ),
+            unsafe_allow_html=True,
+        )
+
+
+def render_premium_plus_section(visual_tier: str) -> None:
+    """Render the 'Unlocked with Premium Plus' section.
+
+    For Premium Plus / Owner Test: shows active feature cards with Enter buttons
+    for implemented features and Coming Soon badges for planned ones.
+    For lower tiers: shows a locked preview with an upgrade CTA.
+    """
+    is_pp = _is_premium_plus_active(visual_tier)
+
+    # ── Feature card definitions ───────────────────────────────────────────────
+    # status: "available" | "coming_soon" | "early_access"
+    PP_FEATURES = [
+        {
+            "icon": "🤝",
+            "title": "Negotiation Assistant",
+            "value": "Get a personalized negotiation email and talking points for any unit worth pursuing.",
+            "status": "available",
+            "anchor": "rankings",  # scrolls to the negotiation section
+        },
+        {
+            "icon": "🔄",
+            "title": "Renewal Advisor",
+            "value": "Analyze your current lease and decide whether to renew or move on with confidence.",
+            "status": "coming_soon",
+        },
+        {
+            "icon": "💰",
+            "title": "True Monthly Cost",
+            "value": "See the full all-in cost of each option including fees, parking, utilities, and insurance.",
+            "status": "available",
+            "anchor": "rankings",
+        },
+        {
+            "icon": "📊",
+            "title": "Advanced Deal Score",
+            "value": "A composite score weighing price, location, market timing, and your negotiation leverage.",
+            "status": "coming_soon",
+        },
+        {
+            "icon": "🧠",
+            "title": "Premium AI Insights",
+            "value": "Deeper AI analysis panels with richer context, comparison narratives, and decision rationale.",
+            "status": "coming_soon",
+        },
+        {
+            "icon": "🏠",
+            "title": "Ownership & Investment Tools",
+            "value": "Tools to evaluate buy vs. rent, equity building, and long-term investment potential.",
+            "status": "coming_soon",
+        },
+    ]
+
+    STATUS_LABELS = {
+        "available": ("<span class='nestai-pp-status-badge nestai-pp-status-available'>✓ Available</span>", False),
+        "coming_soon": ("<span class='nestai-pp-status-badge nestai-pp-status-coming-soon'>Coming Soon</span>", True),
+        "early_access": ("<span class='nestai-pp-status-badge nestai-pp-status-early-access'>Early Access</span>", False),
+    }
+
+    if is_pp:
+        # ── Active section ─────────────────────────────────────────────────────
+        st.markdown(
+            "<div class='nestai-pp-section'>"
+            "<div class='nestai-pp-section-header'>"
+            "<span style='font-size:1.4rem'>✦</span>"
+            "<div>"
+            "<div class='nestai-eyebrow'>Premium Plus</div>"
+            "<div class='nestai-pp-title'>Unlocked with Premium Plus</div>"
+            "</div>"
+            "</div>"
+            "<p class='nestai-subtle' style='margin:0 0 1rem 0;'>Your exclusive advanced decision tools. More capabilities coming soon.</p>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+
+        cols = st.columns(3)
+        for idx, feat in enumerate(PP_FEATURES):
+            badge_html, is_disabled = STATUS_LABELS.get(feat["status"], STATUS_LABELS["coming_soon"])
+            card_class = "nestai-pp-feature-card coming-soon" if is_disabled else "nestai-pp-feature-card"
+
+            with cols[idx % 3]:
+                st.markdown(
+                    (
+                        f"<div class='{card_class}'>"
+                        f"<div class='nestai-pp-card-icon'>{feat['icon']}</div>"
+                        f"<div class='nestai-pp-card-title'>{html_escape(feat['title'])}</div>"
+                        f"<div class='nestai-pp-card-value'>{html_escape(feat['value'])}</div>"
+                        f"{badge_html}"
+                        "</div>"
+                    ),
+                    unsafe_allow_html=True,
+                )
+                if not is_disabled and feat.get("anchor"):
+                    st.markdown(
+                        f"<a href='#{feat['anchor']}' style='display:inline-block;margin-top:0.5rem;"
+                        "padding:0.4rem 0.9rem;border-radius:999px;background:var(--nest-pp-gradient);"
+                        "color:#fff;font-size:0.82rem;font-weight:700;text-decoration:none;'>"
+                        "Enter feature →</a>",
+                        unsafe_allow_html=True,
+                    )
+    else:
+        # ── Locked preview for non-PP users ────────────────────────────────────
+        st.markdown(
+            "<div class='nestai-pp-locked-section'>"
+            "<div class='nestai-pp-section-header'>"
+            "<span style='font-size:1.3rem;filter:grayscale(0.4)'>🔒</span>"
+            "<div>"
+            "<div class='nestai-eyebrow' style='color:var(--nest-locked)'>Premium Plus</div>"
+            "<div class='nestai-pp-title' style='color:var(--nest-locked)'>Unlocked with Premium Plus</div>"
+            "</div>"
+            "</div>"
+            "<p class='nestai-subtle' style='margin:0 0 0.8rem 0;'>"
+            "Advanced decision tools — Negotiation Assistant, Renewal Advisor, True Monthly Cost, "
+            "and more — unlock at the Premium Plus tier."
+            "</p>",
+            unsafe_allow_html=True,
+        )
+        # Blurred preview of feature names
+        preview_cols = st.columns(3)
+        for idx, feat in enumerate(PP_FEATURES[:3]):
+            with preview_cols[idx]:
+                st.markdown(
+                    (
+                        "<div class='nestai-pp-feature-card nestai-pp-locked-preview coming-soon'>"
+                        f"<div class='nestai-pp-card-icon'>{feat['icon']}</div>"
+                        f"<div class='nestai-pp-card-title'>{html_escape(feat['title'])}</div>"
+                        f"<div class='nestai-pp-card-value'>{html_escape(feat['value'][:60])}…</div>"
+                        "</div>"
+                    ),
+                    unsafe_allow_html=True,
+                )
+        st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown("")
+
+        # Upgrade CTA
+        ts_actions = get_session_actions(st.session_state)
+        ts_total = calculate_minutes(ts_actions)
+        if ts_total >= 10:
+            ts_str = ts_format(ts_total)
+            st.markdown(
+                f"<div class='nestai-upgrade-card tier-premium-plus' style='padding:1rem 1.1rem;margin-bottom:0.85rem;'>"
+                f"<div class='nestai-eyebrow'>Upgrade</div>"
+                f"<h3>Upgrade to Premium Plus</h3>"
+                f"<p class='nestai-section-note'>You've already saved an estimated "
+                f"<strong>{html_escape(ts_str)}</strong> with NestAI. "
+                "Unlock the full decision toolkit to go further.</p>"
+                "</div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                "<div class='nestai-upgrade-card tier-premium-plus' style='padding:1rem 1.1rem;margin-bottom:0.85rem;'>"
+                "<div class='nestai-eyebrow'>Upgrade</div>"
+                "<h3>Upgrade to Premium Plus</h3>"
+                "<p class='nestai-section-note'>Get the Negotiation Assistant, Renewal Advisor, "
+                "True Monthly Cost, and early access to future investment tools.</p>"
+                "</div>",
+                unsafe_allow_html=True,
+            )
+
+        from plan_ui import navigate_to_plans
+        from feature_access import PLAN_PREMIUM_PLUS
+        if st.button("View Premium Plus", key="pp_locked_upgrade_btn", type="primary"):
+            navigate_to_plans(highlight_plan=PLAN_PREMIUM_PLUS)
 
 
 def compact_recommendation(row: pd.Series, ranked_df: pd.DataFrame) -> tuple[list[str], str]:
@@ -321,6 +540,11 @@ for key, default in {
     "auth_notice": None,
     "auth_error": None,
     "main_nav": "Apartments",
+    # Time Saved tracking (derived from session actions, not stored directly)
+    "nestai_ts_reports_generated": 0,
+    "nestai_ts_renewals_done": 0,
+    # Premium Plus unlock banner (shown once after plan switch in dev mode)
+    "nestai_pp_unlock_banner": False,
 }.items():
     if key not in st.session_state:
         st.session_state[key] = default
@@ -346,6 +570,16 @@ if st.session_state.auth_error:
     st.error(st.session_state.auth_error)
     st.session_state.auth_error = None
 
+# ── Premium Plus unlock banner (dev mode plan switch only) ────────────────────
+if st.session_state.get("nestai_pp_unlock_banner"):
+    st.markdown(
+        "<div class='nestai-unlock-banner'>"
+        "✦ Premium Plus unlocked — advanced decision tools are now available."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    st.session_state["nestai_pp_unlock_banner"] = False
+
 nav_options = get_navigation_options(auth.is_authenticated())
 if st.session_state.main_nav not in nav_options:
     st.session_state.main_nav = "Profile" if auth.is_authenticated() else "Apartments"
@@ -369,19 +603,6 @@ if active_screen == "Logout":
 # ── Sidebar — AI Apartment Advisor ────────────────────────────────────────────
 
 with st.sidebar:
-    # ── DEV DIAGNOSTIC — remove before production merge ──────────────────────
-    # Confirms whether app.py can see the environment flags and whether the
-    # helper functions return True.  Rendered unconditionally so we can
-    # distinguish "flag not set" from "flag set but helper broken".
-    st.write("DEV ENV:", repr(os.getenv("NESTAI_DEV_MODE")))
-    st.write("OWNER ENV:", repr(os.getenv("NESTAI_OWNER_MODE")))
-    st.write("IS DEV:", is_dev_mode())
-    st.write("IS OWNER:", is_owner_mode_env())
-    # Direct call — does not depend on render_plan_sidebar() picking it up.
-    if is_dev_mode() or is_owner_mode_env():
-        _render_dev_plan_switcher()
-    # ── END DEV DIAGNOSTIC ───────────────────────────────────────────────────
-
     st.markdown("## 🧭 Workspace")
     if auth.is_authenticated():
         user_preview = auth.user() or {}
@@ -550,6 +771,26 @@ if active_screen == "Profile":
             st.markdown(metric_card_html("Payment Status", payment_status, "Commercial plan readiness", tier=visual_tier), unsafe_allow_html=True)
         with status_cols[2]:
             st.markdown(metric_card_html("Beta Status", "Enabled" if user.get("beta_access") else "Standard", "Early-access visibility", tier=visual_tier), unsafe_allow_html=True)
+
+        # ── Time Saved on Profile page ─────────────────────────────────────────
+        ts_actions = get_session_actions(st.session_state)
+        ts_total = calculate_minutes(ts_actions)
+        if ts_total > 0:
+            ts_col, ts_info_col = st.columns([2, 3])
+            with ts_col:
+                render_time_saved_card(compact=False, session_scope_label="This session")
+            with ts_info_col:
+                with st.expander("How is this calculated?", expanded=False):
+                    st.markdown(
+                        f"**{TS_DISCLAIMER}**\n\n"
+                        "**Conservative assumptions per action:**\n"
+                        "- 1 property organized: ~8 min\n"
+                        "- Each additional comparison: ~5 min\n"
+                        "- Neighborhood enrichment: ~5 min per building\n"
+                        "- Negotiation script generated: ~20 min\n"
+                        "- Renewal analysis: ~15 min\n\n"
+                        "_Assumptions are configurable in `time_saved.py`._"
+                    )
 
         unlocked = []
         if has_feature("walk_score"):
@@ -1438,6 +1679,16 @@ if auth.is_authenticated() and not st.session_state.comparison_df.empty:
                         )
         elif openai_configured():
             render_upgrade_prompt("can_use_ai_negotiation", "AI Rent Negotiator")
+
+        # ── Premium Plus Unlocked section ──────────────────────────────────
+        st.markdown("---")
+        render_premium_plus_section(visual_tier)
+
+        # ── Time Saved after comparison ────────────────────────────────────
+        _ts_actions = get_session_actions(st.session_state)
+        _ts_total = calculate_minutes(_ts_actions)
+        if _ts_total >= 10:
+            render_time_saved_card(compact=True, session_scope_label="This session")
 
         # ── Full ranked table ──────────────────────────────────────────────
         st.markdown("### <a id='full-table'>📊 Full Ranking Table</a>", unsafe_allow_html=True)

@@ -84,8 +84,8 @@ class TestFreePlanCapabilities:
     def test_monthly_limit_is_5(self):
         assert fa.get_quota("monthly_analyses_limit") == 5
 
-    def test_saved_property_limit_is_1(self):
-        assert fa.get_quota("saved_property_limit") == 1
+    def test_saved_property_limit_is_2(self):
+        assert fa.get_quota("saved_property_limit") == 2
 
 
 # ── Premium plan capabilities ─────────────────────────────────────────────────
@@ -188,8 +188,13 @@ class TestCanSave:
     def test_free_can_save_when_zero_active(self):
         assert fa.can_save_another_property(0) is True
 
-    def test_free_cannot_save_when_one_active(self):
-        assert fa.can_save_another_property(1) is False
+    def test_free_can_save_when_one_active(self):
+        # Free now allows up to 2 saved properties
+        assert fa.can_save_another_property(1) is True
+
+    def test_free_cannot_save_when_two_active(self):
+        # Third property requires upgrade
+        assert fa.can_save_another_property(2) is False
 
     def test_premium_can_save_up_to_50(self):
         fa.set_plan(fa.PLAN_PREMIUM)
@@ -234,3 +239,47 @@ class TestLegacyShim:
 
     def test_commute_blocked_for_free(self):
         assert fa.has_feature("commute") is False
+
+
+# ── OWNER_TEST guard — legacy tier path ───────────────────────────────────────
+
+class TestOwnerTestGuard:
+    """OWNER_TEST must never be set via the legacy nestai_tier backwards-compat path.
+
+    A backend response or credits.py that stores nestai_tier="owner_test" must
+    not silently elevate the session plan to OWNER_TEST.
+    """
+
+    def setup_method(self):
+        _reset()
+        import os
+        os.environ.pop("NESTAI_OWNER_MODE", None)
+        os.environ.pop("NESTAI_DEV_MODE", None)
+
+    def teardown_method(self):
+        import os
+        os.environ.pop("NESTAI_OWNER_MODE", None)
+        os.environ.pop("NESTAI_DEV_MODE", None)
+
+    def test_legacy_tier_owner_test_does_not_promote_plan(self):
+        """nestai_tier='owner_test' must not cause nestai_plan to become OWNER_TEST."""
+        _state["nestai_tier"] = "owner_test"
+        fa._init()
+        assert fa.get_plan() != fa.PLAN_OWNER_TEST
+
+    def test_legacy_tier_owner_test_uppercase_does_not_promote_plan(self):
+        """nestai_tier='OWNER_TEST' must not cause nestai_plan to become OWNER_TEST."""
+        _state["nestai_tier"] = "OWNER_TEST"
+        fa._init()
+        assert fa.get_plan() != fa.PLAN_OWNER_TEST
+
+    def test_default_plan_is_free_without_env_vars(self):
+        """Without NESTAI_OWNER_MODE or NESTAI_DEV_MODE, default plan must be FREE."""
+        fa._init()
+        assert fa.get_plan() == fa.PLAN_FREE
+
+    def test_set_plan_owner_test_blocked_without_flags(self):
+        """set_plan(OWNER_TEST) is a no-op when neither env flag is set."""
+        fa._init()
+        fa.set_plan(fa.PLAN_OWNER_TEST)
+        assert fa.get_plan() == fa.PLAN_FREE
