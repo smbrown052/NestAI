@@ -21,6 +21,8 @@ Environment flags:
 
 from __future__ import annotations
 
+from html import escape
+
 import streamlit as st
 
 from feature_access import (
@@ -40,6 +42,7 @@ from feature_access import (
     require_capability,
     set_plan,
 )
+from ui_theme import plan_meta, tier_class
 
 # ── Canonical feature label lists ─────────────────────────────────────────────
 # These are the single source of truth for plan card feature copy.
@@ -47,29 +50,31 @@ from feature_access import (
 # can never silently drift apart.
 
 PREMIUM_FEATURE_LABELS: list[str] = [
-    "Multiple saved properties (up to 50)",
-    "Cross-property comparison",
-    "Natural-language filtering",
-    "Priority weighting",
-    "Lifestyle Score",
-    "AI recommendations",
-    "AI explanations",
-    "AI reports",
-    "Commute analysis (Google Maps)",
-    "Neighborhood and Walk Score insights",
-    "Saved preferences",
-    "Generous monthly AI and map usage (100 analyses/month)",
+    "Compare multiple properties side by side",
+    "Richer recommendation cards and decision briefs",
+    "Natural-language filtering and priority weighting",
+    "Lifestyle Score with deeper tradeoff summaries",
+    "AI recommendations, explanations, and reports",
+    "Commute analysis and neighborhood intelligence",
+    "Exports, saved preferences, and negotiation help",
+    "100 analyses per month and up to 50 saved properties",
 ]
 
 PREMIUM_PLUS_EXTRA_LABELS: list[str] = [
-    "Higher AI usage limits (500 analyses/month)",
-    "Higher map and commute limits (up to 200 saved properties)",
-    "More report generations",
-    "Advanced comparison reports",
-    "Future portfolio tools",
-    "Future investment analysis",
+    "Advanced analytics panels and deeper comparison views",
+    "Exclusive report styling and highest-limit indicators",
+    "Higher AI, map, and commute limits (500 analyses/month)",
+    "Up to 200 saved properties and more report generations",
     "Early access to new features",
-    "Priority access to experimental capabilities",
+    "Priority support and priority access to experiments",
+]
+
+BETA_FEATURE_LABELS: list[str] = [
+    "Everything in Free with elevated early-access styling",
+    "Experimental features clearly labeled as beta",
+    "Invite-code access with configurable higher limits",
+    "Built-in feedback prompts to help shape NestAI",
+    "Modern comparison tools before general release",
 ]
 
 # Public plan card data ────────────────────────────────────────────────────────
@@ -77,16 +82,16 @@ PREMIUM_PLUS_EXTRA_LABELS: list[str] = [
 
 PLAN_DESCRIPTIONS: dict[str, str] = {
     PLAN_FREE: (
-        "Explore listings and organize one active property "
-        "with essential comparison tools."
+        "Explore and organize your options."
+    ),
+    PLAN_BETA: (
+        "Help shape the future of NestAI."
     ),
     PLAN_PREMIUM: (
-        "Compare multiple properties and unlock personalized AI, "
-        "commute, and lifestyle insights."
+        "Make confident property decisions."
     ),
     PLAN_PREMIUM_PLUS: (
-        "Get everything in Premium with higher usage limits, "
-        "advanced reports, and early access to new tools."
+        "Unlock the most advanced decision intelligence."
     ),
 }
 
@@ -96,55 +101,76 @@ PRICING_PLANS: list[dict] = [
         "name": "Free",
         "price": "$0",
         "period": "/month",
-        "badge": "🆓",
+        "badge": "Free",
         "description": PLAN_DESCRIPTIONS[PLAN_FREE],
+        "eyebrow": "Essentials",
         "features": [
             "5 property analyses per month",
             "1 active saved property",
             "Apartment and home listing parsing",
-            "Basic filters and sorting",
-            "Cross-property ranking",
+            "Basic filters, ranking, and saved preferences",
+            "Intentional feature previews with upgrade guidance",
         ],
         "not_included": [
-            "Walk Score / commute / neighborhood APIs",
+            "Commute-aware rankings and neighborhood enrichment",
+            "Decision briefs, AI reports, and exports",
             "Multi-property side-by-side comparison",
-            "Natural-language filtering",
-            "Lifestyle Score and AI explanations",
-            "AI reports and exports",
+            "Advanced AI insights and negotiation tools",
         ],
+        "cta_label": "Create Free Account",
+    },
+    {
+        "id": PLAN_BETA,
+        "name": "Beta",
+        "price": "$0",
+        "period": "/month",
+        "badge": "Beta",
+        "description": PLAN_DESCRIPTIONS[PLAN_BETA],
+        "eyebrow": "Invite only",
+        "features": BETA_FEATURE_LABELS,
+        "not_included": [
+            "Guaranteed long-term availability",
+            "Production-grade billing and support commitments",
+        ],
+        "cta_label": "Join with Invite Code",
+        "coming_soon": "Experimental features may change as we learn from feedback.",
     },
     {
         "id": PLAN_PREMIUM,
         "name": "Premium",
         "price": "$12",
         "period": "/month",
-        "badge": "⭐",
+        "badge": "Premium",
         "highlight": True,
         "description": PLAN_DESCRIPTIONS[PLAN_PREMIUM],
+        "eyebrow": "Recommended",
         "features": PREMIUM_FEATURE_LABELS,
+        "cta_label": "Choose Premium",
     },
     {
         "id": PLAN_PREMIUM_PLUS,
         "name": "Premium Plus",
         "price": "$25",
         "period": "/month",
-        "badge": "🌟",
+        "badge": "Premium Plus",
         "description": PLAN_DESCRIPTIONS[PLAN_PREMIUM_PLUS],
+        "eyebrow": "Most advanced",
         # All Premium features are inherited; extras are listed separately.
         "features": PREMIUM_FEATURE_LABELS,
         "extras": PREMIUM_PLUS_EXTRA_LABELS,
+        "cta_label": "Choose Premium Plus",
     },
 ]
 
 PLAN_FREE_DATA = PRICING_PLANS[0]
-PLAN_PREMIUM_DATA = PRICING_PLANS[1]
-PLAN_PREMIUM_PLUS_DATA = PRICING_PLANS[2]
+PLAN_PREMIUM_DATA = PRICING_PLANS[2]
+PLAN_PREMIUM_PLUS_DATA = PRICING_PLANS[3]
 
 
 def get_pricing_plans() -> list[dict]:
     """Return the public-facing plan card data.
 
-    OWNER_TEST and BETA are never included — they are not purchasable plans.
+    OWNER_TEST is never included — it is not a public plan.
     """
     return PRICING_PLANS
 
@@ -164,6 +190,7 @@ def navigate_to_plans(highlight_plan: str | None = None) -> None:
                         highlight when the Plans view renders.
     """
     st.session_state["nestai_active_view"] = "plans"
+    st.session_state["main_nav"] = "Pricing"
     if highlight_plan is not None:
         st.session_state["nestai_highlight_plan"] = highlight_plan
     elif "nestai_highlight_plan" in st.session_state:
@@ -343,10 +370,7 @@ def _render_dev_plan_switcher() -> None:
 # ── Pricing cards ─────────────────────────────────────────────────────────────
 
 def render_pricing_cards() -> None:
-    """Render the three public plan cards (FREE, PREMIUM, PREMIUM_PLUS).
-
-    Does NOT display OWNER_TEST or BETA — those are not purchasable plans.
-    Upgrade buttons record intent and show a billing-coming-soon notice.
+    """Render the public plan cards.
 
     Reads ``st.session_state["nestai_highlight_plan"]`` to visually emphasise
     a recommended plan (set by navigate_to_plans(highlight_plan=...)).
@@ -354,10 +378,18 @@ def render_pricing_cards() -> None:
     plan = get_plan()
     highlight = st.session_state.get("nestai_highlight_plan")
 
-    st.markdown("## 💳 Plans & Pricing")
-    st.caption(
-        "Choose the plan that fits your home search. "
-        "Billing setup is coming soon — your interest will be recorded."
+    st.markdown(
+        """
+        <div class="nestai-hero">
+            <div class="nestai-eyebrow">Pricing</div>
+            <h2>Decision intelligence for every stage of your search</h2>
+            <p class="nestai-subtle">
+                Every tier stays polished. Paid tiers add richer analysis, cleaner reporting,
+                and more advanced decision support without making the product loud.
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
     # Show billing notice if the user just clicked an upgrade CTA
@@ -369,7 +401,7 @@ def render_pricing_cards() -> None:
             f"Your selected plan (**{intent_label}**) has been saved for checkout."
         )
 
-    cols = st.columns(3)
+    cols = st.columns(4)
     for col, card in zip(cols, PRICING_PLANS):
         with col:
             is_highlighted = highlight == card["id"] and not (plan == card["id"])
@@ -378,33 +410,41 @@ def render_pricing_cards() -> None:
 
 def _render_plan_card(card: dict, is_current: bool, highlighted: bool = False) -> None:
     """Render a single plan card."""
-    if card.get("highlight"):
-        st.markdown("🟡 **Most Popular**")
+    plan_id = card["id"]
+    visual_plan = PLAN_PREMIUM_PLUS if plan_id == PLAN_OWNER_TEST else plan_id
+    classes = ["nestai-tier-card", tier_class(visual_plan)]
+    if card.get("highlight") or highlighted:
+        classes.append("recommended")
 
-    # Visual emphasis when this plan is recommended
-    if highlighted:
-        st.markdown("👆 **Recommended for you**")
+    eyebrow = escape(card.get("eyebrow", plan_meta(visual_plan)["accent"]))
+    current_label = "<div class='nestai-badge tier-beta'>Current plan</div>" if is_current else ""
+    recommended = (
+        "<div class='nestai-badge tier-premium'>Recommended for most renters</div>"
+        if card.get("highlight")
+        else ""
+    )
+    highlight_label = (
+        "<div class='nestai-badge tier-premium-plus'>Best fit for this unlock</div>"
+        if highlighted
+        else ""
+    )
 
-    st.markdown(f"### {card['badge']} {card['name']}")
-
-    # Price display — always includes $ and /month
     st.markdown(
-        f"<span style='font-size:2em; font-weight:bold;'>{card['price']}</span>"
-        f"<span style='color:gray;'>{card['period']}</span>",
+        (
+            f"<div class='{' '.join(classes)}'>"
+            f"<div class='nestai-eyebrow'>{eyebrow}</div>"
+            f"{recommended}{highlight_label}{current_label}"
+            f"<h3>{escape(card['name'])}</h3>"
+            f"<div><span class='price'>{escape(card['price'])}</span>"
+            f"<span class='period'>{escape(card['period'])}</span></div>"
+            f"<p class='nestai-subtle'>{escape(card.get('description', ''))}</p>"
+            "</div>"
+        ),
         unsafe_allow_html=True,
     )
 
-    # Plan description
-    if card.get("description"):
-        st.caption(card["description"])
-
-    st.markdown("")  # spacer
-
-    # Feature list
-    plan_id = card["id"]
     if plan_id == PLAN_PREMIUM_PLUS:
-        # Explicitly show "Everything in Premium, plus:" layout
-        st.markdown("**✅ Everything in Premium, plus:**")
+        st.markdown("**Everything in Premium, plus:**")
         for feat in card.get("extras", PREMIUM_PLUS_EXTRA_LABELS):
             st.markdown(f"✅ {feat}")
         with st.expander("See all included Premium features", expanded=False):
@@ -416,11 +456,12 @@ def _render_plan_card(card: dict, is_current: bool, highlighted: bool = False) -
             st.markdown(f"✅ {feat}")
 
     if "not_included" in card:
-        with st.expander("What's not included", expanded=False):
+        with st.expander("Unavailable or limited", expanded=False):
             for feat in card["not_included"]:
                 st.markdown(f"🔒 {feat}")
 
-    st.markdown("")  # visual spacer
+    if card.get("coming_soon"):
+        st.caption(f"Coming Soon: {card['coming_soon']}")
 
     # CTA button
     if is_current:
@@ -430,9 +471,27 @@ def _render_plan_card(card: dict, is_current: bool, highlighted: bool = False) -
             use_container_width=True,
             key=f"plan_cta_{plan_id}",
         )
+    elif plan_id == PLAN_FREE:
+        if st.button(
+            card.get("cta_label", "Create Free Account"),
+            use_container_width=True,
+            key=f"plan_cta_{plan_id}",
+        ):
+            st.session_state.signup_account_type = "free"
+            st.session_state.main_nav = "Create Account"
+            st.rerun()
+    elif plan_id == PLAN_BETA:
+        if st.button(
+            card.get("cta_label", "Join with Invite Code"),
+            use_container_width=True,
+            key=f"plan_cta_{plan_id}",
+        ):
+            st.session_state.signup_account_type = "beta"
+            st.session_state.main_nav = "Create Account"
+            st.rerun()
     elif plan_id == PLAN_PREMIUM:
         if st.button(
-            "⬆️ Upgrade to Premium",
+            card.get("cta_label", "Choose Premium"),
             use_container_width=True,
             key=f"plan_cta_{plan_id}",
             type="primary",
@@ -442,7 +501,7 @@ def _render_plan_card(card: dict, is_current: bool, highlighted: bool = False) -
             st.rerun()
     elif plan_id == PLAN_PREMIUM_PLUS:
         if st.button(
-            "⬆️ Upgrade to Premium Plus",
+            card.get("cta_label", "Choose Premium Plus"),
             use_container_width=True,
             key=f"plan_cta_{plan_id}",
         ):
@@ -470,37 +529,82 @@ def render_upgrade_prompt(feature: str, feature_label: str = "") -> None:
     label = feature_label or feature.replace("can_", "").replace("_", " ").title()
     current_label = _PLAN_LABELS.get(prompt.current_plan, prompt.current_plan)
     required_label = _PLAN_LABELS.get(prompt.required_plan, prompt.required_plan)
+    feature_copy = {
+        "can_use_commute_analysis": (
+            "Unlock commute-aware rankings and see how each property affects your daily routine.",
+            "Commute context changes which option actually feels livable, not just affordable.",
+        ),
+        "can_compare_multiple_properties": (
+            "Unlock side-by-side comparisons so you can weigh tradeoffs without losing context.",
+            "Comparison view turns scattered notes into a confident shortlist.",
+        ),
+        "can_generate_ai_reports": (
+            "Unlock the Decision Report to get a structured recommendation brief instead of raw notes.",
+            "Reports help you revisit the shortlist later and explain the choice clearly.",
+        ),
+        "can_use_ai_explanations": (
+            "Unlock AI insight panels that explain why a property fits your priorities.",
+            "The extra context makes the ranking easier to trust and act on.",
+        ),
+        "can_use_walk_score_api": (
+            "Unlock neighborhood intelligence with Walk Score, transit context, and nearby essentials.",
+            "Location quality is easier to compare when the same metrics appear across every option.",
+        ),
+        "can_export": (
+            "Unlock polished exports so you can share or save your shortlist cleanly.",
+            "Exports make the work reusable instead of trapped in a session.",
+        ),
+        "can_save_property": (
+            "Unlock more saved properties so you can compare a serious shortlist instead of one option at a time.",
+            "Saving more homes lets NestAI surface better patterns and recommendations.",
+        ),
+        "can_use_ai_negotiation": (
+            "Unlock tailored negotiation support for the units worth pursuing.",
+            "It helps you turn analysis into action when you are ready to move.",
+        ),
+        "default": (
+            f"Unlock {label.lower()} with {required_label}.",
+            "Upgrading adds richer analysis and a more advanced decision workflow.",
+        ),
+    }
+    headline, why_value = feature_copy.get(feature, feature_copy["default"])
 
-    with st.container(border=True):
-        st.warning(
-            f"🔒 **{label}** requires the **{required_label}** plan.  \n"
-            f"You are currently on the **{current_label}** plan."
-        )
+    st.markdown(
+        (
+            "<div class='nestai-upgrade-card tier-premium-plus'>"
+            f"<div class='nestai-eyebrow'>Locked on {escape(current_label)}</div>"
+            f"<h3>{escape(label)}</h3>"
+            f"<p class='nestai-section-note'>{escape(headline)}</p>"
+            f"<p class='nestai-subtle'><strong>Why it matters:</strong> {escape(why_value)}</p>"
+            f"<p class='nestai-subtle'><strong>Unlocks on:</strong> {escape(required_label)}</p>"
+            "</div>"
+        ),
+        unsafe_allow_html=True,
+    )
 
-        up_col1, up_col2 = st.columns(2)
-        with up_col1:
-            st.markdown("**⭐ Premium includes:**")
-            for feat in PREMIUM_FEATURE_LABELS[:5]:
-                st.caption(f"✅ {feat}")
-        with up_col2:
-            st.markdown("**🌟 Premium Plus adds:**")
-            for feat in PREMIUM_PLUS_EXTRA_LABELS[:4]:
-                st.caption(f"✅ {feat}")
+    up_col1, up_col2 = st.columns(2)
+    with up_col1:
+        st.markdown("**Premium adds**")
+        for feat in PREMIUM_FEATURE_LABELS[:4]:
+            st.caption(f"✓ {feat}")
+    with up_col2:
+        st.markdown("**Premium Plus adds**")
+        for feat in PREMIUM_PLUS_EXTRA_LABELS[:4]:
+            st.caption(f"✓ {feat}")
 
-        btn_col1, btn_col2 = st.columns(2)
-        with btn_col1:
-            if st.button(
-                "⬆️ Upgrade to Premium",
-                use_container_width=True,
-                key=f"upgrade_prompt_{feature}_premium",
-                type="primary",
-            ):
-                navigate_to_plans(highlight_plan=PLAN_PREMIUM)
-        with btn_col2:
-            if st.button(
-                "⬆️ Upgrade to Premium Plus",
-                use_container_width=True,
-                key=f"upgrade_prompt_{feature}_plus",
-            ):
-                navigate_to_plans(highlight_plan=PLAN_PREMIUM_PLUS)
-
+    btn_col1, btn_col2 = st.columns(2)
+    with btn_col1:
+        if st.button(
+            "View Premium",
+            use_container_width=True,
+            key=f"upgrade_prompt_{feature}_premium",
+            type="primary",
+        ):
+            navigate_to_plans(highlight_plan=PLAN_PREMIUM)
+    with btn_col2:
+        if st.button(
+            "View Premium Plus",
+            use_container_width=True,
+            key=f"upgrade_prompt_{feature}_plus",
+        ):
+            navigate_to_plans(highlight_plan=PLAN_PREMIUM_PLUS)

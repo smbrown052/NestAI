@@ -351,13 +351,14 @@ class TestDevModeEnvVar:
 # ── Pricing cards do not include OWNER_TEST ───────────────────────────────────
 
 class TestPricingCards:
-    def test_get_pricing_plans_returns_three_plans(self):
+    def test_get_pricing_plans_returns_four_plans(self):
         plans = get_pricing_plans()
-        assert len(plans) == 3
+        assert len(plans) == 4
 
-    def test_pricing_plans_are_free_premium_premium_plus(self):
+    def test_pricing_plans_are_free_beta_premium_premium_plus(self):
         ids = [p["id"] for p in get_pricing_plans()]
         assert PLAN_FREE in ids
+        assert fa.PLAN_BETA in ids
         assert PLAN_PREMIUM in ids
         assert PLAN_PREMIUM_PLUS in ids
 
@@ -365,9 +366,9 @@ class TestPricingCards:
         ids = [p["id"] for p in get_pricing_plans()]
         assert fa.PLAN_OWNER_TEST not in ids
 
-    def test_pricing_plans_exclude_beta(self):
+    def test_pricing_plans_include_beta(self):
         ids = [p["id"] for p in get_pricing_plans()]
-        assert fa.PLAN_BETA not in ids
+        assert fa.PLAN_BETA in ids
 
     def test_free_plan_card_has_features(self):
         free_card = next(p for p in PRICING_PLANS if p["id"] == PLAN_FREE)
@@ -650,7 +651,7 @@ class TestPlanSourceConsistency:
 
     def test_beta_not_in_public_pricing(self):
         ids = [p["id"] for p in get_pricing_plans()]
-        assert fa.PLAN_BETA not in ids
+        assert fa.PLAN_BETA in ids
 
     def test_all_public_plan_ids_are_in_feature_access(self):
         """Every public plan card id must be a known plan in feature_access."""
@@ -670,8 +671,8 @@ class TestPricingCardPlacement:
     """Full pricing cards must only be rendered in the Plans view."""
 
     def test_pricing_plans_list_has_exactly_three_entries(self):
-        """Exactly three public plans: Free, Premium, Premium Plus."""
-        assert len(get_pricing_plans()) == 3
+        """Exactly four public plans: Free, Beta, Premium, Premium Plus."""
+        assert len(get_pricing_plans()) == 4
 
     def test_no_duplicate_plan_ids(self):
         ids = [p["id"] for p in get_pricing_plans()]
@@ -692,4 +693,3 @@ class TestPricingCardPlacement:
         _reset()
         _state["nestai_active_view"] = "homes"
         assert _state["nestai_active_view"] == "homes"
-

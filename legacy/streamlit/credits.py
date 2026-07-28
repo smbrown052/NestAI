@@ -15,6 +15,8 @@ AI chat / Decision Reports do NOT consume credits once the building is already e
 
 from __future__ import annotations
 
+import os
+
 import streamlit as st
 
 # ── Tier definitions ──────────────────────────────────────────────────────────
@@ -55,7 +57,7 @@ TIERS: dict[str, dict] = {
     },
     "premium_plus": {
         "label": "Premium Plus",
-        "analyses": 150,
+        "analyses": None,
         "ai_chat": True,
         "walk_score": True,
         "commute": True,
@@ -69,6 +71,10 @@ TIERS: dict[str, dict] = {
 }
 
 _EXTRA_PACK_SIZE = 50
+
+
+def _owner_mode_enabled() -> bool:
+    return os.environ.get("NESTAI_OWNER_MODE", "").lower() in {"1", "true", "yes"}
 
 # ── Session state helpers ─────────────────────────────────────────────────────
 
@@ -108,14 +114,21 @@ def analyses_used() -> int:
     return st.session_state.nestai_analyses_used
 
 
-def analyses_limit() -> int:
+def analyses_limit() -> int | None:
     _init()
+    if _owner_mode_enabled():
+        return 10**9
     tier = TIERS[get_tier()]
+    if tier["analyses"] is None:
+        return None
     return tier["analyses"] + st.session_state.nestai_extra_credits
 
 
-def analyses_remaining() -> int:
-    return max(0, analyses_limit() - analyses_used())
+def analyses_remaining() -> int | None:
+    limit = analyses_limit()
+    if limit is None:
+        return None
+    return max(0, limit - analyses_used())
 
 
 def has_feature(feature: str) -> bool:
@@ -128,6 +141,8 @@ def has_feature(feature: str) -> bool:
     _init()
     if feature == "parse":
         return True
+    if _owner_mode_enabled():
+        return True
     return bool(TIERS[get_tier()].get(feature, False))
 
 
@@ -137,9 +152,12 @@ def can_enrich_building(building_id: str) -> bool:
     the building was already enriched this session — no double-charge).
     """
     _init()
+    if _owner_mode_enabled():
+        return True
     if building_id in st.session_state.nestai_enriched_buildings:
         return True  # already paid for this session
-    return analyses_remaining() > 0
+    remaining = analyses_remaining()
+    return remaining is None or remaining > 0
 
 
 def consume_analysis(building_id: str) -> bool:
@@ -149,11 +167,16 @@ def consume_analysis(building_id: str) -> bool:
     Idempotent within the same session (same building is not charged twice).
     """
     _init()
+    if _owner_mode_enabled():
+        st.session_state.nestai_enriched_buildings.add(building_id)
+        return True
     if building_id in st.session_state.nestai_enriched_buildings:
         return True  # already enriched, no charge
-    if analyses_remaining() <= 0:
+    remaining = analyses_remaining()
+    if remaining == 0:
         return False
-    st.session_state.nestai_analyses_used += 1
+    if remaining is not None:
+        st.session_state.nestai_analyses_used += 1
     st.session_state.nestai_enriched_buildings.add(building_id)
     return True
 
