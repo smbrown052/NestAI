@@ -77,7 +77,7 @@ _CAPABILITIES: dict[str, dict[str, Any]] = {
         "monthly_analyses_limit": 5,
         # Saved properties
         "can_save_property": True,
-        "saved_property_limit": 1,          # one active saved property
+        "saved_property_limit": 2,          # one active saved property
         "can_restore_archived_property": False,
         # Comparison
         "can_compare_multiple_properties": False,
