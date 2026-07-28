@@ -49,6 +49,8 @@ def generate_lifestyle_explanation(
     priority_rank = ""
     if priority_rank_fn:
         priority_rank = priority_rank_fn(factor1_name)
+        # Strip any "tied for" prefix so the label reads cleanly
+        priority_rank = priority_rank.replace("tied for ", "")
         explanation_parts.append(f"✨ **{factor1_name.title()}** (your {priority_rank} priority):\n")
     else:
         factor1_weight = weights.get(factor1_name, 0)
@@ -85,6 +87,8 @@ def generate_lifestyle_explanation(
         
         if priority_rank_fn:
             priority_rank_2 = priority_rank_fn(factor2_name)
+            # Strip any "tied for" prefix
+            priority_rank_2 = priority_rank_2.replace("tied for ", "")
             explanation_parts.append(f"\n✨ **{factor2_name.title()}** (your {priority_rank_2} priority):\n")
         else:
             factor2_weight = weights.get(factor2_name, 0)
