@@ -34,8 +34,19 @@ class AuthApiTests(unittest.TestCase):
         for module_name in [
             "app.db.session",
             "app.db.base",
+            "app.db.models",
             "app.db.models.user",
             "app.db.models.beta_access",
+            "app.db.models.billing",
+            "app.db.models.building",
+            "app.db.models.comparison",
+            "app.db.models.credits",
+            "app.db.models.feedback",
+            "app.db.models.home_details",
+            "app.db.models.property",
+            "app.db.models.unit",
+            "app.db.models.usage_event",
+            "app.db.models.ai_feedback",
             "app.auth.security",
             "app.auth.plans",
             "app.auth.dependencies",
@@ -49,6 +60,8 @@ class AuthApiTests(unittest.TestCase):
 
         cls.session_module = importlib.import_module("app.db.session")
         cls.base_module = importlib.import_module("app.db.base")
+        # Import all models so every table is registered on Base.metadata
+        importlib.import_module("app.db.models")
         cls.user_module = importlib.import_module("app.db.models.user")
         cls.beta_access_module = importlib.import_module("app.db.models.beta_access")
         cls.billing_service = importlib.import_module("app.billing.service")
@@ -78,7 +91,7 @@ class AuthApiTests(unittest.TestCase):
         cls._tempdir.cleanup()
 
     def _unique_email(self) -> str:
-        return f"user-{self.id()}@example.com"
+        return f"user-{self.id().lower()}@example.com"
 
     def _register(self, email: str, password: str, display_name: str, account_type: str, beta_invite_code: str | None = None):
         payload = {
@@ -96,6 +109,10 @@ class AuthApiTests(unittest.TestCase):
 
         token = base64.b64encode(f"{email}:{password}".encode("utf-8")).decode("ascii")
         return {"Authorization": f"Basic {token}"}
+
+    @staticmethod
+    def _bearer_headers(access_token: str) -> dict[str, str]:
+        return {"Authorization": "Bearer " + access_token}
 
     def test_routes_are_not_duplicated(self) -> None:
         paths = self.main_module.app.openapi()["paths"]
@@ -274,3 +291,38 @@ class AuthApiTests(unittest.TestCase):
 
         blocked = self._register("locked@example.com", "CorrectHorseBatteryStaple!", "Locked User", "beta", invite_code)
         self.assertEqual(blocked.status_code, 401)
+
+    def test_premium_trial_lifecycle(self) -> None:
+        """Trial starts on demand, grants Premium, cannot be restarted."""
+        email = self._unique_email()
+        reg = self._register(email, "CorrectHorseBatteryStaple!", "Trial User", "free")
+        self.assertEqual(reg.status_code, 201)
+        token = reg.json()["access_token"]
+        headers = self._bearer_headers(token)
+
+        # Trial not yet used — fields are falsy
+        me = self.client.get("/auth/me", headers=headers)
+        self.assertFalse(me.json()["premium_trial_used"])
+        self.assertIsNone(me.json()["premium_trial_started_at"])
+
+        # Start the trial
+        trial_resp = self.client.post("/auth/trial/start", headers=headers)
+        self.assertEqual(trial_resp.status_code, 200, trial_resp.text)
+        trial_user = trial_resp.json()
+        self.assertTrue(trial_user["premium_trial_used"])
+        self.assertIsNotNone(trial_user["premium_trial_started_at"])
+        self.assertIsNotNone(trial_user["premium_trial_ends_at"])
+        # Trial does not grant Premium Plus
+        self.assertNotEqual(trial_user["active_plan"], "premium_plus")
+
+        # Cannot start a second trial
+        second_trial = self.client.post("/auth/trial/start", headers=headers)
+        self.assertEqual(second_trial.status_code, 409)
+
+    def test_trial_requires_auth(self) -> None:
+        response = self.client.post("/auth/trial/start")
+        self.assertEqual(response.status_code, 401)
+
+    def test_routes_include_trial(self) -> None:
+        paths = self.main_module.app.openapi()["paths"]
+        self.assertIn("/auth/trial/start", paths)

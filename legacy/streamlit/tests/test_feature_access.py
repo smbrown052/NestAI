@@ -66,6 +66,25 @@ class TestFreePlanCapabilities:
     def test_can_use_basic_filters(self):
         assert fa.capability("can_use_basic_filters") is True
 
+    def test_can_compare_two_properties(self):
+        # Free plan now allows comparison (for up to 2 saved properties)
+        assert fa.capability("can_compare_multiple_properties") is True
+
+    def test_can_parse_apartments(self):
+        assert fa.capability("can_parse_apartments") is True
+
+    def test_can_parse_houses(self):
+        assert fa.capability("can_parse_houses") is True
+
+    def test_can_add_notes(self):
+        assert fa.capability("can_add_notes") is True
+
+    def test_can_use_ranking_table(self):
+        assert fa.capability("can_use_ranking_table") is True
+
+    def test_can_use_basic_decision_recommendation(self):
+        assert fa.capability("can_use_basic_decision_recommendation") is True
+
     def test_cannot_use_ai_chat(self):
         assert fa.capability("can_use_ai_chat") is False
 
@@ -75,17 +94,20 @@ class TestFreePlanCapabilities:
     def test_cannot_use_commute_analysis(self):
         assert fa.capability("can_use_commute_analysis") is False
 
-    def test_cannot_compare_multiple_properties(self):
-        assert fa.capability("can_compare_multiple_properties") is False
+    def test_cannot_use_saved_searches(self):
+        assert fa.capability("can_use_saved_searches") is False
+
+    def test_cannot_use_ai_negotiation(self):
+        assert fa.capability("can_use_ai_negotiation") is False
 
     def test_cannot_generate_ai_reports(self):
         assert fa.capability("can_generate_ai_reports") is False
 
-    def test_monthly_limit_is_5(self):
-        assert fa.get_quota("monthly_analyses_limit") == 5
+    def test_monthly_limit_is_10(self):
+        assert fa.get_quota("monthly_analyses_limit") == 10
 
-    def test_saved_property_limit_is_1(self):
-        assert fa.get_quota("saved_property_limit") == 1
+    def test_saved_property_limit_is_2(self):
+        assert fa.get_quota("saved_property_limit") == 2
 
 
 # ── Premium plan capabilities ─────────────────────────────────────────────────
@@ -161,14 +183,14 @@ class TestQuotaTracking:
         _reset()
 
     def test_initial_remaining_equals_limit(self):
-        assert fa.monthly_analyses_remaining() == 5
+        assert fa.monthly_analyses_remaining() == 10
 
     def test_consume_deducts_one(self):
         fa.consume_monthly_analysis()
-        assert fa.monthly_analyses_remaining() == 4
+        assert fa.monthly_analyses_remaining() == 9
 
     def test_cannot_consume_beyond_limit(self):
-        for _ in range(5):
+        for _ in range(10):
             fa.consume_monthly_analysis()
         result = fa.consume_monthly_analysis()
         assert result is False
@@ -185,11 +207,15 @@ class TestCanSave:
     def setup_method(self):
         _reset()
 
-    def test_free_can_save_when_zero_active(self):
+    def test_free_can_save_first_property(self):
         assert fa.can_save_another_property(0) is True
 
-    def test_free_cannot_save_when_one_active(self):
-        assert fa.can_save_another_property(1) is False
+    def test_free_can_save_second_property(self):
+        assert fa.can_save_another_property(1) is True
+
+    def test_free_cannot_save_third_property(self):
+        # Saving a 3rd active property is gated on Premium
+        assert fa.can_save_another_property(2) is False
 
     def test_premium_can_save_up_to_50(self):
         fa.set_plan(fa.PLAN_PREMIUM)
@@ -234,3 +260,117 @@ class TestLegacyShim:
 
     def test_commute_blocked_for_free(self):
         assert fa.has_feature("commute") is False
+
+
+# ── Trial status helper ───────────────────────────────────────────────────────
+
+class TestGetTrialStatus:
+    def setup_method(self):
+        _reset()
+
+    def test_no_user_returns_empty_trial(self):
+        status = fa.get_trial_status(None)
+        assert status["trial_used"] is False
+        assert status["trial_active"] is False
+        assert status["trial_expired"] is False
+
+    def test_trial_not_started(self):
+        user = {"premium_trial_used": False, "premium_trial_ends_at": None}
+        status = fa.get_trial_status(user)
+        assert status["trial_used"] is False
+        assert status["trial_active"] is False
+
+    def test_active_trial(self):
+        from datetime import datetime, timedelta, timezone
+        future = (datetime.now(timezone.utc) + timedelta(days=5)).isoformat()
+        user = {"premium_trial_used": True, "premium_trial_ends_at": future}
+        status = fa.get_trial_status(user)
+        assert status["trial_active"] is True
+        assert status["trial_expired"] is False
+        assert status["days_remaining"] >= 4  # timedelta.days is floor division
+
+    def test_expired_trial(self):
+        from datetime import datetime, timedelta, timezone
+        past = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+        user = {"premium_trial_used": True, "premium_trial_ends_at": past}
+        status = fa.get_trial_status(user)
+        assert status["trial_active"] is False
+        assert status["trial_expired"] is True
+
+    def test_active_trial_under_24h(self):
+        from datetime import datetime, timedelta, timezone
+        soon = (datetime.now(timezone.utc) + timedelta(hours=5)).isoformat()
+        user = {"premium_trial_used": True, "premium_trial_ends_at": soon}
+        status = fa.get_trial_status(user)
+        assert status["trial_active"] is True
+        assert status["hours_remaining"] is not None
+        assert status["hours_remaining"] <= 5
+
+
+# ── Effective plan with trial ─────────────────────────────────────────────────
+
+class TestEffectivePlanWithTrial:
+    def setup_method(self):
+        _reset()
+        # Ensure no dev/owner mode flags affect this test
+        import os
+        os.environ.pop("NESTAI_DEV_MODE", None)
+        os.environ.pop("NESTAI_OWNER_MODE", None)
+
+    def test_free_user_with_active_trial_gets_premium(self):
+        from datetime import datetime, timedelta, timezone
+        future = (datetime.now(timezone.utc) + timedelta(days=5)).isoformat()
+        user = {"premium_trial_used": True, "premium_trial_ends_at": future}
+        plan = fa.get_effective_plan_with_trial("free", user=user)
+        assert plan == fa.PLAN_PREMIUM
+
+    def test_free_user_with_expired_trial_stays_free(self):
+        from datetime import datetime, timedelta, timezone
+        past = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+        user = {"premium_trial_used": True, "premium_trial_ends_at": past}
+        plan = fa.get_effective_plan_with_trial("free", user=user)
+        assert plan == fa.PLAN_FREE
+
+    def test_premium_user_unaffected_by_trial(self):
+        plan = fa.get_effective_plan_with_trial("premium")
+        assert plan == fa.PLAN_PREMIUM
+
+    def test_no_trial_used_returns_free(self):
+        user = {"premium_trial_used": False, "premium_trial_ends_at": None}
+        plan = fa.get_effective_plan_with_trial("free", user=user)
+        assert plan == fa.PLAN_FREE
+
+    def test_active_trial_does_not_grant_premium_plus(self):
+        from datetime import datetime, timedelta, timezone
+        future = (datetime.now(timezone.utc) + timedelta(days=5)).isoformat()
+        user = {"premium_trial_used": True, "premium_trial_ends_at": future}
+        plan = fa.get_effective_plan_with_trial("free", user=user)
+        assert plan != fa.PLAN_PREMIUM_PLUS
+        assert plan == fa.PLAN_PREMIUM
+
+
+# ── Plan preview defaults ─────────────────────────────────────────────────────
+
+class TestPlanPreviewDefaults:
+    def setup_method(self):
+        _reset()
+        import os
+        os.environ.pop("NESTAI_DEV_MODE", None)
+        os.environ.pop("NESTAI_OWNER_MODE", None)
+        os.environ.pop("NESTAI_OWNER_EMAIL", None)
+
+    def test_default_plan_is_free_without_flags(self):
+        assert fa.get_plan() == fa.PLAN_FREE
+
+    def test_owner_test_not_accessible_without_env(self):
+        fa.set_plan(fa.PLAN_OWNER_TEST)
+        # Should be silently ignored when owner mode is not enabled
+        assert fa.get_plan() == fa.PLAN_FREE
+
+    def test_free_plan_allows_comparison(self):
+        assert fa.capability("can_compare_multiple_properties") is True
+
+    def test_free_plan_saves_up_to_2(self):
+        assert fa.can_save_another_property(0) is True
+        assert fa.can_save_another_property(1) is True
+        assert fa.can_save_another_property(2) is False

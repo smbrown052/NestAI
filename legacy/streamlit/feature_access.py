@@ -74,16 +74,25 @@ _CAPABILITIES: dict[str, dict[str, Any]] = {
     PLAN_FREE: {
         # Analyses
         "can_analyze_property": True,
-        "monthly_analyses_limit": 5,
-        # Saved properties
+        "monthly_analyses_limit": 10,
+        # Saved properties — Free allows 2 active properties
         "can_save_property": True,
-        "saved_property_limit": 1,          # one active saved property
+        "saved_property_limit": 2,
         "can_restore_archived_property": False,
-        # Comparison
-        "can_compare_multiple_properties": False,
-        # Filtering
+        # Comparison — Free can compare the 2 saved properties
+        "can_compare_multiple_properties": True,
+        # Filtering and sorting
         "can_use_basic_filters": True,
         "can_use_natural_language_filtering": False,
+        # Ranking
+        "can_use_ranking_table": True,
+        # Decision Recommendation
+        "can_use_basic_decision_recommendation": True,
+        # Notes
+        "can_add_notes": True,
+        # Parsing — Free gets apartment and house parsing
+        "can_parse_apartments": True,
+        "can_parse_houses": True,
         # AI features
         "can_use_lifestyle_score": False,
         "can_use_ai_explanations": False,
@@ -98,8 +107,12 @@ _CAPABILITIES: dict[str, dict[str, Any]] = {
         "can_use_ai_chat": False,
         # Exports
         "can_export": False,
-        # Negotiation
+        # Negotiation — Premium Plus only
         "can_use_ai_negotiation": False,
+        # Saved searches / alerts — Premium only
+        "can_use_saved_searches": False,
+        "can_use_new_listing_alerts": False,
+        "can_use_price_drop_alerts": False,
     },
     PLAN_PREMIUM: {
         "can_analyze_property": True,
@@ -110,6 +123,11 @@ _CAPABILITIES: dict[str, dict[str, Any]] = {
         "can_compare_multiple_properties": True,
         "can_use_basic_filters": True,
         "can_use_natural_language_filtering": True,
+        "can_use_ranking_table": True,
+        "can_use_basic_decision_recommendation": True,
+        "can_add_notes": True,
+        "can_parse_apartments": True,
+        "can_parse_houses": True,
         "can_use_lifestyle_score": True,
         "can_use_ai_explanations": True,
         "can_generate_ai_reports": True,
@@ -119,7 +137,10 @@ _CAPABILITIES: dict[str, dict[str, Any]] = {
         "can_use_walk_score_api": True,
         "can_use_ai_chat": True,
         "can_export": True,
-        "can_use_ai_negotiation": True,
+        "can_use_ai_negotiation": False,       # Premium Plus only
+        "can_use_saved_searches": True,
+        "can_use_new_listing_alerts": True,
+        "can_use_price_drop_alerts": True,
     },
     PLAN_PREMIUM_PLUS: {
         "can_analyze_property": True,
@@ -130,6 +151,11 @@ _CAPABILITIES: dict[str, dict[str, Any]] = {
         "can_compare_multiple_properties": True,
         "can_use_basic_filters": True,
         "can_use_natural_language_filtering": True,
+        "can_use_ranking_table": True,
+        "can_use_basic_decision_recommendation": True,
+        "can_add_notes": True,
+        "can_parse_apartments": True,
+        "can_parse_houses": True,
         "can_use_lifestyle_score": True,
         "can_use_ai_explanations": True,
         "can_generate_ai_reports": True,
@@ -140,6 +166,9 @@ _CAPABILITIES: dict[str, dict[str, Any]] = {
         "can_use_ai_chat": True,
         "can_export": True,
         "can_use_ai_negotiation": True,
+        "can_use_saved_searches": True,
+        "can_use_new_listing_alerts": True,
+        "can_use_price_drop_alerts": True,
     },
     PLAN_BETA: {
         # BETA grants Premium capabilities while active.
@@ -153,6 +182,11 @@ _CAPABILITIES: dict[str, dict[str, Any]] = {
         "can_compare_multiple_properties": True,
         "can_use_basic_filters": True,
         "can_use_natural_language_filtering": True,
+        "can_use_ranking_table": True,
+        "can_use_basic_decision_recommendation": True,
+        "can_add_notes": True,
+        "can_parse_apartments": True,
+        "can_parse_houses": True,
         "can_use_lifestyle_score": True,
         "can_use_ai_explanations": True,
         "can_generate_ai_reports": True,
@@ -163,6 +197,9 @@ _CAPABILITIES: dict[str, dict[str, Any]] = {
         "can_use_ai_chat": True,
         "can_export": True,
         "can_use_ai_negotiation": True,
+        "can_use_saved_searches": True,
+        "can_use_new_listing_alerts": True,
+        "can_use_price_drop_alerts": True,
     },
 }
 
@@ -192,7 +229,7 @@ _PLAN_INPUT_MAP = {
 
 # Feature → minimum plan required (for upgrade prompts)
 _FEATURE_REQUIRED_PLAN: dict[str, str] = {
-    "can_compare_multiple_properties": PLAN_PREMIUM,
+    # Comparison is Free (up to 2 properties); saving a 3rd requires Premium
     "can_restore_archived_property": PLAN_PREMIUM,
     "can_use_natural_language_filtering": PLAN_PREMIUM,
     "can_use_lifestyle_score": PLAN_PREMIUM,
@@ -204,7 +241,11 @@ _FEATURE_REQUIRED_PLAN: dict[str, str] = {
     "can_use_walk_score_api": PLAN_PREMIUM,
     "can_use_ai_chat": PLAN_PREMIUM,
     "can_export": PLAN_PREMIUM,
-    "can_use_ai_negotiation": PLAN_PREMIUM,
+    "can_use_saved_searches": PLAN_PREMIUM,
+    "can_use_new_listing_alerts": PLAN_PREMIUM,
+    "can_use_price_drop_alerts": PLAN_PREMIUM,
+    # Negotiation is Premium Plus only
+    "can_use_ai_negotiation": PLAN_PREMIUM_PLUS,
 }
 
 # ── Environment flag helpers ──────────────────────────────────────────────────
@@ -449,6 +490,104 @@ def can_save_another_property(current_active_count: int) -> bool:
     if limit is None:
         return True   # unlimited
     return current_active_count < limit
+
+
+# ── Premium trial helpers ─────────────────────────────────────────────────────
+
+def get_trial_status(user: dict | None = None) -> dict:
+    """Return a dict describing the current trial state.
+
+    The returned dict always has keys:
+        trial_used:    bool — whether the trial has ever been started
+        trial_active:  bool — trial is running right now
+        trial_expired: bool — trial was used and has now expired
+        ends_at:       datetime | None — UTC expiry time when active
+        days_remaining: int | None — whole days remaining (None if not active)
+        hours_remaining: int | None — hours remaining if < 24h left
+
+    ``user`` should be the dict from /auth/me (or session_state auth_user).
+    When running in dev mode, the trial state reflects session state only and
+    never modifies the backend.
+    """
+    from datetime import datetime, timezone
+
+    result: dict = {
+        "trial_used": False,
+        "trial_active": False,
+        "trial_expired": False,
+        "ends_at": None,
+        "days_remaining": None,
+        "hours_remaining": None,
+    }
+    if not user:
+        return result
+
+    trial_used = bool(user.get("premium_trial_used"))
+    result["trial_used"] = trial_used
+
+    ends_at_raw = user.get("premium_trial_ends_at")
+    if not ends_at_raw:
+        return result
+
+    if isinstance(ends_at_raw, str):
+        try:
+            from datetime import datetime
+            ends_at = datetime.fromisoformat(ends_at_raw)
+            if ends_at.tzinfo is None:
+                ends_at = ends_at.replace(tzinfo=timezone.utc)
+        except ValueError:
+            return result
+    else:
+        ends_at = ends_at_raw
+
+    result["ends_at"] = ends_at
+    now = datetime.now(timezone.utc)
+    if ends_at > now:
+        delta = ends_at - now
+        total_hours = int(delta.total_seconds() / 3600)
+        result["trial_active"] = True
+        result["days_remaining"] = delta.days
+        result["hours_remaining"] = total_hours if total_hours < 24 else None
+    else:
+        result["trial_expired"] = True
+
+    return result
+
+
+def get_effective_plan_with_trial(
+    backend_plan: str | None = None,
+    *,
+    user: dict | None = None,
+    beta_access: bool = False,
+) -> str:
+    """Like :func:`get_effective_plan` but also applies an active Premium trial.
+
+    In dev mode, preview plan is used (trial is NOT consumed/applied).
+    In production mode, if the user has an active trial and is on Free/no plan,
+    the effective plan is Premium for the duration of the trial.
+    """
+    _init()
+    # In dev/owner mode the preview plan is always authoritative
+    if is_dev_mode() or is_owner_mode_env():
+        return get_plan()
+
+    # Determine base plan from backend
+    base = normalize_plan_value(backend_plan, beta_access=beta_access)
+
+    # If base is already Premium or higher, trial is irrelevant
+    _premium_or_above = {PLAN_PREMIUM, PLAN_PREMIUM_PLUS, PLAN_BETA}
+    if base in _premium_or_above:
+        return base
+
+    # Check whether an active trial should elevate Free → Premium
+    trial = get_trial_status(user)
+    if trial["trial_active"]:
+        return PLAN_PREMIUM
+
+    return base
+
+
+# ── Legacy shim ───────────────────────────────────────────────────────────────
 
 
 def set_beta_overrides(overrides: dict) -> None:

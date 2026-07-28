@@ -222,26 +222,31 @@ class TestFreePlanRestrictions:
     def test_free_cannot_use_google_apis(self):
         assert fa.capability("can_use_google_apis") is False
 
-    def test_free_cannot_compare(self):
-        assert fa.capability("can_compare_multiple_properties") is False
+    def test_free_can_compare_two_properties(self):
+        # Free now allows comparison for up to 2 properties
+        assert fa.capability("can_compare_multiple_properties") is True
 
-    def test_free_analyses_quota_is_5(self):
-        assert fa.get_quota("monthly_analyses_limit") == 5
+    def test_free_analyses_quota_is_10(self):
+        assert fa.get_quota("monthly_analyses_limit") == 10
 
-    def test_free_saved_limit_is_1(self):
-        assert fa.get_quota("saved_property_limit") == 1
+    def test_free_saved_limit_is_2(self):
+        assert fa.get_quota("saved_property_limit") == 2
 
     def test_free_monthly_remaining_is_int(self):
         remaining = fa.monthly_analyses_remaining()
         assert isinstance(remaining, int)
 
-    def test_free_cannot_save_second_property(self):
-        assert fa.can_save_another_property(1) is False
+    def test_free_can_save_first_two_properties(self):
+        assert fa.can_save_another_property(0) is True
+        assert fa.can_save_another_property(1) is True
+
+    def test_free_cannot_save_third_property(self):
+        assert fa.can_save_another_property(2) is False
 
     def test_free_is_owner_test_returns_false(self):
         assert fa.is_owner_test() is False
 
-    def test_free_require_capability_returns_prompt(self):
+    def test_free_require_capability_returns_prompt_for_gated_feature(self):
         prompt = fa.require_capability("can_use_ai_chat")
         assert isinstance(prompt, fa.FeatureUpgradeRequired)
         assert not bool(prompt)
@@ -699,3 +704,24 @@ class TestPricingCardPlacement:
         _reset()
         _state["nestai_active_view"] = "homes"
         assert _state["nestai_active_view"] == "homes"
+
+
+# ── Dev plan selector uniqueness ─────────────────────────────────────────────
+
+class TestDevPlanSelectorUniqueness:
+    """Verify the dev_plan_selector widget key appears only once in plan_ui source."""
+    def test_only_one_dev_plan_selector_in_source(self):
+        import ast
+        from pathlib import Path
+        source = (Path(__file__).resolve().parent.parent / "plan_ui.py").read_text()
+        # Count occurrences of the key string in source
+        count = source.count('"dev_plan_selector"')
+        assert count == 1, f"Expected 1 occurrence of dev_plan_selector, found {count}"
+
+    def test_dev_plan_selector_not_in_app_py(self):
+        """The direct call was removed from app.py sidebar."""
+        from pathlib import Path
+        source = (Path(__file__).resolve().parent.parent / "app.py").read_text()
+        assert "_render_dev_plan_switcher" not in source, (
+            "_render_dev_plan_switcher should only be called from plan_ui.py"
+        )

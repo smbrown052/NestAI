@@ -36,6 +36,7 @@ from feature_access import (
     get_effective_plan,
     get_plan,
     get_quota,
+    get_trial_status,
     is_dev_mode,
     is_owner_mode_env,
     is_owner_test,
@@ -51,22 +52,22 @@ from ui_theme import plan_meta, tier_class
 # can never silently drift apart.
 
 PREMIUM_FEATURE_LABELS: list[str] = [
-    "Compare multiple properties side by side",
+    "Everything in Free, plus unlimited saved searches",
     "Richer recommendation cards and decision briefs",
     "Natural-language filtering and priority weighting",
     "Lifestyle Score with deeper tradeoff summaries",
     "AI recommendations, explanations, and reports",
     "Commute analysis and neighborhood intelligence",
-    "Exports, saved preferences, and negotiation help",
+    "Exports, new-listing alerts, and price-drop alerts",
     "100 analyses per month and up to 50 saved properties",
 ]
 
 PREMIUM_PLUS_EXTRA_LABELS: list[str] = [
-    "Advanced analytics panels and deeper comparison views",
-    "Exclusive report styling and highest-limit indicators",
-    "Higher AI, map, and commute limits (500 analyses/month)",
-    "Up to 200 saved properties and more report generations",
-    "Early access to new features",
+    "Negotiation Assistant and Renewal Advisor",
+    "True Monthly Cost and Advanced Deal Score",
+    "Premium AI Insights (exclusive section)",
+    "Early access to ownership and investment tools",
+    "Highest limits (500 analyses/month, 200 properties)",
     "Priority support and priority access to experiments",
 ]
 
@@ -106,16 +107,18 @@ PRICING_PLANS: list[dict] = [
         "description": PLAN_DESCRIPTIONS[PLAN_FREE],
         "eyebrow": "Essentials",
         "features": [
-            "5 property analyses per month",
-            "1 active saved property",
-            "Apartment and home listing parsing",
-            "Basic filters, ranking, and saved preferences",
-            "Intentional feature previews with upgrade guidance",
+            "Up to 2 active saved properties",
+            "Full side-by-side comparison for those 2 properties",
+            "Manual filtering and sorting",
+            "Basic ranking and Decision Recommendation",
+            "Notes on any saved property",
+            "Apartment and house listing parsing",
         ],
         "not_included": [
-            "Commute-aware rankings and neighborhood enrichment",
+            "Saving a 3rd active property (upgrade required)",
+            "Saved searches and new-listing / price-drop alerts",
+            "Commute analysis and neighborhood enrichment",
             "Decision briefs, AI reports, and exports",
-            "Multi-property side-by-side comparison",
             "Advanced AI insights and negotiation tools",
         ],
         "cta_label": "Create Free Account",
@@ -176,6 +179,73 @@ def get_pricing_plans() -> list[dict]:
     return PRICING_PLANS
 
 
+# ── Trial UI helpers ──────────────────────────────────────────────────────────
+
+def render_trial_status_banner(user: dict | None = None) -> None:
+    """Render the trial status banner.
+
+    Shows trial status depending on state:
+    - Active:   "Premium trial active — X days remaining" (or hours if < 24h)
+    - Expired:  "Your Premium trial has ended."
+    - Eligible: "Try Premium free for 7 days" button
+    - Used+paid: nothing (paid plan takes precedence)
+    """
+    from feature_access import get_trial_status
+    trial = get_trial_status(user)
+
+    if trial["trial_active"]:
+        hours_remaining = trial["hours_remaining"]
+        days_remaining = trial["days_remaining"]
+        if hours_remaining is not None:
+            st.info(f"⏳ Premium trial ends in **{hours_remaining} hour{'s' if hours_remaining != 1 else ''}**")
+        else:
+            st.info(f"✅ Premium trial active — **{days_remaining} day{'s' if days_remaining != 1 else ''} remaining**")
+    elif trial["trial_expired"]:
+        st.warning("Your Premium trial has ended. Upgrade to keep Premium features.")
+    elif not trial["trial_used"]:
+        if st.button(
+            "🎁 Try Premium free for 7 days",
+            key="trial_start_banner_btn",
+            use_container_width=True,
+            type="secondary",
+        ):
+            st.session_state["nestai_start_trial_requested"] = True
+            st.rerun()
+
+
+def _render_trial_prompt_inline() -> None:
+    """Render a compact trial prompt for the sidebar.
+
+    Shows trial button only when it hasn't been used yet.
+    Does nothing when NESTAI_DEV_MODE is active (preview doesn't consume trial).
+    """
+    if is_dev_mode() or is_owner_mode_env():
+        return
+    user = st.session_state.get("auth_user")
+    if not user:
+        return
+    from feature_access import get_trial_status
+    trial = get_trial_status(user)
+
+    if trial["trial_active"]:
+        hours_remaining = trial["hours_remaining"]
+        days_remaining = trial["days_remaining"]
+        if hours_remaining is not None:
+            st.caption(f"⏳ Trial ends in {hours_remaining}h")
+        else:
+            st.caption(f"✅ Premium trial: {days_remaining}d remaining")
+    elif trial["trial_expired"]:
+        st.caption("Trial ended — upgrade to keep Premium features")
+    elif not trial["trial_used"]:
+        if st.button(
+            "🎁 Try Premium free for 7 days",
+            key="sidebar_trial_btn",
+            use_container_width=True,
+        ):
+            st.session_state["nestai_start_trial_requested"] = True
+            st.rerun()
+
+
 # ── Navigation helper ─────────────────────────────────────────────────────────
 
 def navigate_to_plans(highlight_plan: str | None = None) -> None:
@@ -214,17 +284,8 @@ def render_plan_sidebar() -> None:
     plan = get_plan()
 
     # ── DEV MODE diagnostic banner ────────────────────────────────────────────
-    # Visible only when NESTAI_DEV_MODE=true.  Shows the env flag is active and
-    # which plan values are currently effective so the dev preview is easy to
-    # verify at a glance.  Remove or gate behind is_dev_mode() before release.
     if is_dev_mode() or is_owner_mode_env():
-        effective = get_effective_plan()
-        preview = get_plan()
-        st.error(
-            f"🛠 **DEV MODE ENABLED**  \n"
-            f"Effective plan: `{effective}`  \n"
-            f"Preview plan:   `{preview}`"
-        )
+        _render_dev_diagnostics()
 
     # ── Owner Test Mode ───────────────────────────────────────────────────────
     if is_owner_test():
@@ -291,6 +352,8 @@ def render_plan_sidebar() -> None:
     saved_limit = get_quota("saved_property_limit")
     if saved_limit is None:
         st.caption("Saved properties: **Unlimited**")
+    elif saved_limit == 2:
+        st.caption("Active saved properties: up to **2** (Free)")
     elif saved_limit == 1:
         st.caption("Active saved properties: up to **1**")
     else:
@@ -316,6 +379,9 @@ def render_plan_sidebar() -> None:
         navigate_to_plans()
 
     if plan == PLAN_FREE:
+        # ── Trial prompt ─────────────────────────────────────────────────────
+        _render_trial_prompt_inline()
+
         if st.button(
             "⬆️ Upgrade",
             use_container_width=True,
@@ -345,6 +411,38 @@ def _render_owner_usage() -> None:
     st.caption("AI requests: **Unlimited**")
     st.caption("Map requests: **Unlimited**")
     st.divider()
+
+
+def _render_dev_diagnostics() -> None:
+    """Render the compact developer diagnostics panel.
+
+    Visible only when NESTAI_DEV_MODE=true or NESTAI_OWNER_MODE=true.
+    Shows resolved API URL, API health, auth state, and plan info.
+    Never shows passwords, JWT values, database credentials, or Stripe secrets.
+    """
+    from auth_service import get_api_base_url
+    import streamlit as st
+
+    api_url = get_api_base_url() or "Not configured"
+    api_available = st.session_state.get("api_available", None)
+    is_authed = bool(st.session_state.get("auth_token"))
+    user = st.session_state.get("auth_user") or {}
+    effective = get_effective_plan()
+    preview = get_plan()
+    backend_plan = user.get("active_plan", "—") if user else "—"
+
+    with st.expander("🛠 Dev Diagnostics", expanded=False):
+        st.caption("_Developer-only — hidden in production_")
+        st.markdown(
+            f"**API URL:** `{api_url}`  \n"
+            f"**API health:** {'✅ online' if api_available is True else '❌ offline' if api_available is False else '🔲 unchecked'}  \n"
+            f"**Auth:** {'✅ authenticated' if is_authed else '🔲 anonymous'}  \n"
+            f"**Backend plan:** `{backend_plan}`  \n"
+            f"**Effective preview plan:** `{effective}`  \n"
+            f"**Session preview plan:** `{preview}`"
+        )
+        if not api_available and api_available is False:
+            st.warning("Local account services are unavailable. Start FastAPI on port 8001.")
 
 
 # ── Dev-only plan switcher ────────────────────────────────────────────────────
@@ -512,6 +610,24 @@ def _render_plan_card(card: dict, is_current: bool, highlighted: bool = False) -
             st.session_state.nestai_upgrade_intent = PLAN_PREMIUM
             st.session_state.nestai_highlight_plan = None
             st.rerun()
+        # Show trial button on Premium card for eligible users
+        user = st.session_state.get("auth_user")
+        if user:
+            from feature_access import get_trial_status
+            trial = get_trial_status(user)
+            if not trial["trial_used"] and get_plan() == PLAN_FREE:
+                if st.button(
+                    "🎁 Try Premium free for 7 days",
+                    use_container_width=True,
+                    key=f"plan_trial_cta_{plan_id}",
+                ):
+                    st.session_state["nestai_start_trial_requested"] = True
+                    st.rerun()
+            elif trial["trial_active"]:
+                days_remaining = trial.get("days_remaining", 0)
+                st.caption(f"✅ Trial active — {days_remaining}d remaining")
+            elif trial["trial_expired"]:
+                st.caption("Trial ended")
     elif plan_id == PLAN_PREMIUM_PLUS:
         if st.button(
             card.get("cta_label", "Choose Premium Plus"),
@@ -621,3 +737,20 @@ def render_upgrade_prompt(feature: str, feature_label: str = "") -> None:
             key=f"upgrade_prompt_{feature}_plus",
         ):
             navigate_to_plans(highlight_plan=PLAN_PREMIUM_PLUS)
+
+    # Show the trial CTA if the user hasn't tried yet
+    user = st.session_state.get("auth_user")
+    if user:
+        from feature_access import get_trial_status
+        trial = get_trial_status(user)
+        if not trial["trial_used"]:
+            st.markdown("---")
+            if st.button(
+                "🎁 Try Premium free for 7 days",
+                use_container_width=True,
+                key=f"upgrade_prompt_{feature}_trial",
+            ):
+                st.session_state["nestai_start_trial_requested"] = True
+                st.rerun()
+        elif trial["trial_expired"]:
+            st.caption("Your Premium trial has ended. Upgrade to continue.")
