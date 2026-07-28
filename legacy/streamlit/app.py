@@ -51,9 +51,9 @@ except Exception:
         raise
 from credits import get_tier, has_feature, can_enrich_building, consume_analysis, analyses_remaining
 from cache import get_geocode, _address_key
-from feedback import submit_feedback, send_feedback_email, validate_beta_code
-from feature_access import get_quota, get_plan
-from plan_ui import render_pricing_cards, render_upgrade_prompt
+from feedback import submit_feedback, send_feedback_email
+from feature_access import get_effective_plan, get_quota, get_plan
+from plan_ui import render_plan_sidebar, render_pricing_cards, render_upgrade_prompt
 from ui_state import get_account_type_options, get_navigation_options, plan_display_name
 from ui_theme import feature_pill, inject_global_styles, metric_card_html, normalize_plan, render_badge, tier_class
 from auth_service import (
@@ -155,12 +155,23 @@ def render_lifestyle_profile_controls() -> None:
 
 def current_visual_tier(user: dict | None = None) -> str:
     if user:
-        if user.get("beta_access") and not user.get("active_plan"):
-            return "beta"
-        return normalize_plan(user.get("active_plan") or user.get("tier") or get_plan() or get_tier())
+        effective_plan = get_effective_plan(
+            user.get("active_plan") or user.get("tier"),
+            beta_access=bool(user.get("beta_access") and not user.get("active_plan")),
+        )
+        return normalize_plan(effective_plan)
     if st.session_state.get("beta_tester") and normalize_plan(get_plan()) == "free":
         return "beta"
     return normalize_plan(get_plan() or get_tier())
+
+
+def current_effective_plan_key(user: dict | None = None) -> str:
+    if user:
+        return get_effective_plan(
+            user.get("active_plan") or user.get("tier"),
+            beta_access=bool(user.get("beta_access") and not user.get("active_plan")),
+        )
+    return get_effective_plan()
 
 
 def compact_recommendation(row: pd.Series, ranked_df: pd.DataFrame) -> tuple[list[str], str]:
@@ -360,33 +371,17 @@ with st.sidebar:
     st.markdown("## 🧭 Workspace")
     if auth.is_authenticated():
         user_preview = auth.user() or {}
+        effective_plan = current_effective_plan_key(user_preview)
+        plan_slug = normalize_plan(effective_plan)
         st.caption(f"Signed in as {user_preview.get('display_name') or user_preview.get('email')}")
-        st.caption(f"Plan: {user_preview.get('active_plan') or user_preview.get('tier', 'free')}")
+        st.caption(f"Plan: {plan_display_name(plan_slug)}")
         st.caption(f"Saved units: {len(st.session_state.comparison_df)}")
         if user_preview.get("subscription_status") == "pending_payment":
             st.warning(payment_required_message(user_preview.get("requested_plan") or user_preview.get("active_plan", "premium")))
     else:
         st.caption("Sign in from the Account tab to save comparisons and access private features.")
         st.caption("Use Profile, Login, or Create Account from the top navigation.")
-
-    # ── Beta Access ─────────────────────────────────────────────────────────
-    with st.expander("🔬 Beta Access", expanded=False):
-        if st.session_state.beta_tester:
-            st.success("✅ Beta features unlocked!")
-        else:
-            beta_code_input = st.text_input(
-                "Enter invite code",
-                placeholder="e.g. NEST-BETA-2025",
-                type="password",
-                key="beta_code_input",
-            )
-            if st.button("Activate Beta Access", use_container_width=True):
-                if validate_beta_code(beta_code_input):
-                    st.session_state.beta_tester = True
-                    st.success("✅ Beta access activated!")
-                    st.rerun()
-                else:
-                    st.error("Invalid invite code.")
+    render_plan_sidebar()
 
     st.divider()
 
@@ -501,6 +496,8 @@ with st.sidebar:
 if active_screen == "Profile":
     if auth.is_authenticated():
         user = auth.user() or {}
+        effective_plan = current_effective_plan_key(user)
+        effective_plan_slug = normalize_plan(effective_plan)
         visual_tier = current_visual_tier(user)
         st.markdown("### Account Dashboard")
         render_badge(visual_tier, icon="✦")
@@ -510,7 +507,7 @@ if active_screen == "Profile":
                 "<div class='nestai-eyebrow'>Profile</div>"
                 f"<h3>{html_escape(user.get('display_name') or 'NestAI Member')}</h3>"
                 f"<p class='nestai-section-note'>{html_escape(user.get('email') or '—')}</p>"
-                f"<p class='nestai-subtle'>Your active tier is <strong>{html_escape(plan_display_name(user.get('active_plan') or user.get('tier', 'free')))}</strong>. "
+                f"<p class='nestai-subtle'>Your active tier is <strong>{html_escape(plan_display_name(effective_plan_slug))}</strong>. "
                 "This dashboard keeps your plan status, limits, and unlocked value visible in one place.</p>"
                 "</div>"
             ),
@@ -519,10 +516,10 @@ if active_screen == "Profile":
 
         quota = get_quota("monthly_analyses_limit")
         saved_limit = get_quota("saved_property_limit")
-        payment_status = "Pending" if user.get("subscription_status") == "pending_payment" else ("Paid" if user.get("active_plan") in {"premium", "premium_plus"} else "Not required")
+        payment_status = "Pending" if user.get("subscription_status") == "pending_payment" else ("Paid" if effective_plan_slug in {"premium", "premium_plus"} else "Not required")
         saved_buildings = st.session_state.comparison_df["property"].nunique() if not st.session_state.comparison_df.empty and "property" in st.session_state.comparison_df.columns else 0
         usage_cards = [
-            ("Active Tier", plan_display_name(user.get("active_plan") or user.get("tier", "free")), user.get("subscription_status") or "active"),
+            ("Active Tier", plan_display_name(effective_plan_slug), user.get("subscription_status") or "active"),
             ("Usage Summary", f"{analyses_remaining() if analyses_remaining() is not None else 'Unlimited'} analyses left", f"Limit: {quota if quota is not None else 'Unlimited'}"),
             ("Saved Properties", str(len(st.session_state.comparison_df)), f"Buildings tracked: {saved_buildings}"),
             ("Current Limits", f"{saved_limit if saved_limit is not None else 'Unlimited'} saved", "Tier-aware limits and insights"),
@@ -556,7 +553,7 @@ if active_screen == "Profile":
             (
                 f"<div class='nestai-profile-card {tier_class(visual_tier)}'>"
                 "<div class='nestai-eyebrow'>Unlocked features</div>"
-                f"<h3>{html_escape(plan_meta := plan_display_name(user.get('active_plan') or user.get('tier', 'free')))}</h3>"
+                f"<h3>{html_escape(plan_meta := plan_display_name(effective_plan_slug))}</h3>"
                 f"<p class='nestai-section-note'>{' '.join(feature_pill(item, 'premium' if visual_tier in {'premium', 'premium_plus'} else 'default') for item in unlocked)}</p>"
                 "<p class='nestai-subtle'>Premium and Premium Plus expand the presentation, not just the buttons you can click.</p>"
                 "</div>"

@@ -25,7 +25,7 @@ Plans:
     OWNER_TEST    — dev/owner only; unlimited everything; never shown on pricing page
 
 Environment flags:
-    NESTAI_OWNER_MODE=true  — forces OWNER_TEST plan on every run
+    NESTAI_OWNER_MODE=true  — enables OWNER_TEST preview (session starts there)
     NESTAI_DEV_MODE=true    — enables the in-app development plan switcher
 
 Usage::
@@ -176,6 +176,20 @@ _PLAN_LABELS = {
     PLAN_OWNER_TEST: "Owner Test",
 }
 
+# Plan value normalization for backend/session inputs
+_PLAN_INPUT_MAP = {
+    "free": PLAN_FREE,
+    "plan_free": PLAN_FREE,
+    "premium": PLAN_PREMIUM,
+    "plan_premium": PLAN_PREMIUM,
+    "premium_plus": PLAN_PREMIUM_PLUS,
+    "plan_premium_plus": PLAN_PREMIUM_PLUS,
+    "beta": PLAN_BETA,
+    "plan_beta": PLAN_BETA,
+    "owner_test": PLAN_OWNER_TEST,
+    "plan_owner_test": PLAN_OWNER_TEST,
+}
+
 # Feature → minimum plan required (for upgrade prompts)
 _FEATURE_REQUIRED_PLAN: dict[str, str] = {
     "can_compare_multiple_properties": PLAN_PREMIUM,
@@ -198,8 +212,8 @@ _FEATURE_REQUIRED_PLAN: dict[str, str] = {
 def is_owner_mode_env() -> bool:
     """Return True when NESTAI_OWNER_MODE=true is set in the environment.
 
-    When active, the plan is forced to OWNER_TEST on every run.
-    This cannot be overridden by session state.
+    When active, OWNER_TEST is allowed in the dev preview switcher and is used
+    as the initial preview plan for the session.
     """
     return os.environ.get("NESTAI_OWNER_MODE", "").lower() in ("1", "true", "yes")
 
@@ -238,6 +252,7 @@ _DEFAULTS: dict[str, Any] = {
     "nestai_role": ROLE_USER,
     "nestai_analyses_used_month": 0,
     "nestai_beta_overrides": {},        # dict of capability overrides for BETA
+    "nestai_owner_mode_initialized": False,
 }
 
 
@@ -246,12 +261,13 @@ def _init() -> None:
         if k not in st.session_state:
             st.session_state[k] = v
 
-    # ── Owner mode: env var always wins, re-applied on every run ──────────
-    # NESTAI_OWNER_MODE=true forces OWNER_TEST regardless of session state.
-    if is_owner_mode_env():
+    # ── Owner mode default (session-local) ─────────────────────────────────
+    # First run with owner mode starts in OWNER_TEST, but developers can still
+    # switch to other plans in the preview control for full UI testing.
+    if is_owner_mode_env() and not bool(st.session_state.get("nestai_owner_mode_initialized")):
         st.session_state.nestai_plan = PLAN_OWNER_TEST
         st.session_state.nestai_tier = "premium"   # keep credits.py happy
-        return
+        st.session_state.nestai_owner_mode_initialized = True
 
     # ── Backwards compatibility with credits.py ────────────────────────────
     # credits.py stores plan in `nestai_tier` ("free"/"premium").
@@ -271,6 +287,31 @@ def get_plan() -> str:
     """Return the current user's plan (FREE / PREMIUM / PREMIUM_PLUS / BETA)."""
     _init()
     return st.session_state.nestai_plan
+
+
+def normalize_plan_value(plan: str | None, *, beta_access: bool = False) -> str:
+    """Normalize backend/session plan values to canonical constants."""
+    raw = (plan or "").strip().lower().replace("-", "_").replace(" ", "_")
+    mapped = _PLAN_INPUT_MAP.get(raw)
+    if mapped:
+        return mapped
+    if beta_access:
+        return PLAN_BETA
+    return PLAN_FREE
+
+
+def get_effective_plan(backend_plan: str | None = None, *, beta_access: bool = False) -> str:
+    """Return the plan the UI should render for this session.
+
+    - Production mode (no dev/owner flag): backend plan is authoritative
+    - Dev/owner mode: session preview plan is authoritative
+    """
+    _init()
+    if is_dev_mode() or is_owner_mode_env():
+        return get_plan()
+    if backend_plan is not None or beta_access:
+        return normalize_plan_value(backend_plan, beta_access=beta_access)
+    return get_plan()
 
 
 def get_role() -> str:
