@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import os
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -29,6 +30,18 @@ from .schemas import AccessTokenResponse, AuthUserRead, LoginRequest, RegisterRe
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+_PREMIUM_TRIAL_DAYS = 7
+
+
+def _owner_email() -> str | None:
+    """Return the configured owner email, normalised to lowercase."""
+    raw = os.getenv("NESTAI_OWNER_EMAIL", "").strip()
+    return raw.lower() or None
+
+
+def _normalize_email(email: str) -> str:
+    return email.strip().lower()
+
 
 def _serialize_user(user: User) -> AuthUserRead:
     selected_account_type = requested_plan(user) or current_plan(user)
@@ -47,6 +60,9 @@ def _serialize_user(user: User) -> AuthUserRead:
         beta_access=bool(user.beta_tester),
         is_admin=user.is_admin,
         is_active=user.is_active,
+        premium_trial_started_at=user.premium_trial_started_at,
+        premium_trial_ends_at=user.premium_trial_ends_at,
+        premium_trial_used=bool(user.premium_trial_used),
     )
 
 
@@ -68,25 +84,35 @@ def _find_valid_beta_access(db: Session, invite_code: str, email: str) -> BetaAc
 
 @router.post("/register", status_code=status.HTTP_201_CREATED)
 def register_user(payload: RegisterRequest, db: Session = Depends(get_db)):
+    normalized_email = _normalize_email(str(payload.email))
     account_type = normalize_plan(payload.account_type)
     if not is_valid_plan(account_type):
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid account type")
 
-    existing = db.query(User).filter(User.email == payload.email).first()
+    existing = db.query(User).filter(User.email == normalized_email).first()
     if existing:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
 
+    owner_email = _owner_email()
+    is_owner = bool(owner_email and normalized_email == owner_email)
+
+    display_name = None
+    if payload.display_name:
+        stripped = payload.display_name.strip()
+        display_name = stripped or None
+
     user = User(
-        email=payload.email,
+        email=normalized_email,
         hashed_password=hash_password(payload.password),
-        display_name=payload.display_name.strip() or None,
+        display_name=display_name,
         is_active=True,
-        is_admin=False,
+        is_admin=is_owner,
         tier=FREE_PLAN,
         active_plan=FREE_PLAN,
         requested_plan=None,
         subscription_status="active",
         beta_tester=False,
+        premium_trial_used=False,
     )
 
     checkout_session_info = None
@@ -95,7 +121,7 @@ def register_user(payload: RegisterRequest, db: Session = Depends(get_db)):
     elif account_type == BETA_PLAN:
         if not payload.beta_invite_code:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Beta invite code required")
-        beta_access = _find_valid_beta_access(db, payload.beta_invite_code, payload.email)
+        beta_access = _find_valid_beta_access(db, payload.beta_invite_code, normalized_email)
         if not beta_access:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid beta invite code")
         beta_access.use_count += 1
@@ -140,7 +166,8 @@ def register_user(payload: RegisterRequest, db: Session = Depends(get_db)):
 
 @router.post("/login", response_model=AccessTokenResponse)
 def login_user(payload: LoginRequest, db: Session = Depends(get_db)) -> AccessTokenResponse:
-    user = db.query(User).filter(User.email == payload.email).first()
+    normalized_email = _normalize_email(str(payload.email))
+    user = db.query(User).filter(User.email == normalized_email).first()
     if not user or not verify_password(payload.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -156,4 +183,33 @@ def login_user(payload: LoginRequest, db: Session = Depends(get_db)) -> AccessTo
 
 @router.get("/me", response_model=AuthUserRead)
 def read_current_user(current_user: User = Depends(get_current_user)) -> AuthUserRead:
+    return _serialize_user(current_user)
+
+
+@router.post("/trial/start", response_model=AuthUserRead)
+def start_premium_trial(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> AuthUserRead:
+    """Start a one-time 7-day Premium trial.
+
+    Rules:
+    - One trial per user account; cannot be restarted.
+    - Does not grant Premium Plus.
+    - After expiry the user's actual paid plan (or Free) takes effect.
+    - If the user already has a paid Premium/Premium Plus plan the trial
+      is unnecessary but can still be recorded (no-op if already on paid plan).
+    """
+    if current_user.premium_trial_used:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Premium trial has already been used",
+        )
+
+    now = datetime.now(timezone.utc)
+    current_user.premium_trial_started_at = now
+    current_user.premium_trial_ends_at = now + timedelta(days=_PREMIUM_TRIAL_DAYS)
+    current_user.premium_trial_used = True
+    db.commit()
+    db.refresh(current_user)
     return _serialize_user(current_user)

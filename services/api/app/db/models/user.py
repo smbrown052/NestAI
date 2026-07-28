@@ -30,6 +30,10 @@ class User(Base):
     payment_subscription_id: Mapped[str | None] = mapped_column(String(255))
     beta_tester: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     beta_approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # 7-day Premium trial — one per account, server-side, not session-scoped
+    premium_trial_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    premium_trial_ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    premium_trial_used: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     notes: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, nullable=False

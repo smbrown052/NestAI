@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field
 class RegisterRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
-    display_name: str = Field(min_length=1, max_length=120)
+    display_name: str | None = Field(default=None, max_length=120)
     account_type: str = Field(default="free")
     beta_invite_code: str | None = None
 
@@ -37,6 +37,10 @@ class AuthUserRead(BaseModel):
     beta_access: bool = False
     is_admin: bool
     is_active: bool
+    # 7-day Premium trial state
+    premium_trial_started_at: datetime | None = None
+    premium_trial_ends_at: datetime | None = None
+    premium_trial_used: bool = False
 
 
 class AccessTokenResponse(BaseModel):
