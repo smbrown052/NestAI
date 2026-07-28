@@ -15,6 +15,8 @@ AI chat / Decision Reports do NOT consume credits once the building is already e
 
 from __future__ import annotations
 
+import os
+
 import streamlit as st
 
 # ── Tier definitions ──────────────────────────────────────────────────────────
@@ -55,7 +57,7 @@ TIERS: dict[str, dict] = {
     },
     "premium_plus": {
         "label": "Premium Plus",
-        "analyses": 150,
+        "analyses": None,
         "ai_chat": True,
         "walk_score": True,
         "commute": True,
@@ -108,14 +110,23 @@ def analyses_used() -> int:
     return st.session_state.nestai_analyses_used
 
 
-def analyses_limit() -> int:
+def _is_owner_mode() -> bool:
+    return os.environ.get("NESTAI_OWNER_MODE", "").lower() in ("1", "true", "yes")
+
+
+def analyses_limit():
     _init()
     tier = TIERS[get_tier()]
+    if tier["analyses"] is None:
+        return None
     return tier["analyses"] + st.session_state.nestai_extra_credits
 
 
-def analyses_remaining() -> int:
-    return max(0, analyses_limit() - analyses_used())
+def analyses_remaining():
+    limit = analyses_limit()
+    if limit is None:
+        return None
+    return max(0, limit - analyses_used())
 
 
 def has_feature(feature: str) -> bool:
@@ -124,7 +135,10 @@ def has_feature(feature: str) -> bool:
 
     Always returns True for 'parse' (parsing is always free).
     Returns True for paid features only on premium tier.
+    Bypasses tier checks when NESTAI_OWNER_MODE is active.
     """
+    if _is_owner_mode():
+        return True
     _init()
     if feature == "parse":
         return True
@@ -139,7 +153,8 @@ def can_enrich_building(building_id: str) -> bool:
     _init()
     if building_id in st.session_state.nestai_enriched_buildings:
         return True  # already paid for this session
-    return analyses_remaining() > 0
+    remaining = analyses_remaining()
+    return remaining is None or remaining > 0
 
 
 def consume_analysis(building_id: str) -> bool:
@@ -151,9 +166,11 @@ def consume_analysis(building_id: str) -> bool:
     _init()
     if building_id in st.session_state.nestai_enriched_buildings:
         return True  # already enriched, no charge
-    if analyses_remaining() <= 0:
+    remaining = analyses_remaining()
+    if remaining is not None and remaining <= 0:
         return False
-    st.session_state.nestai_analyses_used += 1
+    if remaining is not None:
+        st.session_state.nestai_analyses_used += 1
     st.session_state.nestai_enriched_buildings.add(building_id)
     return True
 

@@ -69,6 +69,105 @@ from auth_service import (
 )
 
 st.set_page_config(page_title="NestAI", page_icon="🏠", layout="wide")
+
+# ── Premium visual design ──────────────────────────────────────────────────────
+st.markdown(
+    """
+<style>
+/* ── Global typography ───────────────────────────────────── */
+html, body, [class*="css"] {
+    font-family: 'Inter', 'Segoe UI', sans-serif;
+}
+
+/* ── Decision Recommendation banner ─────────────────────── */
+.nestai-decision-banner {
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 60%, #0f3460 100%);
+    border-radius: 14px;
+    padding: 28px 32px;
+    margin: 18px 0 24px 0;
+    border-left: 5px solid #e94560;
+    box-shadow: 0 4px 20px rgba(233, 69, 96, 0.18);
+}
+.nestai-decision-banner h2 {
+    color: #fff;
+    margin-bottom: 4px;
+    font-size: 1.45em;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+}
+.nestai-decision-banner .subtitle {
+    color: #a8b2d8;
+    font-size: 0.92em;
+    margin-bottom: 18px;
+}
+.nestai-decision-pick {
+    font-size: 1.15em;
+    font-weight: 600;
+    color: #e2e8f0;
+    margin-bottom: 6px;
+}
+.nestai-decision-reason {
+    color: #a8b2d8;
+    font-size: 0.9em;
+    line-height: 1.6;
+}
+.nestai-score-pill {
+    display: inline-block;
+    background: #e94560;
+    color: #fff;
+    border-radius: 20px;
+    padding: 2px 14px;
+    font-size: 0.88em;
+    font-weight: 700;
+    margin-left: 10px;
+    vertical-align: middle;
+}
+
+/* ── Ranking card row ────────────────────────────────────── */
+.nestai-rank-card {
+    border-radius: 12px;
+    padding: 18px 22px;
+    margin-bottom: 12px;
+    border: 1.5px solid #e2e8f0;
+    background: #fafbff;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+    transition: box-shadow .2s;
+}
+.nestai-rank-card:hover { box-shadow: 0 4px 18px rgba(0,0,0,0.09); }
+.nestai-rank-1 { border-left: 4px solid #e94560; background: #fff8f9; }
+.nestai-rank-2 { border-left: 4px solid #f6a623; }
+.nestai-rank-3 { border-left: 4px solid #4a90d9; }
+.nestai-rank-label { font-size: 0.75em; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 1px; color: #888; margin-bottom: 2px; }
+.nestai-rank-title { font-size: 1.08em; font-weight: 700; color: #1a1a2e; }
+.nestai-rank-meta { font-size: 0.88em; color: #555; margin-top: 4px; }
+.nestai-price-highlight { font-size: 1.12em; font-weight: 700; color: #1a1a2e; }
+.nestai-price-vs-avg { font-size: 0.8em; font-weight: 500; padding: 1px 8px;
+    border-radius: 10px; margin-left: 8px; display: inline-block; }
+.nestai-above-avg { background: #fff3f5; color: #c0392b; }
+.nestai-below-avg { background: #f0fff4; color: #27ae60; }
+.nestai-at-avg    { background: #f5f5f5; color: #555; }
+
+/* ── Sidebar locked features ─────────────────────────────── */
+.nestai-locked-feature { opacity: 0.6; font-size: 0.85em; }
+
+/* ── Premium Plus accent ─────────────────────────────────── */
+.nestai-pp-banner {
+    background: linear-gradient(135deg, #7B2FBE 0%, #5a23a0 100%);
+    color: #fff;
+    border-radius: 8px;
+    padding: 6px 14px;
+    font-size: 0.85em;
+    font-weight: 700;
+    display: inline-block;
+    margin-bottom: 8px;
+    letter-spacing: 0.5px;
+}
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
 st.title("🏠 NestAI")
 st.markdown("### Find *your* nest.")
 
@@ -91,6 +190,38 @@ def openai_configured() -> bool:
         return False
 
 
+def _commute_descriptor(minutes) -> str:
+    """Return a human-readable commute descriptor from a minute value."""
+    try:
+        m = int(minutes)
+    except (TypeError, ValueError):
+        return "—"
+    if m <= 10:
+        return f"{m} min · Excellent"
+    if m <= 20:
+        return f"{m} min · Great"
+    if m <= 30:
+        return f"{m} min · Good"
+    if m <= 45:
+        return f"{m} min · Manageable"
+    return f"{m} min · Long"
+
+
+def _safety_descriptor(score) -> str:
+    """Return a human-readable safety descriptor from a 0–100 score."""
+    try:
+        s = float(score)
+    except (TypeError, ValueError):
+        return "—"
+    if s >= 80:
+        return f"{s:.0f}/100 · Very Safe"
+    if s >= 65:
+        return f"{s:.0f}/100 · Safe"
+    if s >= 45:
+        return f"{s:.0f}/100 · Moderate"
+    return f"{s:.0f}/100 · Exercise Caution"
+
+
 def get_priority_rank(priority_name: str, weights: dict) -> str:
     sorted_priorities = sorted(weights.items(), key=lambda item: item[1], reverse=True)
     position = next(
@@ -101,11 +232,9 @@ def get_priority_rank(priority_name: str, weights: dict) -> str:
     if position is None:
         return "low priority"
 
-    current_weight = weights[priority_name]
-    tied = [name for name, weight in weights.items() if weight == current_weight and name != priority_name]
     ordinal = ["1st", "2nd", "3rd", "4th", "5th"]
     rank_str = ordinal[position] if position < len(ordinal) else f"{position + 1}th"
-    return f"tied for {rank_str}" if tied else rank_str
+    return rank_str
 
 
 def render_lifestyle_profile_controls() -> None:
@@ -255,6 +384,28 @@ with st.sidebar:
                 else:
                     st.error("Invalid invite code.")
 
+    # ── Free plan locked-feature summary ────────────────────────────────────
+    _is_free_plan = not (
+        auth.is_authenticated()
+        and (st.session_state.paid_features_enabled or st.session_state.beta_tester)
+    )
+    if _is_free_plan:
+        with st.expander("🔒 Locked Features (Free Plan)", expanded=False):
+            st.caption("Upgrade to Premium to unlock:")
+            for _lf in [
+                "🔒 Walk Score & neighborhood enrichment",
+                "🔒 Commute analysis (Google Maps)",
+                "🔒 AI Advisor chat",
+                "🔒 AI explanations & reports",
+                "🔒 Negotiation tools",
+                "🔒 Multi-property comparison (up to 50)",
+                "🔒 Natural-language filtering",
+            ]:
+                st.markdown(f"<span class='nestai-locked-feature'>{_lf}</span>", unsafe_allow_html=True)
+            if st.button("⬆️ View Plans", use_container_width=True, key="sidebar_free_upgrade"):
+                st.session_state.main_nav = "Pricing"
+                st.rerun()
+
     st.divider()
 
     # ── Remove Building ─────────────────────────────────────────────────────
@@ -295,7 +446,7 @@ with st.sidebar:
     )
 
     if not has_feature("ai_chat"):
-        st.info("Upgrade to Premium to use the AI Advisor.")
+        st.info("🔒 Upgrade to Premium to use the AI Advisor.")
     elif not openai_configured():
         st.info("Add `OPENAI_API_KEY` to Streamlit secrets to enable the advisor.")
     else:
@@ -477,6 +628,10 @@ if active_screen == "Create Account":
         register_name = st.text_input("Display name", key="register_name")
         register_email = st.text_input("Email", key="register_email")
         register_password = st.text_input("Password", type="password", key="register_password")
+        st.caption(
+            "Password must be at least 8 characters and include an uppercase letter, "
+            "a lowercase letter, and a number."
+        )
         beta_invite_code = None
         if selected_account_type == "beta":
             beta_invite_code = st.text_input("Beta invite code", type="password", key="beta_invite_code")
@@ -518,78 +673,57 @@ if active_screen == "Create Account":
     st.stop()
 
 if active_screen == "Pricing":
-    st.markdown("### 💵 Pricing")
-    c1, c2, c3, c4 = st.columns(4)
+    from plan_ui import render_pricing_cards
+    render_pricing_cards()
 
-    with c1:
-        st.markdown("#### FREE")
-        st.write("$0 / month")
-        st.markdown("- Create an account")
-        st.markdown("- 1 active saved property")
-        st.markdown("- Up to 5 property analyses per month")
-        st.markdown("- Basic apartment parsing")
-        st.markdown("- Basic house parsing")
-        st.markdown("- Basic rankings and filters")
-        st.markdown("- Example listings")
-        st.markdown("- No AI recommendations")
-        st.markdown("- No commute or neighborhood enrichment")
-        st.markdown("- No multi-property comparison")
-        if st.button("Create Free Account", key="pricing_free", use_container_width=True):
-            st.session_state.signup_account_type = "free"
-            st.session_state.main_nav = "Create Account"
-            st.rerun()
-
-    with c2:
-        st.markdown("#### BETA")
-        st.write("Invite only")
-        st.markdown("- Everything in Free")
-        st.markdown("- Beta invite-code access")
-        st.markdown("- Early access to new features")
-        st.markdown("- Higher configurable usage limits")
-        st.markdown("- AI features according to beta quotas")
-        st.markdown("- Comparison tools")
-        st.markdown("- Feedback and bug-report access")
-        st.markdown("- No payment required during beta")
-        if st.button("Join with Invite Code", key="pricing_beta", use_container_width=True):
+    # ── Beta plan (invite-only, shown separately from purchasable plans) ───
+    st.divider()
+    st.markdown("#### 🔬 Beta — Invite Only")
+    _bc1, _bc2 = st.columns([2, 1])
+    with _bc1:
+        st.markdown(
+            "Early access for invited testers. Full Premium feature set with configurable "
+            "quotas during the beta period — **no payment required**."
+        )
+        for _bf in [
+            "✅ Everything in Free",
+            "✅ Full AI feature set (within beta quotas)",
+            "✅ Commute and neighborhood enrichment",
+            "✅ Multi-property comparison",
+            "✅ Lifestyle Score and AI explanations",
+            "✅ Early access to new features",
+        ]:
+            st.caption(_bf)
+    with _bc2:
+        if st.button("🔬 Join Beta (invite code)", use_container_width=True, key="pricing_beta"):
             st.session_state.signup_account_type = "beta"
             st.session_state.main_nav = "Create Account"
             st.rerun()
 
-    with c3:
-        st.markdown("#### PREMIUM")
-        st.write("$12 / month")
-        st.markdown("- Higher or unlimited property-analysis limits according to configured quotas")
-        st.markdown("- Multiple saved properties")
-        st.markdown("- Apartment and house comparisons")
-        st.markdown("- Lifestyle Score")
-        st.markdown("- AI recommendations and explanations")
-        st.markdown("- Commute analysis")
-        st.markdown("- Neighborhood enrichment")
-        st.markdown("- Decision reports")
-        st.markdown("- Filterable notes in the Full Ranking Table")
-        st.markdown("- Premium support according to existing product rules")
+    st.divider()
+    st.caption(
+        "Premium and Premium Plus require payment setup before activation. "
+        "Accounts are created as Free with your selected plan recorded. "
+        "Beta is invite-only and free during the beta period."
+    )
+    # Quick sign-up shortcuts
+    st.markdown("#### Ready to get started?")
+    _pc1, _pc2, _pc3 = st.columns(3)
+    with _pc1:
+        if st.button("Create Free Account", key="pricing_free", use_container_width=True):
+            st.session_state.signup_account_type = "free"
+            st.session_state.main_nav = "Create Account"
+            st.rerun()
+    with _pc2:
         if st.button("Choose Premium", key="pricing_premium", use_container_width=True):
             st.session_state.signup_account_type = "premium"
             st.session_state.main_nav = "Create Account"
             st.rerun()
-
-    with c4:
-        st.markdown("#### PREMIUM PLUS")
-        st.write("$25 / month")
-        st.markdown("Everything in Premium, plus:")
-        st.markdown("- Higher AI usage limits")
-        st.markdown("- Higher commute and enrichment limits")
-        st.markdown("- Advanced reports")
-        st.markdown("- Advanced comparison insights")
-        st.markdown("- Early access to premium features")
-        st.markdown("- Future portfolio and investment tools")
-        st.markdown("- Priority support")
+    with _pc3:
         if st.button("Choose Premium Plus", key="pricing_premium_plus", use_container_width=True):
             st.session_state.signup_account_type = "premium_plus"
             st.session_state.main_nav = "Create Account"
             st.rerun()
-
-    st.caption("Premium and Premium Plus require payment setup before activation. Accounts are created as Free with your selected plan recorded.")
     st.stop()
 
 if active_screen == "Houses":
@@ -1115,40 +1249,116 @@ if auth.is_authenticated() and not st.session_state.comparison_df.empty:
         )
         top3 = ranked_df.head(3)
 
-        # ── Top-3 badges ───────────────────────────────────────────────────
+        # ── Decision Recommendation banner ─────────────────────────────────
+        if not top3.empty:
+            top_row = top3.iloc[0]
+            top_price = top_row.get("price_num")
+            top_sqft = top_row.get("sqft_num")
+            top_score = top_row.get("nestai_score", 0)
+            top_diff, top_avg = price_position(top_row, ranked_df)
+
+            _price_vs = ""
+            if top_diff is not None and top_avg:
+                if abs(top_diff) < 30:
+                    _price_vs = f"at the comparable average (${top_avg:,.0f}/mo for {int(top_row.get('beds_num', 0))}-bed)"
+                elif top_diff < 0:
+                    _price_vs = f"${abs(top_diff):,} below the ${top_avg:,.0f}/mo average for {int(top_row.get('beds_num', 0))}-bed units"
+                else:
+                    _price_vs = f"${abs(top_diff):,} above the ${top_avg:,.0f}/mo average for {int(top_row.get('beds_num', 0))}-bed units"
+
+            _commute_d = ""
+            for _cc in ("commute_transit_min", "commute_driving_min", "metro_min"):
+                _cv = top_row.get(_cc)
+                if _cv is not None and not (isinstance(_cv, float) and pd.isna(_cv)):
+                    _commute_d = _commute_descriptor(_cv)
+                    break
+
+            _reason_parts = []
+            if top_diff is not None and top_diff <= 0:
+                _reason_parts.append(f"priced {_price_vs}")
+            if _commute_d and "Long" not in _commute_d:
+                _reason_parts.append(f"commute is {_commute_d.split(' · ')[0].strip()} min ({_commute_d.split(' · ')[-1] if ' · ' in _commute_d else ''})")
+            if not _reason_parts:
+                _reason_parts.append(f"highest overall NestAI Score of {top_score:.0f}/100 across your saved units")
+
+            _reason_str = " · ".join(_reason_parts) if _reason_parts else f"NestAI Score {top_score:.0f}/100"
+
+            st.markdown(
+                f"""
+<div class="nestai-decision-banner">
+  <div class="subtitle">🏆 NESTAI DECISION RECOMMENDATION</div>
+  <div class="nestai-decision-pick">
+    {top_row.get('property', 'Unknown')} &nbsp;·&nbsp; Unit {top_row.get('unit', 'N/A')}
+    <span class="nestai-score-pill">{top_score:.0f}/100</span>
+  </div>
+  <div class="nestai-decision-reason">
+    NestAI recommends this unit above your other saved options — {_reason_str}.
+  </div>
+</div>
+""",
+                unsafe_allow_html=True,
+            )
+
+        # ── Top-3 polished cards ────────────────────────────────────────────
+        _rank_colors = ["nestai-rank-1", "nestai-rank-2", "nestai-rank-3"]
+        _rank_medals = ["🥇", "🥈", "🥉"]
+
         for i, (_, row) in enumerate(top3.iterrows(), start=1):
             price_num = row.get("price_num")
             sqft_num = row.get("sqft_num")
             price_display = int(price_num) if pd.notna(price_num) else 0
             sqft_display = int(sqft_num) if pd.notna(sqft_num) else 0
-
             nestai_score = row.get("nestai_score", 0)
 
-            # Price position vs same-bed-count average (no leading minus)
+            # Price vs comparable average — explicit dollar + avg shown
             diff, avg = price_position(row, ranked_df)
-            if diff is not None:
-                if diff >= 0:
-                    price_badge = f"  |  ${abs(diff):,} above avg"
+            if diff is not None and avg:
+                beds_label = "studio" if row.get("beds_num") == 0 else f"{int(row.get('beds_num', 1))}-bed"
+                avg_note = f"avg ${avg:,.0f}/mo for {beds_label}"
+                if abs(diff) < 30:
+                    price_badge_cls = "nestai-at-avg"
+                    price_badge_text = f"≈ {avg_note}"
+                elif diff < 0:
+                    price_badge_cls = "nestai-below-avg"
+                    price_badge_text = f"${abs(diff):,} below · {avg_note}"
                 else:
-                    price_badge = f"  |  ${abs(diff):,} below avg"
+                    price_badge_cls = "nestai-above-avg"
+                    price_badge_text = f"${abs(diff):,} above · {avg_note}"
+                price_badge_html = f'<span class="nestai-price-vs-avg {price_badge_cls}">{price_badge_text}</span>'
             else:
-                price_badge = ""
+                price_badge_html = ""
 
-            # Commute display
-            commute_display = row.get("commute_display", "")
-            commute_line = f"\n🗺 Morning commute: {commute_display}" if commute_display and commute_display != "—" else ""
+            # Commute descriptor
+            commute_html = ""
+            for _cc in ("commute_transit_min", "commute_driving_min", "metro_min"):
+                _cv = row.get(_cc)
+                if _cv is not None and not (isinstance(_cv, float) and pd.isna(_cv)):
+                    commute_html = f'<span style="color:#555;font-size:0.87em;">🚇 {_commute_descriptor(_cv)}</span>'
+                    break
 
-            st.success(
-                f"#{i} • {row.get('property', 'Unknown')} • Unit {row.get('unit', 'N/A')}"
-                f"  |  NestAI Score {nestai_score:.0f}/100  \n"
-                f"${price_display:,}/mo{price_badge} • {sqft_display} sqft • "
-                f"{row.get('beds', '')} • {row.get('baths', '')}"
-                f"{commute_line}"
+            _card_cls = _rank_colors[i - 1] if i <= 3 else ""
+            st.markdown(
+                f"""
+<div class="nestai-rank-card {_card_cls}">
+  <div class="nestai-rank-label">{_rank_medals[i-1]} Rank #{i}</div>
+  <div class="nestai-rank-title">{row.get('property', 'Unknown')} &nbsp;&middot;&nbsp; Unit {row.get('unit', 'N/A')}</div>
+  <div class="nestai-rank-meta">
+    <span class="nestai-price-highlight">${price_display:,}/mo</span>
+    {price_badge_html}
+    &nbsp;&nbsp;·&nbsp;&nbsp;{sqft_display:,} sqft
+    &nbsp;&nbsp;·&nbsp;&nbsp;{row.get('beds', '')} {row.get('baths', '')}
+    &nbsp;&nbsp;·&nbsp;&nbsp;NestAI Score <strong>{nestai_score:.0f}</strong>/100
+  </div>
+  {'<div style="margin-top:5px;">' + commute_html + '</div>' if commute_html else ''}
+</div>
+""",
+                unsafe_allow_html=True,
             )
 
         st.markdown("#### 🎯 Breakdown")
         st.caption(
-            "NestAI Score = 60% Lifestyle + 25% Profile Match + 15% Relative Rank (or 85%/15% when no profile is set)."
+            "NestAI Score = 60% Lifestyle + 25% Profile Match + 15% Relative Rank "
+            "(or 85%/15% when no profile is set)."
         )
         tradeoff = TradeoffAnalyzer(ranked_df) if len(ranked_df) > 1 else None
         regret_analyzer = RegretAnalyzer(ranked_df, weights)
@@ -1174,13 +1384,18 @@ if auth.is_authenticated() and not st.session_state.comparison_df.empty:
                 with tab1:
                     score_cols = st.columns(3)
                     score_cols[0].metric("NestAI Score", f"{row.get('nestai_score', 0):.0f}/100")
+                    _op = int(overview_price) if pd.notna(overview_price) else 0
+                    _diff_t, _avg_t = price_position(row, ranked_df)
+                    _price_delta = f"${abs(_diff_t):,} {'above' if _diff_t and _diff_t >= 0 else 'below'} avg" if _diff_t is not None else None
                     score_cols[1].metric(
-                        "Price",
-                        f"${int(overview_price) if pd.notna(overview_price) else 0:,}/mo",
+                        "Rent",
+                        f"${_op:,}/mo",
+                        delta=_price_delta,
+                        delta_color="inverse",
                     )
                     score_cols[2].metric(
                         "Sq Ft",
-                        f"{int(overview_sqft) if pd.notna(overview_sqft) else 0}",
+                        f"{int(overview_sqft) if pd.notna(overview_sqft) else 0:,}",
                     )
                     st.markdown(
                         generate_lifestyle_explanation(
@@ -1198,17 +1413,39 @@ if auth.is_authenticated() and not st.session_state.comparison_df.empty:
                     st.markdown(generate_amenities_list(row))
                     amenity_col1, amenity_col2 = st.columns(2)
                     with amenity_col1:
+                        # Commute — descriptor only (no raw score numbers)
                         metro_min_val = row.get("metro_min")
                         if metro_min_val is not None and pd.notna(metro_min_val):
-                            st.write(f"🚇 **Metro:** {metro_min_val} min")
+                            st.write(f"🚇 **Metro:** {_commute_descriptor(metro_min_val)}")
                         else:
                             st.write("🚇 **Metro:** Not found")
                             st.caption("No transit stop found within ~30 min or transit data unavailable.")
-                        st.write(f"🏥 **Hospital:** {row.get('hospital_min', '—')} min")
+                        hosp_min = row.get("hospital_min")
+                        if hosp_min is not None and pd.notna(hosp_min):
+                            st.write(f"🏥 **Hospital:** {_commute_descriptor(hosp_min)}")
+                        else:
+                            st.write("🏥 **Hospital:** —")
                     with amenity_col2:
-                        walk_score_value = row.get("official_walk_score") or row.get("walk_score") or "—"
-                        st.write(f"🚶 **Walk Score:** {walk_score_value}")
-                        st.write(f"💪 **Nearby Gyms:** {row.get('nearby_gyms', '—')}")
+                        walk_score_value = row.get("official_walk_score") or row.get("walk_score")
+                        if walk_score_value is not None and not (isinstance(walk_score_value, float) and pd.isna(walk_score_value)):
+                            st.write(f"🚶 **Walk Score:** {int(walk_score_value)}/100")
+                        else:
+                            st.write("🚶 **Walk Score:** —")
+                        # Safety — descriptor only
+                        safety_val = row.get("safety_score")
+                        if safety_val is not None and not (isinstance(safety_val, float) and pd.isna(safety_val)):
+                            st.write(f"🛡️ **Safety:** {_safety_descriptor(safety_val)}")
+                        else:
+                            st.write("🛡️ **Safety:** —")
+                        # Nearby Gyms — only show when data is present and looks valid
+                        gyms_val = row.get("nearby_gyms")
+                        if gyms_val is not None and not (isinstance(gyms_val, float) and pd.isna(gyms_val)):
+                            try:
+                                gyms_int = int(gyms_val)
+                                if gyms_int >= 0:
+                                    st.write(f"💪 **Nearby Gyms:** {gyms_int}")
+                            except (TypeError, ValueError):
+                                pass  # hide if not a valid number
 
                 with tab3:
                     if tradeoff and rank > 1:
@@ -1252,14 +1489,20 @@ if auth.is_authenticated() and not st.session_state.comparison_df.empty:
                     parks = row.get("nearby_parks")
                     gyms = row.get("nearby_gyms")
                     details = []
-                    if groceries is not None:
-                        details.append(f"🛒 {groceries} grocery stores")
-                    if restaurants is not None:
-                        details.append(f"🍽 {restaurants} restaurants")
-                    if parks is not None:
-                        details.append(f"🌳 {parks} parks")
-                    if gyms is not None:
-                        details.append(f"💪 {gyms} gyms")
+                    if groceries is not None and not (isinstance(groceries, float) and pd.isna(groceries)):
+                        details.append(f"🛒 {int(groceries)} grocery stores")
+                    if restaurants is not None and not (isinstance(restaurants, float) and pd.isna(restaurants)):
+                        details.append(f"🍽 {int(restaurants)} restaurants")
+                    if parks is not None and not (isinstance(parks, float) and pd.isna(parks)):
+                        details.append(f"🌳 {int(parks)} parks")
+                    # Only show gyms if the count is a valid non-negative integer
+                    if gyms is not None and not (isinstance(gyms, float) and pd.isna(gyms)):
+                        try:
+                            gyms_int = int(gyms)
+                            if gyms_int >= 0:
+                                details.append(f"💪 {gyms_int} gyms nearby")
+                        except (TypeError, ValueError):
+                            pass
                     for d in details:
                         st.caption(d)
 

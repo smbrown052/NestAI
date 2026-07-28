@@ -111,6 +111,8 @@ PRICING_PLANS: list[dict] = [
             "Natural-language filtering",
             "Lifestyle Score and AI explanations",
             "AI reports and exports",
+            "AI Advisor chat",
+            "Negotiation tools",
         ],
     },
     {
@@ -129,6 +131,7 @@ PRICING_PLANS: list[dict] = [
         "price": "$25",
         "period": "/month",
         "badge": "🌟",
+        "accent": True,   # visually differentiated card
         "description": PLAN_DESCRIPTIONS[PLAN_PREMIUM_PLUS],
         # All Premium features are inherited; extras are listed separately.
         "features": PREMIUM_FEATURE_LABELS,
@@ -343,9 +346,9 @@ def _render_dev_plan_switcher() -> None:
 # ── Pricing cards ─────────────────────────────────────────────────────────────
 
 def render_pricing_cards() -> None:
-    """Render the three public plan cards (FREE, PREMIUM, PREMIUM_PLUS).
+    """Render the four public plan cards (FREE, BETA, PREMIUM, PREMIUM_PLUS).
 
-    Does NOT display OWNER_TEST or BETA — those are not purchasable plans.
+    Does NOT display OWNER_TEST — that is not a purchasable plan.
     Upgrade buttons record intent and show a billing-coming-soon notice.
 
     Reads ``st.session_state["nestai_highlight_plan"]`` to visually emphasise
@@ -378,7 +381,11 @@ def render_pricing_cards() -> None:
 
 def _render_plan_card(card: dict, is_current: bool, highlighted: bool = False) -> None:
     """Render a single plan card."""
-    if card.get("highlight"):
+    plan_id = card["id"]
+
+    if card.get("accent"):
+        st.markdown("🏆 **Best Value**")
+    elif card.get("highlight"):
         st.markdown("🟡 **Most Popular**")
 
     # Visual emphasis when this plan is recommended
@@ -388,11 +395,16 @@ def _render_plan_card(card: dict, is_current: bool, highlighted: bool = False) -
     st.markdown(f"### {card['badge']} {card['name']}")
 
     # Price display — always includes $ and /month
-    st.markdown(
+    price_html = (
         f"<span style='font-size:2em; font-weight:bold;'>{card['price']}</span>"
-        f"<span style='color:gray;'>{card['period']}</span>",
-        unsafe_allow_html=True,
+        f"<span style='color:gray;'>{card['period']}</span>"
     )
+    if card.get("accent"):
+        price_html = (
+            f"<span style='font-size:2em; font-weight:bold; color:#7B2FBE;'>{card['price']}</span>"
+            f"<span style='color:gray;'>{card['period']}</span>"
+        )
+    st.markdown(price_html, unsafe_allow_html=True)
 
     # Plan description
     if card.get("description"):
@@ -401,7 +413,6 @@ def _render_plan_card(card: dict, is_current: bool, highlighted: bool = False) -
     st.markdown("")  # spacer
 
     # Feature list
-    plan_id = card["id"]
     if plan_id == PLAN_PREMIUM_PLUS:
         # Explicitly show "Everything in Premium, plus:" layout
         st.markdown("**✅ Everything in Premium, plus:**")
@@ -430,6 +441,15 @@ def _render_plan_card(card: dict, is_current: bool, highlighted: bool = False) -
             use_container_width=True,
             key=f"plan_cta_{plan_id}",
         )
+    elif plan_id == PLAN_BETA:
+        if st.button(
+            "🔬 Join with Invite Code",
+            use_container_width=True,
+            key=f"plan_cta_{plan_id}",
+        ):
+            st.session_state.nestai_upgrade_intent = PLAN_BETA
+            st.session_state.nestai_highlight_plan = None
+            st.rerun()
     elif plan_id == PLAN_PREMIUM:
         if st.button(
             "⬆️ Upgrade to Premium",
@@ -445,6 +465,7 @@ def _render_plan_card(card: dict, is_current: bool, highlighted: bool = False) -
             "⬆️ Upgrade to Premium Plus",
             use_container_width=True,
             key=f"plan_cta_{plan_id}",
+            type="primary",
         ):
             st.session_state.nestai_upgrade_intent = PLAN_PREMIUM_PLUS
             st.session_state.nestai_highlight_plan = None

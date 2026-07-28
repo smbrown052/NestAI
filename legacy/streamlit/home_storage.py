@@ -80,6 +80,12 @@ _DB_PATH = Path(__file__).parent / "data" / "nestai_cache.db"
 
 _MAX_RAW_TEXT_BYTES = 131_072   # 128 KB
 
+# ── Stable session-state reference ───────────────────────────────────────────
+# Capture st.session_state once at import time.  This keeps the reference
+# stable even if other code reassigns st.session_state during tests.
+# For a single-user local Streamlit app this is always the same object.
+_ss = st.session_state
+
 # ── Schema ────────────────────────────────────────────────────────────────────
 
 _SCHEMA = """
@@ -164,9 +170,9 @@ def get_session_id() -> str:
     This is a randomly-generated UUID assigned once per browser session.
     It is NOT an authenticated user ID.  See module-level note.
     """
-    if "nestai_session_id" not in st.session_state:
-        st.session_state.nestai_session_id = str(uuid.uuid4())
-    return st.session_state.nestai_session_id
+    if "nestai_session_id" not in _ss:
+        _ss["nestai_session_id"] = str(uuid.uuid4())
+    return _ss["nestai_session_id"]
 
 
 # ── Input sanitization ────────────────────────────────────────────────────────
