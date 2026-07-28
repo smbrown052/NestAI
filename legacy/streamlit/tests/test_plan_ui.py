@@ -273,7 +273,7 @@ class TestOwnerModeEnvVar:
         os.environ["NESTAI_OWNER_MODE"] = "TRUE"
         assert fa.is_owner_mode_env() is True
 
-    def test_owner_mode_env_forces_owner_test_plan(self):
+    def test_owner_mode_env_starts_in_owner_test_plan(self):
         os.environ["NESTAI_OWNER_MODE"] = "true"
         fa._init()
         assert _state.get("nestai_plan") == fa.PLAN_OWNER_TEST
@@ -289,13 +289,11 @@ class TestOwnerModeEnvVar:
         fa._init()
         assert _state.get("nestai_plan") == fa.PLAN_OWNER_TEST
 
-    def test_session_state_cannot_override_owner_mode_env(self):
+    def test_owner_mode_allows_preview_plan_switching(self):
         os.environ["NESTAI_OWNER_MODE"] = "true"
         fa._init()
-        # Even after forcing plan back to FREE, _init re-applies OWNER_TEST
-        _state["nestai_plan"] = fa.PLAN_FREE
-        fa._init()
-        assert _state.get("nestai_plan") == fa.PLAN_OWNER_TEST
+        fa.set_plan(fa.PLAN_FREE)
+        assert _state.get("nestai_plan") == fa.PLAN_FREE
 
 
 # ── Dev mode env var ──────────────────────────────────────────────────────────
@@ -346,6 +344,14 @@ class TestDevModeEnvVar:
         fa.set_plan(fa.PLAN_PREMIUM)
         fa.set_plan(fa.PLAN_FREE)
         assert fa.capability("can_use_ai_chat") is False
+
+    def test_effective_plan_uses_backend_plan_when_dev_flags_unset(self):
+        assert fa.get_effective_plan("premium_plus") == fa.PLAN_PREMIUM_PLUS
+
+    def test_effective_plan_uses_preview_plan_when_dev_mode_enabled(self):
+        os.environ["NESTAI_DEV_MODE"] = "true"
+        fa.set_plan(fa.PLAN_FREE)
+        assert fa.get_effective_plan("premium_plus") == fa.PLAN_FREE
 
 
 # ── Pricing cards do not include OWNER_TEST ───────────────────────────────────

@@ -319,7 +319,7 @@ def render_plan_sidebar() -> None:
             navigate_to_plans(highlight_plan=PLAN_PREMIUM_PLUS)
 
     # ── Dev plan switcher ─────────────────────────────────────────────────────
-    if is_dev_mode():
+    if is_dev_mode() or is_owner_mode_env():
         _render_dev_plan_switcher()
 
 
@@ -338,8 +338,8 @@ def _render_owner_usage() -> None:
 def _render_dev_plan_switcher() -> None:
     """Render the development plan selector.
 
-    Visible only when NESTAI_DEV_MODE=true.
-    OWNER_TEST is included here so all plans can be tested end-to-end.
+    Visible only when NESTAI_DEV_MODE=true or NESTAI_OWNER_MODE=true.
+    OWNER_TEST is included so all plans can be tested end-to-end.
     """
     _PLAN_OPTS = [PLAN_FREE, PLAN_PREMIUM, PLAN_PREMIUM_PLUS, PLAN_BETA, PLAN_OWNER_TEST]
     _PLAN_DISP = {
@@ -351,7 +351,7 @@ def _render_dev_plan_switcher() -> None:
     }
 
     with st.expander("🛠 Development Plan Preview", expanded=False):
-        st.caption("⚠️ Development only — hidden in production.")
+        st.warning("Development Plan Preview — no payment or subscription changes are being made.")
         current = get_plan()
         current_idx = _PLAN_OPTS.index(current) if current in _PLAN_OPTS else 0
         selected = st.selectbox(
@@ -361,9 +361,8 @@ def _render_dev_plan_switcher() -> None:
             index=current_idx,
             key="dev_plan_selector",
         )
-        if st.button("Apply Plan", use_container_width=True, key="dev_apply_plan_btn"):
+        if selected != current:
             set_plan(selected)
-            st.success(f"✅ Plan set to: {_PLAN_DISP[selected]}")
             st.rerun()
 
 

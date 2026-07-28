@@ -22,4 +22,5 @@ def plan_display_name(plan: str) -> str:
         "beta": "Beta",
         "premium": "Premium",
         "premium_plus": "Premium Plus",
+        "owner_test": "Owner Test",
     }.get(plan, plan.title())

@@ -72,7 +72,8 @@ The in-app plan switcher lets you preview any plan without restarting.
 **PowerShell**
 ```powershell
 $env:NESTAI_DEV_MODE = "true"
-python -m streamlit run legacy/streamlit/app.py
+$env:NESTAI_API_BASE_URL = "http://127.0.0.1:8001"
+python -m streamlit run app.py
 ```
 
 **Bash**
@@ -83,8 +84,7 @@ NESTAI_DEV_MODE=true python -m streamlit run legacy/streamlit/app.py
 ### Usage
 
 When `NESTAI_DEV_MODE=true`, a **"🛠 Development Plan Preview"** expander appears
-in the sidebar under the plan badge.  Select any plan from the dropdown and click
-**"Apply Plan"** to switch instantly.
+in the sidebar under the plan badge. Select any plan from the dropdown to switch instantly.
 
 Available selections:
 - **Free** — default; 5 analyses, 1 saved property

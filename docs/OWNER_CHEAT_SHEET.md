@@ -20,6 +20,15 @@ Open your browser at: **http://localhost:8501**
 > This is the working app you have been using. Keep using it until the new
 > web application is ready.
 
+### Development Plan Preview (PowerShell)
+
+```powershell
+cd legacy/streamlit
+$env:NESTAI_DEV_MODE="true"
+$env:NESTAI_API_BASE_URL="http://127.0.0.1:8001"
+python -m streamlit run app.py
+```
+
 ---
 
 ### Start the local database (PostgreSQL via Docker)

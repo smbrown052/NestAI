@@ -298,7 +298,21 @@ class StreamlitAuthManager:
     def sync_user_tier(self) -> None:
         user = self.user()
         if user:
-            self._session_state["nestai_tier"] = user.get("active_plan") or user.get("tier", "free")
+            from feature_access import get_effective_plan, normalize_plan_value
+
+            effective_plan = get_effective_plan(
+                user.get("active_plan") or user.get("tier"),
+                beta_access=bool(user.get("beta_access") and not user.get("active_plan")),
+            )
+            self._session_state["nestai_plan"] = normalize_plan_value(effective_plan)
+            tier_map = {
+                "FREE": "free",
+                "BETA": "beta",
+                "PREMIUM": "premium",
+                "PREMIUM_PLUS": "premium_plus",
+                "OWNER_TEST": "premium_plus",
+            }
+            self._session_state["nestai_tier"] = tier_map.get(effective_plan, "free")
 
     def logout(self) -> None:
         self.clear_authenticated()
