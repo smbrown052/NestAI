@@ -699,3 +699,94 @@ class TestPricingCardPlacement:
         _reset()
         _state["nestai_active_view"] = "homes"
         assert _state["nestai_active_view"] == "homes"
+
+
+# ── Regression: dev plan selector rendered exactly once ──────────────────────
+
+class TestDevPlanSelectorRenderedOnce:
+    """Confirm _render_dev_plan_switcher is called at most once per sidebar render.
+
+    The crash 'StreamlitDuplicateElementKey: dev_plan_selector' is caused when
+    app.py calls _render_dev_plan_switcher() directly *and* render_plan_sidebar()
+    calls it again.  The fix removes the direct call from app.py so the switcher
+    is only rendered inside render_plan_sidebar().
+    """
+
+    def setup_method(self):
+        _reset()
+        os.environ.pop("NESTAI_DEV_MODE", None)
+        os.environ.pop("NESTAI_OWNER_MODE", None)
+
+    def teardown_method(self):
+        os.environ.pop("NESTAI_DEV_MODE", None)
+        os.environ.pop("NESTAI_OWNER_MODE", None)
+
+    def test_app_py_does_not_import_render_dev_plan_switcher(self):
+        """app.py must not import _render_dev_plan_switcher directly.
+
+        When the function is imported into app.py it signals a direct call site
+        that duplicates the one inside render_plan_sidebar().
+        """
+        import ast
+        import importlib.util
+        _app = Path(__file__).resolve().parent.parent / "app.py"
+        source = _app.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(_app))
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                names = [alias.name for alias in node.names]
+                assert "_render_dev_plan_switcher" not in names, (
+                    "app.py imports _render_dev_plan_switcher — this creates a "
+                    "duplicate call site and causes StreamlitDuplicateElementKey."
+                )
+
+    def test_selectbox_called_once_in_dev_mode(self):
+        """selectbox with key='dev_plan_selector' must be invoked exactly once
+        when render_plan_sidebar() is called with dev mode active."""
+        import plan_ui as pu
+
+        os.environ["NESTAI_DEV_MODE"] = "true"
+        _state["nestai_plan"] = PLAN_FREE
+
+        call_count = 0
+
+        def _counting_selectbox(*args, key=None, **kwargs):
+            nonlocal call_count
+            if key == "dev_plan_selector":
+                call_count += 1
+            opts = args[1] if len(args) > 1 else kwargs.get("options", [])
+            return opts[0] if opts else None
+
+        # Stubs for any widget attributes render_plan_sidebar may call that
+        # are not already present on the shared mock object.
+        _extra_stubs = {
+            "error": lambda *a, **kw: None,
+            "text_input": lambda *a, **kw: "",
+            "number_input": lambda *a, **kw: 0,
+            "slider": lambda *a, **kw: 0,
+        }
+        _originals = {}
+        for attr, stub in _extra_stubs.items():
+            _originals[attr] = getattr(_mock_st, attr, None)
+            if not hasattr(_mock_st, attr):
+                setattr(_mock_st, attr, stub)
+
+        original_selectbox = _mock_st.selectbox
+        _mock_st.selectbox = _counting_selectbox
+        try:
+            pu.render_plan_sidebar()
+        finally:
+            _mock_st.selectbox = original_selectbox
+            for attr, orig in _originals.items():
+                if orig is None:
+                    try:
+                        delattr(_mock_st, attr)
+                    except AttributeError:
+                        pass
+                else:
+                    setattr(_mock_st, attr, orig)
+
+        assert call_count == 1, (
+            f"Expected dev_plan_selector selectbox to be rendered exactly once, "
+            f"got {call_count}."
+        )
