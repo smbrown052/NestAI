@@ -509,3 +509,5 @@ def has_feature(feature: str) -> bool:
         return capability(mapped)
     # Unknown feature → fall back to plan caps raw lookup
     return capability(feature)
+
+# Streamlit Cloud deployment refresh marker
