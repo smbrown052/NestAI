@@ -33,6 +33,7 @@ from feature_access import (
     PLAN_OWNER_TEST,
     _PLAN_LABELS,
     capability,
+    get_effective_plan,
     get_plan,
     get_quota,
     is_dev_mode,
@@ -212,6 +213,19 @@ def render_plan_sidebar() -> None:
     """
     plan = get_plan()
 
+    # ── DEV MODE diagnostic banner ────────────────────────────────────────────
+    # Visible only when NESTAI_DEV_MODE=true.  Shows the env flag is active and
+    # which plan values are currently effective so the dev preview is easy to
+    # verify at a glance.  Remove or gate behind is_dev_mode() before release.
+    if is_dev_mode() or is_owner_mode_env():
+        effective = get_effective_plan()
+        preview = get_plan()
+        st.error(
+            f"🛠 **DEV MODE ENABLED**  \n"
+            f"Effective plan: `{effective}`  \n"
+            f"Preview plan:   `{preview}`"
+        )
+
     # ── Owner Test Mode ───────────────────────────────────────────────────────
     if is_owner_test():
         st.success("🔑 **Owner Test Mode — Unlimited**")
@@ -350,7 +364,7 @@ def _render_dev_plan_switcher() -> None:
         PLAN_OWNER_TEST: "Owner Test (Unlimited)",
     }
 
-    with st.expander("🛠 Development Plan Preview", expanded=False):
+    with st.expander("🛠 Development Plan Preview", expanded=True):
         st.warning("Development Plan Preview — no payment or subscription changes are being made.")
         current = get_plan()
         current_idx = _PLAN_OPTS.index(current) if current in _PLAN_OPTS else 0
