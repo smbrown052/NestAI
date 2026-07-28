@@ -2,6 +2,7 @@ import os
 import time as _time
 from html import escape as html_escape
 from pathlib import Path
+from homes_tab import render_homes_tab
 
 import streamlit as st
 import pandas as pd
@@ -21,6 +22,7 @@ for house_path in sorted(_DATA_DIR.rglob("home_example_*.txt")):
         house_label = house_preview.get("property_title") or house_path.stem.replace("_", " ").title()
     except Exception:
         house_label = house_path.stem.replace("_", " ").title()
+
     _HOUSE_EXAMPLE_LISTINGS.append((house_path, house_label))
 from enrichment import (
     enrich_units_df,
@@ -54,7 +56,7 @@ from credits import get_tier, has_feature, can_enrich_building, consume_analysis
 from cache import get_geocode, _address_key
 from feedback import submit_feedback, send_feedback_email
 from feature_access import get_effective_plan, get_quota, get_plan, is_dev_mode, is_owner_mode_env
-from plan_ui import render_plan_sidebar, render_pricing_cards, render_upgrade_prompt, _render_dev_plan_switcher
+from plan_ui import render_plan_sidebar, render_pricing_cards, render_upgrade_prompt
 from ui_state import get_account_type_options, get_navigation_options, plan_display_name
 from ui_theme import feature_pill, inject_global_styles, metric_card_html, normalize_plan, render_badge, tier_class
 from auth_service import (
@@ -377,9 +379,6 @@ with st.sidebar:
     st.write("OWNER ENV:", repr(os.getenv("NESTAI_OWNER_MODE")))
     st.write("IS DEV:", is_dev_mode())
     st.write("IS OWNER:", is_owner_mode_env())
-    # Direct call — does not depend on render_plan_sidebar() picking it up.
-    if is_dev_mode() or is_owner_mode_env():
-        _render_dev_plan_switcher()
     # ── END DEV DIAGNOSTIC ───────────────────────────────────────────────────
 
     st.markdown("## 🧭 Workspace")
@@ -727,87 +726,7 @@ if active_screen == "Pricing":
     st.stop()
 
 if active_screen == "Houses":
-    st.markdown("### 🏡 Houses")
-    st.caption("Analyze house listings with the same parser and comparison workflow.")
-
-    house_buttons = st.columns(3)
-
-    if len(_HOUSE_EXAMPLE_LISTINGS) > 0:
-        with house_buttons[0]:
-            if st.button(f"🏡 {_HOUSE_EXAMPLE_LISTINGS[0][1]}", use_container_width=True):
-                with open(_HOUSE_EXAMPLE_LISTINGS[0][0], "r", encoding="utf-8") as f:
-                    st.session_state.house_listing_text = f.read()
-                st.rerun()
-
-    if len(_HOUSE_EXAMPLE_LISTINGS) > 1:
-        with house_buttons[1]:
-            if st.button(f"🏡 {_HOUSE_EXAMPLE_LISTINGS[1][1]}", use_container_width=True):
-                with open(_HOUSE_EXAMPLE_LISTINGS[1][0], "r", encoding="utf-8") as f:
-                    st.session_state.house_listing_text = f.read()
-                st.rerun()
-
-    with house_buttons[2]:
-        if st.button("🧹 Clear House Text", use_container_width=True):
-            st.session_state.house_listing_text = ""
-            st.session_state.last_house_result = None
-            st.session_state.house_parsed_df = pd.DataFrame()
-            st.rerun()
-
-    if len(_HOUSE_EXAMPLE_LISTINGS) == 0:
-        st.info("No house examples found. Add `home_example_*.txt` files in the data folder.")
-
-    house_listing_text = st.text_area(
-        "House listing text",
-        key="house_listing_text",
-        height=380,
-        placeholder="Paste copied house listing text here...",
-    )
-
-    analyze_house = st.button("✨ Analyze House", use_container_width=True)
-
-    if analyze_house:
-        if house_listing_text.strip():
-            house_result = parse_house_listing(house_listing_text)
-            st.session_state.last_house_result = house_result
-            st.session_state.house_parsed_df = pd.DataFrame(house_result.get("units", []))
-        else:
-            st.warning("Paste house listing text first.")
-
-    if st.session_state.last_house_result:
-        house_result = st.session_state.last_house_result
-        house_building = house_result.get("building_nearby", {})
-
-        st.markdown("### 🏠 House Summary")
-        st.markdown(f"**{house_result.get('property_title') or 'Unknown'}**")
-
-        hm1, hm2, hm3 = st.columns(3)
-        hm1.metric("Units Parsed", house_result.get("unit_count", 0))
-        hm2.metric(
-            "Nearest Metro",
-            format_travel(house_building.get("metro_travel_mode"), house_building.get("metro_min")),
-        )
-        hm3.metric(
-            "Nearest Hospital",
-            format_travel(house_building.get("hospital_travel_mode"), house_building.get("hospital_min")),
-        )
-
-        if house_result.get("address"):
-            st.caption(house_result.get("address"))
-
-        if not st.session_state.house_parsed_df.empty:
-            st.markdown("### 📋 Parsed House Units")
-            st.dataframe(st.session_state.house_parsed_df, use_container_width=True)
-
-            if st.button("➕ Save House Units", use_container_width=True):
-                st.session_state.comparison_df = pd.concat(
-                    [st.session_state.comparison_df, st.session_state.house_parsed_df],
-                    ignore_index=True,
-                )
-                st.success("House units added!")
-                st.rerun()
-        else:
-            st.warning("No house unit rows were parsed from this listing.")
-
+    render_homes_tab()
     st.stop()
 
 if active_screen == "Apartments":

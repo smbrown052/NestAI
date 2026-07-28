@@ -231,8 +231,6 @@ def render_plan_sidebar() -> None:
         st.success("🔑 **Owner Test Mode — Unlimited**")
         st.caption("All features and quotas are bypassed.")
         _render_owner_usage()
-        if is_dev_mode() or is_owner_mode_env():
-            _render_dev_plan_switcher()
         return
 
     # ── Account section ───────────────────────────────────────────────────────
