@@ -228,15 +228,18 @@ class TestFreePlanRestrictions:
     def test_free_analyses_quota_is_5(self):
         assert fa.get_quota("monthly_analyses_limit") == 5
 
-    def test_free_saved_limit_is_1(self):
-        assert fa.get_quota("saved_property_limit") == 1
+    def test_saved_property_limit_is_2(self):
+        assert fa.get_quota("saved_property_limit") == 2
 
     def test_free_monthly_remaining_is_int(self):
         remaining = fa.monthly_analyses_remaining()
         assert isinstance(remaining, int)
 
-    def test_free_cannot_save_second_property(self):
-        assert fa.can_save_another_property(1) is False
+    def test_free_can_save_second_property(self):
+        assert fa.can_save_another_property(1) is True
+
+    def test_free_cannot_save_third_property(self):
+        assert fa.can_save_another_property(2) is False
 
     def test_free_is_owner_test_returns_false(self):
         assert fa.is_owner_test() is False

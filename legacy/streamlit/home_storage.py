@@ -159,14 +159,13 @@ def _now() -> str:
 # ── Session ID ────────────────────────────────────────────────────────────────
 
 def get_session_id() -> str:
-    """Return a stable identifier for the current Streamlit session.
+    session_id = st.session_state.get("nestai_session_id")
 
-    This is a randomly-generated UUID assigned once per browser session.
-    It is NOT an authenticated user ID.  See module-level note.
-    """
-    if "nestai_session_id" not in st.session_state:
-        st.session_state.nestai_session_id = str(uuid.uuid4())
-    return st.session_state.nestai_session_id
+    if not session_id:
+        session_id = str(uuid.uuid4())
+        st.session_state["nestai_session_id"] = session_id
+
+    return session_id
 
 
 # ── Input sanitization ────────────────────────────────────────────────────────
