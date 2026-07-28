@@ -50,24 +50,48 @@ from ui_theme import plan_meta, tier_class
 # Premium Plus features are DERIVED from Premium features + extras so they
 # can never silently drift apart.
 
+FREE_FEATURE_LABELS: list[str] = [
+    "Full experience for up to 2 saved properties",
+    "Apartment and house listing parsing",
+    "Lifestyle Score",
+    "AI recommendation",
+    "Decision comparison",
+    "Decision Report",
+    "Regret insights",
+    "Notes",
+    "Time Saved estimate",
+]
+
+FREE_NOT_INCLUDED: list[str] = [
+    "Upgrade required to save a third active property",
+    "Commute-aware rankings and neighborhood enrichment",
+    "Multi-property side-by-side comparison",
+    "Advanced AI insights and negotiation tools",
+]
+
 PREMIUM_FEATURE_LABELS: list[str] = [
-    "Compare multiple properties side by side",
-    "Richer recommendation cards and decision briefs",
-    "Natural-language filtering and priority weighting",
-    "Lifestyle Score with deeper tradeoff summaries",
-    "AI recommendations, explanations, and reports",
-    "Commute analysis and neighborhood intelligence",
-    "Exports, saved preferences, and negotiation help",
-    "100 analyses per month and up to 50 saved properties",
+    "Everything in Free, plus:",
+    "More saved properties (up to 50)",
+    "Saved searches and new-listing alerts",
+    "Price-drop alerts",
+    "Commute calculations and neighborhood intelligence",
+    "Multiple saved-search profiles",
+    "Comparison history",
+    "PDF exports",
+    "AI Apartment Advisor",
+    "100 analyses per month",
 ]
 
 PREMIUM_PLUS_EXTRA_LABELS: list[str] = [
-    "Advanced analytics panels and deeper comparison views",
-    "Exclusive report styling and highest-limit indicators",
-    "Higher AI, map, and commute limits (500 analyses/month)",
-    "Up to 200 saved properties and more report generations",
-    "Early access to new features",
-    "Priority support and priority access to experiments",
+    "Negotiation Assistant",
+    "Renewal Advisor",
+    "True Monthly Cost panel",
+    "Advanced Deal Score",
+    "Premium AI Insights",
+    "Highest usage and enrichment limits (500 analyses/month)",
+    "Up to 200 saved properties",
+    "Exclusive Unlocked with Premium Plus area",
+    "Early access to future ownership and investment tools",
 ]
 
 BETA_FEATURE_LABELS: list[str] = [
@@ -82,18 +106,10 @@ BETA_FEATURE_LABELS: list[str] = [
 # OWNER_TEST is intentionally excluded — it must never appear on the pricing page.
 
 PLAN_DESCRIPTIONS: dict[str, str] = {
-    PLAN_FREE: (
-        "Explore and organize your options."
-    ),
-    PLAN_BETA: (
-        "Help shape the future of NestAI."
-    ),
-    PLAN_PREMIUM: (
-        "Make confident property decisions."
-    ),
-    PLAN_PREMIUM_PLUS: (
-        "Unlock the most advanced decision intelligence."
-    ),
+    PLAN_FREE: "Explore and organize up to 2 properties.",
+    PLAN_BETA: "Help shape the future of NestAI.",
+    PLAN_PREMIUM: "Make confident decisions with full decision intelligence.",
+    PLAN_PREMIUM_PLUS: "The most advanced decision and savings tier.",
 }
 
 PRICING_PLANS: list[dict] = [
@@ -105,19 +121,8 @@ PRICING_PLANS: list[dict] = [
         "badge": "Free",
         "description": PLAN_DESCRIPTIONS[PLAN_FREE],
         "eyebrow": "Essentials",
-        "features": [
-            "5 property analyses per month",
-            "1 active saved property",
-            "Apartment and home listing parsing",
-            "Basic filters, ranking, and saved preferences",
-            "Intentional feature previews with upgrade guidance",
-        ],
-        "not_included": [
-            "Commute-aware rankings and neighborhood enrichment",
-            "Decision briefs, AI reports, and exports",
-            "Multi-property side-by-side comparison",
-            "Advanced AI insights and negotiation tools",
-        ],
+        "features": FREE_FEATURE_LABELS,
+        "not_included": FREE_NOT_INCLUDED,
         "cta_label": "Create Free Account",
     },
     {
@@ -125,7 +130,7 @@ PRICING_PLANS: list[dict] = [
         "name": "Beta",
         "price": "$0",
         "period": "/month",
-        "badge": "Beta",
+        "badge": "Beta · Early Access",
         "description": PLAN_DESCRIPTIONS[PLAN_BETA],
         "eyebrow": "Invite only",
         "features": BETA_FEATURE_LABELS,
@@ -291,8 +296,6 @@ def render_plan_sidebar() -> None:
     saved_limit = get_quota("saved_property_limit")
     if saved_limit is None:
         st.caption("Saved properties: **Unlimited**")
-    elif saved_limit == 1:
-        st.caption("Active saved properties: up to **1**")
     else:
         st.caption(f"Saved properties: up to **{saved_limit}**")
 
@@ -376,7 +379,13 @@ def _render_dev_plan_switcher() -> None:
             key="dev_plan_selector",
         )
         if selected != current:
+            _prev = current
             set_plan(selected)
+            # Show the PP unlock banner when upgrading to Premium Plus
+            if selected == PLAN_PREMIUM_PLUS and _prev in (PLAN_FREE, PLAN_PREMIUM, PLAN_BETA):
+                st.session_state["nestai_pp_unlock_banner"] = True
+            else:
+                st.session_state.pop("nestai_pp_unlock_banner", None)
             st.rerun()
 
 
