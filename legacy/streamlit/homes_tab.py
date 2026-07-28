@@ -337,9 +337,10 @@ def _render_saved_homes() -> None:
         else:
             _render_home_cards(filtered)
 
-        # ── Comparison view (Premium) ─────────────────────────────────────────
-        # Free users can compare their first two saved homes.
-        # Paid plans can compare all saved homes allowed by their plan.
+            if len(filtered) >= 2:
+                _render_home_decision_engine(filtered)
+
+        # ── Comparison view ─────────────────────────────────────────────────
         if len(filtered) >= 2:
             if len(filtered) <= 2 or capability("can_compare_multiple_properties"):
                 _render_comparison_table(filtered)
@@ -347,7 +348,7 @@ def _render_saved_homes() -> None:
                 render_upgrade_prompt(
                     "can_compare_multiple_properties",
                     "Compare More Than 2 Homes",
-                )                
+                )              
 
     # ── Archived homes ────────────────────────────────────────────────────────
     if archived_homes:
