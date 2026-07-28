@@ -193,6 +193,9 @@ class NestAIAPIClient:
     def me(self) -> requests.Response:
         return self.request("GET", "/auth/me")
 
+    def start_trial(self) -> requests.Response:
+        return self.request("POST", "/auth/trial/start")
+
     def create_checkout_session(self, plan: str) -> requests.Response:
         return self.request("POST", "/billing/create-checkout-session", json={"plan": plan})
 

@@ -54,7 +54,7 @@ from credits import get_tier, has_feature, can_enrich_building, consume_analysis
 from cache import get_geocode, _address_key
 from feedback import submit_feedback, send_feedback_email
 from feature_access import get_effective_plan, get_quota, get_plan, is_dev_mode, is_owner_mode_env
-from plan_ui import render_plan_sidebar, render_pricing_cards, render_upgrade_prompt, _render_dev_plan_switcher
+from plan_ui import render_plan_sidebar, render_pricing_cards, render_upgrade_prompt
 from ui_state import get_account_type_options, get_navigation_options, plan_display_name
 from ui_theme import feature_pill, inject_global_styles, metric_card_html, normalize_plan, render_badge, tier_class
 from auth_service import (
@@ -369,19 +369,6 @@ if active_screen == "Logout":
 # ── Sidebar — AI Apartment Advisor ────────────────────────────────────────────
 
 with st.sidebar:
-    # ── DEV DIAGNOSTIC — remove before production merge ──────────────────────
-    # Confirms whether app.py can see the environment flags and whether the
-    # helper functions return True.  Rendered unconditionally so we can
-    # distinguish "flag not set" from "flag set but helper broken".
-    st.write("DEV ENV:", repr(os.getenv("NESTAI_DEV_MODE")))
-    st.write("OWNER ENV:", repr(os.getenv("NESTAI_OWNER_MODE")))
-    st.write("IS DEV:", is_dev_mode())
-    st.write("IS OWNER:", is_owner_mode_env())
-    # Direct call — does not depend on render_plan_sidebar() picking it up.
-    if is_dev_mode() or is_owner_mode_env():
-        _render_dev_plan_switcher()
-    # ── END DEV DIAGNOSTIC ───────────────────────────────────────────────────
-
     st.markdown("## 🧭 Workspace")
     if auth.is_authenticated():
         user_preview = auth.user() or {}
@@ -505,6 +492,29 @@ with st.sidebar:
         st.session_state.show_feedback_form = not st.session_state.show_feedback_form
         st.session_state.feedback_submitted_ref = None
         st.rerun()
+
+
+# ── Global: handle trial start request ───────────────────────────────────────
+if auth.is_authenticated() and st.session_state.get("nestai_start_trial_requested"):
+    st.session_state["nestai_start_trial_requested"] = False
+    try:
+        resp = api_client.start_trial()
+        if resp.status_code == 200:
+            payload = resp.json()
+            user_data = payload.get("user") or {}
+            if user_data:
+                existing = auth.user() or {}
+                existing.update(user_data)
+                auth._session_state["auth_user"] = existing
+            st.session_state["nestai_trial_started"] = True
+            st.rerun()
+        else:
+            detail = resp.json().get("detail", "Could not start trial.")
+            st.session_state["nestai_trial_error"] = detail
+    except Exception:
+        st.session_state["nestai_trial_error"] = (
+            "Could not reach the server to start your trial. Please try again."
+        )
 
 
 if active_screen == "Profile":
