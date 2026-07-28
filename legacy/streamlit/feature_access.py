@@ -303,9 +303,11 @@ def _init() -> None:
     # credits.py stores plan in `nestai_tier` ("free"/"premium").
     # Mirror into the canonical key ONLY when the plan is still at the
     # default FREE value — never downgrade a richer plan back to FREE.
+    # OWNER_TEST is explicitly excluded: it must only be set by the env-flag
+    # path above, never via a legacy tier string.
     if st.session_state.nestai_plan == PLAN_FREE and "nestai_tier" in st.session_state:
         legacy_tier = st.session_state.nestai_tier.upper()
-        if legacy_tier in _ALL_PLANS and legacy_tier != PLAN_FREE:
+        if legacy_tier in _ALL_PLANS and legacy_tier not in (PLAN_FREE, PLAN_OWNER_TEST):
             st.session_state.nestai_plan = legacy_tier
         elif legacy_tier == "PREMIUM":
             st.session_state.nestai_plan = PLAN_PREMIUM
