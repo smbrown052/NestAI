@@ -17,6 +17,10 @@ from html import escape as html_escape
 from pathlib import Path
 
 import streamlit as st
+from decision_engine import (
+    normalize_properties_for_decision_engine,
+    render_lifestyle_priorities,
+)
 
 from feature_access import (
     capability,
@@ -334,13 +338,16 @@ def _render_saved_homes() -> None:
             _render_home_cards(filtered)
 
         # ── Comparison view (Premium) ─────────────────────────────────────────
-        if capability("can_compare_multiple_properties") and len(filtered) >= 2:
-            _render_comparison_table(filtered)
-        elif len(active_homes) >= 2:
-            render_upgrade_prompt(
-                "can_compare_multiple_properties",
-                "Multi-Property Comparison",
-            )
+        # Free users can compare their first two saved homes.
+        # Paid plans can compare all saved homes allowed by their plan.
+        if len(filtered) >= 2:
+            if len(filtered) <= 2 or capability("can_compare_multiple_properties"):
+                _render_comparison_table(filtered)
+            else:
+                render_upgrade_prompt(
+                    "can_compare_multiple_properties",
+                    "Compare More Than 2 Homes",
+                )                
 
     # ── Archived homes ────────────────────────────────────────────────────────
     if archived_homes:
@@ -367,7 +374,48 @@ def _render_saved_homes() -> None:
                     else:
                         st.caption("_Upgrade to restore_")
 
+def _render_home_decision_engine(homes: list[dict]) -> None:
+    if len(homes) < 2:
+        return
 
+    priorities = render_lifestyle_priorities(
+        key_prefix="home",
+        subject_label="Home",
+    )
+
+    home_df = normalize_properties_for_decision_engine(
+        homes,
+        property_type="home",
+    )
+
+    st.caption(
+        "Home recommendations will use these priorities together with "
+        "price, space, property features, and available neighborhood data."
+    )
+
+    display_columns = [
+        column
+        for column in [
+            "property",
+            "price_num",
+            "beds_num",
+            "baths_num",
+            "sqft_num",
+            "property_subtype",
+            "parking",
+            "pets_policy",
+            "walk_score",
+        ]
+        if column in home_df.columns
+    ]
+
+    display_df = home_df[display_columns].fillna("—").astype(str)
+
+    st.dataframe(
+        display_df,
+        width="stretch",
+    )
+    
 def _apply_filters(homes: list[dict]) -> list[dict]:
     min_price = st.session_state.home_filter_min_price or 0
     max_price = st.session_state.home_filter_max_price or 0
@@ -511,5 +559,10 @@ def _render_comparison_table(homes: list[dict]) -> None:
     }
 
     import pandas as pd
+
     df = pd.DataFrame(rows).set_index("Address").T
-    st.dataframe(df, use_container_width=True)
+
+    # Streamlit/PyArrow requires each displayed column to use consistent types.
+    display_df = df.fillna("—").astype(str)
+
+    st.dataframe(display_df, width="stretch")
