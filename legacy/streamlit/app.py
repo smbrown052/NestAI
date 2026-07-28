@@ -1,4 +1,5 @@
 import time as _time
+from html import escape as html_escape
 from pathlib import Path
 
 import streamlit as st
@@ -48,17 +49,13 @@ except Exception:
         RegretAnalyzer = _module.RegretAnalyzer
     else:
         raise
-from credits import (
-    render_tier_badge,
-    get_tier,
-    has_feature,
-    can_enrich_building,
-    consume_analysis,
-    analyses_remaining,
-)
+from credits import get_tier, has_feature, can_enrich_building, consume_analysis, analyses_remaining
 from cache import get_geocode, _address_key
 from feedback import submit_feedback, send_feedback_email, validate_beta_code
+from feature_access import get_quota, get_plan
+from plan_ui import render_pricing_cards, render_upgrade_prompt
 from ui_state import get_account_type_options, get_navigation_options, plan_display_name
+from ui_theme import feature_pill, inject_global_styles, metric_card_html, normalize_plan, render_badge, tier_class
 from auth_service import (
     NestAIAPIClient,
     StreamlitAuthManager,
@@ -69,8 +66,20 @@ from auth_service import (
 )
 
 st.set_page_config(page_title="NestAI", page_icon="🏠", layout="wide")
-st.title("🏠 NestAI")
-st.markdown("### Find *your* nest.")
+inject_global_styles()
+st.markdown(
+    """
+    <div class="nestai-hero">
+        <div class="nestai-eyebrow">NestAI</div>
+        <h2>Upgrade your apartment search from raw listings to decision intelligence.</h2>
+        <p class="nestai-subtle">
+            Cleaner comparisons, stronger recommendations, and tier-aware insights that feel
+            like a premium SaaS product instead of a default listing tool.
+        </p>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 api_client = NestAIAPIClient()
 auth = StreamlitAuthManager(api_client)
@@ -142,6 +151,130 @@ def render_lifestyle_profile_controls() -> None:
         "commute_tolerance": commute_tolerance,
         "walk_score_priority": walk_priority,
     }
+
+
+def current_visual_tier(user: dict | None = None) -> str:
+    if user:
+        if user.get("beta_access") and not user.get("active_plan"):
+            return "beta"
+        return normalize_plan(user.get("active_plan") or user.get("tier") or get_plan() or get_tier())
+    if st.session_state.get("beta_tester") and normalize_plan(get_plan()) == "free":
+        return "beta"
+    return normalize_plan(get_plan() or get_tier())
+
+
+def compact_recommendation(row: pd.Series, ranked_df: pd.DataFrame) -> tuple[list[str], str]:
+    reasons = explain_match(row, st.session_state.user_profile, compute_match_score(row, st.session_state.user_profile))
+    strength_indicators: list[str] = []
+
+    diff, avg = price_position(row, ranked_df)
+    if diff is not None:
+        strength_indicators.append("Below peer avg" if diff < 0 else "Premium priced")
+    walk_score = row.get("official_walk_score") or row.get("walk_score")
+    if walk_score and pd.notna(walk_score):
+        strength_indicators.append("High walkability" if float(walk_score) >= 70 else "Balanced location")
+    commute = row.get("commute_transit_min") or row.get("commute_driving_min") or row.get("metro_min")
+    if commute and pd.notna(commute):
+        strength_indicators.append("Commute-friendly" if float(commute) <= 30 else "Longer commute")
+    sqft_value = row.get("sqft_num")
+    if sqft_value and pd.notna(sqft_value) and sqft_value >= ranked_df["sqft_num"].fillna(0).median():
+        strength_indicators.append("Above-average space")
+    if row.get("has_den"):
+        strength_indicators.append("Extra flex space")
+    if row.get("has_laundry"):
+        strength_indicators.append("In-unit laundry")
+
+    strength_indicators = strength_indicators[:4] or ["Balanced overall fit"]
+    summary = reasons[0] if reasons else "Strong overall balance across budget, space, and neighborhood fit."
+    return strength_indicators, summary
+
+
+def render_decision_brief(top3: pd.DataFrame, ranked_df: pd.DataFrame, weights: dict, regret_analyzer: RegretAnalyzer, tradeoff: TradeoffAnalyzer | None, tier: str) -> None:
+    best = top3.iloc[0]
+    alternative = top3.iloc[1] if len(top3) > 1 else None
+    best_match = explain_match(best, st.session_state.user_profile, compute_match_score(best, st.session_state.user_profile))
+    best_reasons = best_match[:2] or [f"Highest NestAI Score at {best.get('nestai_score', 0):.0f}/100"]
+    regret = regret_analyzer.analyze_apartment(0)
+    concern = regret.get("concerns", [None])[0]
+
+    if alternative is not None and tradeoff:
+        alt_summary = tradeoff.generate_tradeoff_explanation(0, 1).split("\n")
+        alt_tradeoff = next((line.replace("• ", "") for line in alt_summary if line.strip().startswith("•")), "Closest alternative with a different balance of cost and space.")
+        alternative_label = f"{alternative.get('property', 'Unknown')} · Unit {alternative.get('unit', 'N/A')}"
+    elif alternative is not None:
+        alt_tradeoff = "Closest alternative if you want a different balance of price, commute, or space."
+        alternative_label = f"{alternative.get('property', 'Unknown')} · Unit {alternative.get('unit', 'N/A')}"
+    else:
+        alt_tradeoff = "Add another saved unit to reveal the strongest alternative."
+        alternative_label = "No alternative yet"
+
+    cards = [
+        ("Best Overall Choice", f"{best.get('property', 'Unknown')} · Unit {best.get('unit', 'N/A')}"),
+        ("Why It Wins", " • ".join(best_reasons)),
+        ("Main Tradeoff", alt_tradeoff),
+        ("Potential Regret", concern["title"] if concern else regret.get("recommendation", "No major red flags.")),
+        ("Best Alternative", alternative_label),
+    ]
+
+    st.markdown("### Executive Decision Brief")
+    st.caption("A concise recommendation designed to feel more like an expert memo than raw AI output.")
+    cols = st.columns(len(cards))
+    for col, (label, value) in zip(cols, cards):
+        with col:
+            st.markdown(metric_card_html(label, value, tier=tier), unsafe_allow_html=True)
+
+    if tier == "premium_plus":
+        st.markdown(
+            "<div class='nestai-upgrade-card tier-premium-plus'><div class='nestai-eyebrow'>Premium Plus insight</div><h3>Everything in Premium, plus deeper context</h3><p class='nestai-section-note'>Advanced analytics stay visible here so your highest-limit plan feels clearly more complete.</p></div>",
+            unsafe_allow_html=True,
+        )
+
+
+def render_rank_card(rank: int, row: pd.Series, ranked_df: pd.DataFrame, tier: str) -> None:
+    strengths, summary = compact_recommendation(row, ranked_df)
+    diff, avg = price_position(row, ranked_df)
+    if diff is None:
+        price_compare = "Peer average unavailable"
+    elif diff < 0:
+        price_compare = f"${abs(diff):,} below peer average"
+    elif diff > 0:
+        price_compare = f"${abs(diff):,} above peer average"
+    else:
+        price_compare = "At peer average"
+
+    pills = []
+    for item in strengths:
+        tone = "premium" if tier in {"premium", "premium_plus"} else "default"
+        if "longer" in item.lower() or "premium priced" in item.lower():
+            tone = "warning"
+        elif "below" in item.lower() or "high" in item.lower() or "friendly" in item.lower():
+            tone = "positive"
+        pills.append(feature_pill(item, tone))
+
+    price_num = row.get("price_num")
+    sqft_num = row.get("sqft_num")
+    beds = row.get("beds") or row.get("beds_num") or "—"
+    baths = row.get("baths") or "—"
+    class_names = f"nestai-ranking-card {tier_class(tier)} {'top-ranked' if rank == 1 else ''}"
+
+    st.markdown(
+        (
+            f"<div class='{class_names}'>"
+            "<div class='nestai-ranking-header'>"
+            f"<div><div class='nestai-rank-number'>Rank #{rank}</div>"
+            f"<h3>{html_escape(str(row.get('property', 'Unknown')))}</h3>"
+            f"<div class='nestai-ranking-subtitle'>Unit {html_escape(str(row.get('unit', 'N/A')))}</div></div>"
+            f"<div><div class='nestai-ranking-score'>{float(row.get('nestai_score', 0)):.0f}/100</div>"
+            "<div class='nestai-ranking-subtitle'>NestAI Score</div></div>"
+            "</div>"
+            f"<p class='nestai-ranking-meta'>${int(price_num) if pd.notna(price_num) else 0:,}/mo · {price_compare}"
+            f" · {int(sqft_num) if pd.notna(sqft_num) else 0} sqft · {html_escape(str(beds))} bed · {html_escape(str(baths))} bath</p>"
+            f"<div>{''.join(pills)}</div>"
+            f"<p class='nestai-section-note'>{html_escape(summary)}</p>"
+            "</div>"
+        ),
+        unsafe_allow_html=True,
+    )
 
 
 # ── Session state ─────────────────────────────────────────────────────────────
@@ -295,7 +428,7 @@ with st.sidebar:
     )
 
     if not has_feature("ai_chat"):
-        st.info("Upgrade to Premium to use the AI Advisor.")
+        render_upgrade_prompt("can_use_ai_chat", "AI Apartment Advisor")
     elif not openai_configured():
         st.info("Add `OPENAI_API_KEY` to Streamlit secrets to enable the advisor.")
     else:
@@ -368,23 +501,68 @@ with st.sidebar:
 if active_screen == "Profile":
     if auth.is_authenticated():
         user = auth.user() or {}
-        st.markdown("### 👤 Profile")
+        visual_tier = current_visual_tier(user)
+        st.markdown("### Account Dashboard")
+        render_badge(visual_tier, icon="✦")
+        st.markdown(
+            (
+                f"<div class='nestai-profile-card {tier_class(visual_tier)}'>"
+                "<div class='nestai-eyebrow'>Profile</div>"
+                f"<h3>{html_escape(user.get('display_name') or 'NestAI Member')}</h3>"
+                f"<p class='nestai-section-note'>{html_escape(user.get('email') or '—')}</p>"
+                f"<p class='nestai-subtle'>Your active tier is <strong>{html_escape(plan_display_name(user.get('active_plan') or user.get('tier', 'free')))}</strong>. "
+                "This dashboard keeps your plan status, limits, and unlocked value visible in one place.</p>"
+                "</div>"
+            ),
+            unsafe_allow_html=True,
+        )
 
-        metrics = st.columns(4)
-        metrics[0].metric("Display Name", user.get("display_name") or "—")
-        metrics[1].metric("Email", user.get("email") or "—")
-        metrics[2].metric("Selected Account Type", plan_display_name(user.get("selected_account_type") or user.get("active_plan") or "free"))
-        metrics[3].metric("Active Plan", plan_display_name(user.get("active_plan") or user.get("tier", "free")))
+        quota = get_quota("monthly_analyses_limit")
+        saved_limit = get_quota("saved_property_limit")
+        payment_status = "Pending" if user.get("subscription_status") == "pending_payment" else ("Paid" if user.get("active_plan") in {"premium", "premium_plus"} else "Not required")
+        saved_buildings = st.session_state.comparison_df["property"].nunique() if not st.session_state.comparison_df.empty and "property" in st.session_state.comparison_df.columns else 0
+        usage_cards = [
+            ("Active Tier", plan_display_name(user.get("active_plan") or user.get("tier", "free")), user.get("subscription_status") or "active"),
+            ("Usage Summary", f"{analyses_remaining() if analyses_remaining() is not None else 'Unlimited'} analyses left", f"Limit: {quota if quota is not None else 'Unlimited'}"),
+            ("Saved Properties", str(len(st.session_state.comparison_df)), f"Buildings tracked: {saved_buildings}"),
+            ("Current Limits", f"{saved_limit if saved_limit is not None else 'Unlimited'} saved", "Tier-aware limits and insights"),
+        ]
+        usage_cols = st.columns(4)
+        for col, (label, value, helper) in zip(usage_cols, usage_cards):
+            with col:
+                st.markdown(metric_card_html(label, value, helper, tier=visual_tier), unsafe_allow_html=True)
 
         status_cols = st.columns(3)
-        status_cols[0].metric("Subscription Status", user.get("subscription_status") or "active")
-        payment_status = "Pending" if user.get("subscription_status") == "pending_payment" else ("Paid" if user.get("active_plan") in {"premium", "premium_plus"} else "Not required")
-        status_cols[1].metric("Payment Status", payment_status)
-        status_cols[2].metric("Beta Access", "Enabled" if user.get("beta_access") else "Disabled")
+        with status_cols[0]:
+            st.markdown(metric_card_html("Subscription Status", user.get("subscription_status") or "active", "Billing state", tier=visual_tier), unsafe_allow_html=True)
+        with status_cols[1]:
+            st.markdown(metric_card_html("Payment Status", payment_status, "Commercial plan readiness", tier=visual_tier), unsafe_allow_html=True)
+        with status_cols[2]:
+            st.markdown(metric_card_html("Beta Status", "Enabled" if user.get("beta_access") else "Standard", "Early-access visibility", tier=visual_tier), unsafe_allow_html=True)
 
-        usage_cols = st.columns(2)
-        usage_cols[0].metric("Saved Units", len(st.session_state.comparison_df))
-        usage_cols[1].metric("Saved Buildings", st.session_state.comparison_df["property"].nunique() if not st.session_state.comparison_df.empty and "property" in st.session_state.comparison_df.columns else 0)
+        unlocked = []
+        if has_feature("walk_score"):
+            unlocked.append("Neighborhood intelligence")
+        if has_feature("ai_chat"):
+            unlocked.append("AI advisor")
+        if has_feature("decision_reports"):
+            unlocked.append("Decision reports")
+        if has_feature("exports"):
+            unlocked.append("Exports")
+        if has_feature("negotiation"):
+            unlocked.append("Negotiation help")
+        unlocked = unlocked or ["Core parsing and ranking"]
+        st.markdown(
+            (
+                f"<div class='nestai-profile-card {tier_class(visual_tier)}'>"
+                "<div class='nestai-eyebrow'>Unlocked features</div>"
+                f"<h3>{html_escape(plan_meta := plan_display_name(user.get('active_plan') or user.get('tier', 'free')))}</h3>"
+                f"<p class='nestai-section-note'>{' '.join(feature_pill(item, 'premium' if visual_tier in {'premium', 'premium_plus'} else 'default') for item in unlocked)}</p>"
+                "<p class='nestai-subtle'>Premium and Premium Plus expand the presentation, not just the buttons you can click.</p>"
+                "</div>"
+            ),
+            unsafe_allow_html=True,
+        )
 
         if user.get("beta_approved_at"):
             st.caption(f"Beta approved at {user.get('beta_approved_at')}")
@@ -404,6 +582,21 @@ if active_screen == "Profile":
                 if auth.confirm_pending_payment():
                     st.session_state.auth_notice = "Payment verified. Premium access activated."
                     st.rerun()
+
+        action_cols = st.columns(2)
+        with action_cols[0]:
+            if visual_tier in {"premium", "premium_plus"}:
+                if st.button("Manage Subscription", use_container_width=True):
+                    st.session_state.main_nav = "Pricing"
+                    st.rerun()
+            else:
+                if st.button("Upgrade Plan", use_container_width=True, type="primary"):
+                    st.session_state.main_nav = "Pricing"
+                    st.rerun()
+        with action_cols[1]:
+            if st.button("Review Pricing", use_container_width=True):
+                st.session_state.main_nav = "Pricing"
+                st.rerun()
 
         render_lifestyle_profile_controls()
 
@@ -518,77 +711,7 @@ if active_screen == "Create Account":
     st.stop()
 
 if active_screen == "Pricing":
-    st.markdown("### 💵 Pricing")
-    c1, c2, c3, c4 = st.columns(4)
-
-    with c1:
-        st.markdown("#### FREE")
-        st.write("$0 / month")
-        st.markdown("- Create an account")
-        st.markdown("- 1 active saved property")
-        st.markdown("- Up to 5 property analyses per month")
-        st.markdown("- Basic apartment parsing")
-        st.markdown("- Basic house parsing")
-        st.markdown("- Basic rankings and filters")
-        st.markdown("- Example listings")
-        st.markdown("- No AI recommendations")
-        st.markdown("- No commute or neighborhood enrichment")
-        st.markdown("- No multi-property comparison")
-        if st.button("Create Free Account", key="pricing_free", use_container_width=True):
-            st.session_state.signup_account_type = "free"
-            st.session_state.main_nav = "Create Account"
-            st.rerun()
-
-    with c2:
-        st.markdown("#### BETA")
-        st.write("Invite only")
-        st.markdown("- Everything in Free")
-        st.markdown("- Beta invite-code access")
-        st.markdown("- Early access to new features")
-        st.markdown("- Higher configurable usage limits")
-        st.markdown("- AI features according to beta quotas")
-        st.markdown("- Comparison tools")
-        st.markdown("- Feedback and bug-report access")
-        st.markdown("- No payment required during beta")
-        if st.button("Join with Invite Code", key="pricing_beta", use_container_width=True):
-            st.session_state.signup_account_type = "beta"
-            st.session_state.main_nav = "Create Account"
-            st.rerun()
-
-    with c3:
-        st.markdown("#### PREMIUM")
-        st.write("$12 / month")
-        st.markdown("- Higher or unlimited property-analysis limits according to configured quotas")
-        st.markdown("- Multiple saved properties")
-        st.markdown("- Apartment and house comparisons")
-        st.markdown("- Lifestyle Score")
-        st.markdown("- AI recommendations and explanations")
-        st.markdown("- Commute analysis")
-        st.markdown("- Neighborhood enrichment")
-        st.markdown("- Decision reports")
-        st.markdown("- Filterable notes in the Full Ranking Table")
-        st.markdown("- Premium support according to existing product rules")
-        if st.button("Choose Premium", key="pricing_premium", use_container_width=True):
-            st.session_state.signup_account_type = "premium"
-            st.session_state.main_nav = "Create Account"
-            st.rerun()
-
-    with c4:
-        st.markdown("#### PREMIUM PLUS")
-        st.write("$25 / month")
-        st.markdown("Everything in Premium, plus:")
-        st.markdown("- Higher AI usage limits")
-        st.markdown("- Higher commute and enrichment limits")
-        st.markdown("- Advanced reports")
-        st.markdown("- Advanced comparison insights")
-        st.markdown("- Early access to premium features")
-        st.markdown("- Future portfolio and investment tools")
-        st.markdown("- Priority support")
-        if st.button("Choose Premium Plus", key="pricing_premium_plus", use_container_width=True):
-            st.session_state.signup_account_type = "premium_plus"
-            st.session_state.main_nav = "Create Account"
-            st.rerun()
-
+    render_pricing_cards()
     st.caption("Premium and Premium Plus require payment setup before activation. Accounts are created as Free with your selected plan recorded.")
     st.stop()
 
@@ -685,14 +808,17 @@ if active_screen not in {"Apartments", "Houses", "Pricing", "Profile", "Login", 
 
 # ── Hero / Intro ──────────────────────────────────────────────────────────────
 
-st.markdown("""
-<div class="hero">
-    <p>
-    Find your next apartment in seconds. Compare floor plans, pricing,
-    square footage, metro access, and amenities without building spreadsheets.
-    </p>
-</div>
-""", unsafe_allow_html=True)
+landing_tier = current_visual_tier(auth.user() if auth.is_authenticated() else None)
+st.markdown(
+    (
+        f"<div class='nestai-surface {tier_class(landing_tier)}' style='padding:1.25rem 1.35rem; margin-bottom:1rem;'>"
+        "<div class='nestai-eyebrow'>Apartment workflow</div>"
+        "<h3>Rank homes with more clarity and less spreadsheet work.</h3>"
+        "<p class='nestai-subtle'>Compare floor plans, pricing, lifestyle fit, and neighborhood quality in one professional decision workspace.</p>"
+        "</div>"
+    ),
+    unsafe_allow_html=True,
+)
 
 with st.expander("Why Nest AI?", expanded=False):
     st.write("""
@@ -950,9 +1076,9 @@ if auth.is_authenticated() and not st.session_state.comparison_df.empty:
         )
     with status_col:
         if not has_feature("walk_score"):
-            st.caption(
-                f"🔒 Neighborhood enrichment requires Premium. "
-                f"Upgrade to unlock Walk Score, commute & amenities."
+            st.markdown(
+                "<div class='nestai-locked-card'><div class='nestai-eyebrow'>Locked intelligence</div><h3>Neighborhood enrichment</h3><p class='nestai-section-note'>Unlock Walk Score, commute context, and nearby essentials to make ranking more trustworthy.</p></div>",
+                unsafe_allow_html=True,
             )
         elif not maps_api_configured() and not walkscore_api_configured():
             st.caption("Add API keys to Streamlit secrets to enable enrichment.")
@@ -968,6 +1094,9 @@ if auth.is_authenticated() and not st.session_state.comparison_df.empty:
             )
         else:
             st.caption("✅ Enrichment complete.")
+
+    if not has_feature("walk_score"):
+        render_upgrade_prompt("can_use_walk_score_api", "Neighborhood Enrichment")
 
     if enrich_clicked and can_enrich:
         enriched_count = 0
@@ -1114,50 +1243,26 @@ if auth.is_authenticated() and not st.session_state.comparison_df.empty:
             ascending=[False, False],
         )
         top3 = ranked_df.head(3)
+        visual_tier = current_visual_tier(auth.user() if auth.is_authenticated() else None)
 
-        # ── Top-3 badges ───────────────────────────────────────────────────
+        render_decision_brief(top3, ranked_df, weights, regret_analyzer := RegretAnalyzer(ranked_df, weights), tradeoff := (TradeoffAnalyzer(ranked_df) if len(ranked_df) > 1 else None), visual_tier)
+
+        # ── Top-ranked cards ───────────────────────────────────────────────
+        st.markdown("#### Ranked shortlist")
+        st.caption("The best option gets a subtle emphasis, while paid tiers surface richer context and clearer tradeoffs.")
         for i, (_, row) in enumerate(top3.iterrows(), start=1):
-            price_num = row.get("price_num")
-            sqft_num = row.get("sqft_num")
-            price_display = int(price_num) if pd.notna(price_num) else 0
-            sqft_display = int(sqft_num) if pd.notna(sqft_num) else 0
-
-            nestai_score = row.get("nestai_score", 0)
-
-            # Price position vs same-bed-count average (no leading minus)
-            diff, avg = price_position(row, ranked_df)
-            if diff is not None:
-                if diff >= 0:
-                    price_badge = f"  |  ${abs(diff):,} above avg"
-                else:
-                    price_badge = f"  |  ${abs(diff):,} below avg"
-            else:
-                price_badge = ""
-
-            # Commute display
-            commute_display = row.get("commute_display", "")
-            commute_line = f"\n🗺 Morning commute: {commute_display}" if commute_display and commute_display != "—" else ""
-
-            st.success(
-                f"#{i} • {row.get('property', 'Unknown')} • Unit {row.get('unit', 'N/A')}"
-                f"  |  NestAI Score {nestai_score:.0f}/100  \n"
-                f"${price_display:,}/mo{price_badge} • {sqft_display} sqft • "
-                f"{row.get('beds', '')} • {row.get('baths', '')}"
-                f"{commute_line}"
-            )
+            render_rank_card(i, row, ranked_df, visual_tier)
 
         st.markdown("#### 🎯 Breakdown")
         st.caption(
             "NestAI Score = 60% Lifestyle + 25% Profile Match + 15% Relative Rank (or 85%/15% when no profile is set)."
         )
-        tradeoff = TradeoffAnalyzer(ranked_df) if len(ranked_df) > 1 else None
-        regret_analyzer = RegretAnalyzer(ranked_df, weights)
         for rank, (_, row) in enumerate(top3.iterrows(), start=1):
             unit_id = row.get("unit", f"Unit {rank}")
             overview_price = row.get("price_num")
             overview_sqft = row.get("sqft_num")
             with st.expander(
-                f"Rank #{rank} · {row.get('property', 'Unknown')} · Unit {unit_id}",
+                f"Why this ranks here · #{rank} · {row.get('property', 'Unknown')} · Unit {unit_id}",
                 expanded=(rank == 1),
             ):
                 tab1, tab2, tab3, tab4 = st.tabs(
@@ -1321,7 +1426,7 @@ if auth.is_authenticated() and not st.session_state.comparison_df.empty:
                             ),
                         )
         elif openai_configured():
-            st.caption("Upgrade to Premium to use the AI Rent Negotiator.")
+            render_upgrade_prompt("can_use_ai_negotiation", "AI Rent Negotiator")
 
         # ── Full ranked table ──────────────────────────────────────────────
         st.markdown("### <a id='full-table'>📊 Full Ranking Table</a>", unsafe_allow_html=True)

@@ -13,6 +13,7 @@ NOTE:
 from __future__ import annotations
 
 import json
+from html import escape as html_escape
 from pathlib import Path
 
 import streamlit as st
@@ -20,6 +21,7 @@ import streamlit as st
 from feature_access import (
     capability,
     can_save_another_property,
+    get_plan,
     require_capability,
 )
 from home_storage import (
@@ -37,6 +39,7 @@ from parser.home_listing import (
     parse_home_listing_text,
 )
 from plan_ui import render_upgrade_prompt, navigate_to_plans
+from ui_theme import feature_pill, normalize_plan, tier_class
 
 # ── Session-state keys (homes tab only) ──────────────────────────────────────
 
@@ -411,6 +414,7 @@ def _apply_sort(homes: list[dict]) -> list[dict]:
 
 
 def _render_home_cards(homes: list[dict]) -> None:
+    visual_tier = normalize_plan(get_plan())
     for home in homes:
         with st.container():
             title = home.get("display_name") or home.get("address") or "Saved Home"
@@ -426,8 +430,23 @@ def _render_home_cards(homes: list[dict]) -> None:
                 if home.get("monthly_rent")
                 else (f"${home.get('sale_price', 0):,}" if home.get("sale_price") else "—")
             )
-
-            st.markdown(f"**{title}** — {type_str}")
+            pills = [
+                feature_pill(type_str or "Home", "default"),
+                feature_pill(price_str, "premium" if visual_tier in {"premium", "premium_plus"} else "positive"),
+            ]
+            if home.get("walk_score") is not None:
+                pills.append(feature_pill(f"Walk {home.get('walk_score')}/100", "positive"))
+            st.markdown(
+                (
+                    f"<div class='nestai-home-card {tier_class(visual_tier)}'>"
+                    "<div class='nestai-eyebrow'>Saved home</div>"
+                    f"<h3>{html_escape(str(title))}</h3>"
+                    f"<p class='nestai-section-note'>{html_escape(str(home.get('address') or ''))}</p>"
+                    f"<div>{''.join(pills)}</div>"
+                    "</div>"
+                ),
+                unsafe_allow_html=True,
+            )
 
             m1, m2, m3, m4, m5 = st.columns(5)
             m1.metric("Price", price_str)
@@ -455,7 +474,17 @@ def _render_home_cards(homes: list[dict]) -> None:
 
 
 def _render_comparison_table(homes: list[dict]) -> None:
-    st.markdown("#### 📊 Side-by-Side Comparison")
+    visual_tier = normalize_plan(get_plan())
+    st.markdown(
+        (
+            f"<div class='nestai-comparison-card {tier_class(visual_tier)}'>"
+            "<div class='nestai-eyebrow'>Premium comparison</div>"
+            "<h3>Side-by-side comparison</h3>"
+            "<p class='nestai-section-note'>Compare saved homes in one clean panel instead of flipping between cards.</p>"
+            "</div>"
+        ),
+        unsafe_allow_html=True,
+    )
 
     def price_str(h):
         if h.get("monthly_rent"):
