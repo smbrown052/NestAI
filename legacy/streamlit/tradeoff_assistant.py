@@ -163,11 +163,78 @@ class TradeoffAnalyzer:
         
         return explanation
     
+    def explain_why_winner(self) -> str:
+        """
+        Explain why rank #1 beat rank #2, from the winner's perspective.
+        """
+        if len(self.ranked_df) < 2:
+            return "Only one option saved — add another to see a comparison."
+
+        winner = self.ranked_df.iloc[0]
+        runner_up = self.ranked_df.iloc[1]
+
+        winner_label = self._label(winner)
+        runner_label = self._label(runner_up)
+
+        explanation = (
+            f"**Why {winner_label} (Rank #1) beat {runner_label} (Rank #2):**\n\n"
+        )
+
+        price_w = self._to_number(winner.get("price_num", 0))
+        price_r = self._to_number(runner_up.get("price_num", 0))
+        price_advantage = price_r - price_w  # positive = winner is cheaper
+
+        sqft_w = self._to_number(winner.get("sqft_num", 0))
+        sqft_r = self._to_number(runner_up.get("sqft_num", 0))
+        sqft_advantage = sqft_w - sqft_r  # positive = winner has more space
+
+        commute_w = self._to_number(winner.get("metro_min") or winner.get("commute_transit_min"), 999)
+        commute_r = self._to_number(runner_up.get("metro_min") or runner_up.get("commute_transit_min"), 999)
+        commute_advantage = commute_r - commute_w  # positive = winner has shorter commute
+
+        score_w = self._to_number(winner.get("nestai_score", 0))
+        score_r = self._to_number(runner_up.get("nestai_score", 0))
+
+        advantages = []
+
+        if price_advantage > 0:
+            advantages.append(f"💰 ${price_advantage:,.0f}/mo less expensive")
+        if sqft_advantage > 50:
+            advantages.append(f"📐 {sqft_advantage:.0f} sq ft more space")
+        if 0 < commute_advantage < 999:
+            advantages.append(f"🚇 {commute_advantage:.0f} min shorter commute")
+
+        winner_amenities = self._extract_amenities(winner)
+        runner_amenities = self._extract_amenities(runner_up)
+        exclusive = [a for a in winner_amenities if a not in runner_amenities]
+        for amenity in exclusive[:2]:
+            advantages.append(f"✨ Has {amenity}")
+
+        if score_w > score_r:
+            advantages.append(f"🏆 {score_w - score_r:.0f} pt NestAI Score advantage")
+
+        if not advantages:
+            advantages = ["Higher overall lifestyle score from your priorities"]
+
+        for adv in advantages:
+            explanation += f"• {adv}\n"
+
+        # Compromise: what winner gives up
+        given_up = [a for a in runner_amenities if a not in winner_amenities]
+        if given_up or price_advantage < 0:
+            explanation += "\n**Key compromise:**\n"
+            if price_advantage < 0:
+                explanation += f"• Costs ${abs(price_advantage):,.0f}/mo more\n"
+            for item in given_up[:2]:
+                explanation += f"• No {item} (runner-up has it)\n"
+
+        return explanation
+
     def compare_vs_best(self, apt_rank: int) -> str:
         """
         Compare any apartment vs the #1 ranked apartment.
         """
         if apt_rank == 0:
             return "This is already your top recommendation!"
-        
+
         return self.generate_tradeoff_explanation(apt_rank, 0)
