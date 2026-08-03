@@ -40,8 +40,12 @@ AUTH_STATE_DEFAULTS = {
 def login_error_message(status_code: int) -> str:
     if status_code == 0:
         return SERVICE_UNAVAILABLE_MESSAGE
+    if status_code == 404:
+        return "Account not found."
     if status_code == 401:
-        return "Invalid email or password."
+        return "Incorrect password."
+    if status_code == 403:
+        return "This account is inactive."
     return "Could not sign in right now. Please try again."
 
 
@@ -209,6 +213,12 @@ class NestAIAPIClient:
     def login(self, email: str, password: str) -> requests.Response:
         return self.request("POST", "/auth/login", json={"email": email, "password": password})
 
+    def forgot_password(self, email: str) -> requests.Response:
+        return self.request("POST", "/auth/forgot-password", json={"email": email})
+
+    def reset_password(self, token: str, password: str) -> requests.Response:
+        return self.request("POST", "/auth/reset-password", json={"token": token, "password": password})
+
     def me(self) -> requests.Response:
         return self.request("GET", "/auth/me")
 
@@ -374,6 +384,12 @@ class StreamlitAuthManager:
 
     def fetch_current_user(self) -> requests.Response:
         return self.api_client.me()
+
+    def forgot_password(self, email: str) -> requests.Response:
+        return self.api_client.forgot_password(email)
+
+    def reset_password(self, token: str, password: str) -> requests.Response:
+        return self.api_client.reset_password(token, password)
 
     def store_checkout(self, checkout_session_id: str | None, checkout_url: str | None) -> None:
         session_state = self._session_state

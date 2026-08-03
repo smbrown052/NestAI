@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import os
 import secrets
 
@@ -22,8 +22,16 @@ from app.auth.plans import (
     set_user_plan,
 )
 from app.billing.service import create_checkout_session, payment_required_message
-from app.auth.security import create_access_token, hash_password, verify_password
+from app.auth.security import (
+    create_access_token,
+    hash_password,
+    hash_reset_token,
+    normalize_email,
+    verify_password,
+)
+from app.core.config import get_settings
 from app.db.models.referral import Referral
+from app.db.models.password_reset_token import PasswordResetToken
 from app.db.models.user import User
 from app.db.models.beta_access import BetaAccess
 from app.db.session import get_db
@@ -32,22 +40,43 @@ from .dependencies import get_current_user
 from .schemas import (
     AccessTokenResponse,
     AuthUserRead,
+    ForgotPasswordRequest,
+    ForgotPasswordResponse,
     LoginRequest,
     ReferralInviteRequest,
     ReferralRead,
     ReferralSummaryRead,
     RegisterRequest,
+    ResetPasswordRequest,
 )
 
 _OWNER_EMAIL_ENV = "NESTAI_OWNER_EMAIL"
 
 
 def _owner_email() -> str | None:
-    value = os.environ.get(_OWNER_EMAIL_ENV, "").strip().lower()
+    value = normalize_email(os.environ.get(_OWNER_EMAIL_ENV, ""))
     return value or None
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+_RESET_TOKEN_TTL_SECONDS = 60 * 60
+
+
+def _sync_owner_admin(user: User, db: Session) -> User:
+    owner_email = _owner_email()
+    if owner_email and normalize_email(user.email) == owner_email and not user.is_admin:
+        user.is_admin = True
+        db.commit()
+        db.refresh(user)
+    return user
+
+
+def _dev_reset_link(token: str) -> str | None:
+    settings = get_settings()
+    if not settings.is_development:
+        return None
+    base_url = (os.environ.get("NESTAI_STREAMLIT_URL") or "http://localhost:8501").rstrip("/")
+    return f"{base_url}/?screen=Reset%20Password&reset_token={token}"
 
 
 def _serialize_user(user: User) -> AuthUserRead:
@@ -103,7 +132,7 @@ def register_user(payload: RegisterRequest, db: Session = Depends(get_db)):
     if not is_valid_plan(account_type):
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid account type")
 
-    normalized_email = payload.email.strip().lower()
+    normalized_email = normalize_email(payload.email)
 
     existing = db.query(User).filter(User.email == normalized_email).first()
     if existing:
@@ -199,6 +228,7 @@ def register_user(payload: RegisterRequest, db: Session = Depends(get_db)):
 
     db.commit()
     db.refresh(user)
+    user = _sync_owner_admin(user, db)
 
     token = create_access_token({"sub": str(user.id), "email": user.email})
     user_data = _serialize_user(user).model_dump(mode="json")
@@ -241,19 +271,83 @@ def register_user(payload: RegisterRequest, db: Session = Depends(get_db)):
 
 @router.post("/login", response_model=AccessTokenResponse)
 def login_user(payload: LoginRequest, db: Session = Depends(get_db)) -> AccessTokenResponse:
-    normalized_email = payload.email.strip().lower()
+    normalized_email = normalize_email(payload.email)
     user = db.query(User).filter(User.email == normalized_email).first()
-    if not user or not verify_password(payload.password, user.hashed_password):
+    if not user:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid credentials",
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Account not found",
             headers={"WWW-Authenticate": "Bearer"},
         )
     if not user.is_active:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account is disabled")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Inactive account")
+    if not verify_password(payload.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    user = _sync_owner_admin(user, db)
 
     token = create_access_token({"sub": str(user.id), "email": user.email})
     return AccessTokenResponse(access_token=token)
+
+
+@router.post("/forgot-password", response_model=ForgotPasswordResponse)
+def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db)) -> ForgotPasswordResponse:
+    normalized_email = normalize_email(payload.email)
+    user = db.query(User).filter(User.email == normalized_email).first()
+    reset_link = None
+
+    if user and user.is_active:
+        now = datetime.now(timezone.utc)
+        db.query(PasswordResetToken).filter(
+            PasswordResetToken.user_id == user.id,
+            PasswordResetToken.used_at.is_(None),
+        ).update({"used_at": now}, synchronize_session=False)
+        raw_token = secrets.token_urlsafe(32)
+        db.add(
+            PasswordResetToken(
+                user_id=user.id,
+                token_hash=hash_reset_token(raw_token),
+                expires_at=now.replace(microsecond=0) + timedelta(seconds=_RESET_TOKEN_TTL_SECONDS),
+            )
+        )
+        db.commit()
+        reset_link = _dev_reset_link(raw_token)
+
+    return ForgotPasswordResponse(
+        message="If an account exists for that email, a password reset link has been sent.",
+        reset_link=reset_link,
+    )
+
+
+@router.post("/reset-password")
+def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db)):
+    token_hash = hash_reset_token(payload.token)
+    now = datetime.now(timezone.utc)
+    reset_token = (
+        db.query(PasswordResetToken)
+        .filter(PasswordResetToken.token_hash == token_hash)
+        .filter(PasswordResetToken.used_at.is_(None))
+        .filter(PasswordResetToken.expires_at >= now)
+        .first()
+    )
+    if not reset_token:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Reset link is invalid or expired")
+
+    user = db.query(User).filter(User.id == reset_token.user_id).first()
+    if not user or not user.is_active:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Inactive account")
+
+    user.hashed_password = hash_password(payload.password)
+    reset_token.used_at = now
+    db.query(PasswordResetToken).filter(
+        PasswordResetToken.user_id == user.id,
+        PasswordResetToken.used_at.is_(None),
+    ).update({"used_at": now}, synchronize_session=False)
+    db.commit()
+    return {"message": "Password updated successfully"}
 
 
 @router.get("/me", response_model=AuthUserRead)

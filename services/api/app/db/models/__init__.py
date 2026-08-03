@@ -8,6 +8,7 @@ from app.db.models.comparison import Comparison
 from app.db.models.credits import CreditBalance, CreditTransaction
 from app.db.models.feedback import FeedbackReport
 from app.db.models.home_details import HomeDetails
+from app.db.models.password_reset_token import PasswordResetToken
 from app.db.models.property import Property
 from app.db.models.referral import Referral
 from app.db.models.unit import Unit
@@ -24,6 +25,7 @@ __all__ = [
     "CreditTransaction",
     "FeedbackReport",
     "HomeDetails",
+    "PasswordResetToken",
     "Property",
     "Referral",
     "Unit",

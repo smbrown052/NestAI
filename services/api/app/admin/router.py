@@ -19,7 +19,7 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials, HTTPBearer, HTTPAu
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 
-from app.auth.security import hash_password, verify_password, decode_access_token
+from app.auth.security import hash_password, verify_password, decode_access_token, normalize_email
 from app.db.session import get_db
 from app.db.models.user import User
 from app.db.models.feedback import FeedbackReport
@@ -94,7 +94,7 @@ def require_admin(
             user = None
 
     if user is None and basic is not None:
-        candidate = db.query(User).filter(User.email == basic.username).first()
+        candidate = db.query(User).filter(User.email == normalize_email(basic.username)).first()
         if candidate and verify_password(basic.password, candidate.hashed_password):
             user = candidate
 

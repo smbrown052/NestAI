@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 
 class RegisterRequest(BaseModel):
@@ -17,10 +17,39 @@ class RegisterRequest(BaseModel):
     trial_consent: bool = False
     payment_method_confirmed: bool = False
 
+    @field_validator("email", mode="before")
+    @classmethod
+    def normalize_email_input(cls, value: object) -> object:
+        return value.strip().lower() if isinstance(value, str) else value
+
 
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=1, max_length=128)
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def normalize_email_input(cls, value: object) -> object:
+        return value.strip().lower() if isinstance(value, str) else value
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def normalize_email_input(cls, value: object) -> object:
+        return value.strip().lower() if isinstance(value, str) else value
+
+
+class ForgotPasswordResponse(BaseModel):
+    message: str
+    reset_link: str | None = None
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(min_length=1, max_length=512)
+    password: str = Field(min_length=8, max_length=128)
 
 
 class AuthUserRead(BaseModel):

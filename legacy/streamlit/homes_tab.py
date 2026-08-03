@@ -18,6 +18,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
+from availability import availability_label, availability_matches, parse_availability_date
 from feature_access import (
     capability,
     can_save_another_property,
@@ -52,6 +53,7 @@ _KEYS = {
     "home_filter_min_beds": 0,
     "home_filter_min_baths": 0.0,
     "home_filter_min_sqft": 0,
+    "home_filter_availability_mode": "Flexible / no preference",
     "home_sort_by": "Price (low → high)",
     "home_ai_pref_text": "",          # free-text AI preferences for homes
 }
@@ -207,6 +209,8 @@ def _render_home_result(result: ParsedHomeResult) -> None:
     sec_cols = st.columns(4)
     if result.available_date:
         sec_cols[0].caption(f"📅 Available: {result.available_date}")
+    else:
+        sec_cols[0].caption("📅 Available: Unknown")
     if result.pets_policy:
         sec_cols[1].caption(f"🐾 Pets: {result.pets_policy}")
     if result.walk_score is not None:
@@ -382,6 +386,12 @@ def _render_home_priorities() -> dict:
             key="home_pref_garage",
             index=0,
         )
+        availability_mode = st.selectbox(
+            "📅 Availability Date",
+            ["Flexible / no preference", "Available now", "Available by selected date"],
+            key="home_filter_availability_mode",
+            index=0,
+        )
     with col2:
         min_sqft_opt = st.selectbox(
             "📐 Min sq ft",
@@ -432,6 +442,8 @@ def _render_home_priorities() -> dict:
             key="home_pref_pets",
             index=2,
         )
+    if availability_mode == "Available by selected date":
+        st.date_input("Available by", key="home_filter_availability_date")
 
     return {
         "rent_buy": rent_buy,
@@ -446,6 +458,7 @@ def _render_home_priorities() -> dict:
         "year_built": year_built,
         "min_lot": min_lot,
         "pets": pets,
+        "availability_mode": availability_mode,
     }
 
 
@@ -593,8 +606,10 @@ def _explain_home_rank(home: dict, rank: int, all_homes: list[dict], prefs: dict
     ws = home.get("walk_score")
     if ws is not None:
         lines.append(f"🚶 Walk score: {ws}/100")
+    available = availability_label(home.get("available_date"))
+    lines.append(f"📅 Availability: {available}")
 
-    return "\n".join(f"• {l}" for l in lines) if lines else f"• Rank #{rank} based on price, space, and neighborhood data."
+    return "\n".join(f"• {l}" for l in lines) if lines else f"• Rank #{rank} based on price, space, availability, and neighborhood data."
 
 
 def _render_home_analysis(homes: list[dict]) -> None:
@@ -631,7 +646,7 @@ def _render_home_analysis(homes: list[dict]) -> None:
 
     st.divider()
     st.markdown("#### 🏆 Ranked Breakdown")
-    st.caption("Ranked by your priorities. Tradeoffs explain why each choice was selected over the next.")
+    st.caption("Ranked by your priorities and listing details. Tradeoffs explain why each choice beat the next.")
 
     for rank, home in enumerate(scored, start=1):
         title = home.get("display_name") or home.get("address") or f"Home {rank}"
@@ -643,15 +658,15 @@ def _render_home_analysis(homes: list[dict]) -> None:
         score = home["nestai_home_score"]
 
         with st.expander(
-            f"Rank #{rank} · {title} · Score {score:.0f}/100",
+            f"Rank #{rank} · {title}",
             expanded=(rank == 1),
         ):
-            m1, m2, m3, m4, m5 = st.columns(5)
-            m1.metric("NestAI Score", f"{score:.0f}/100")
-            m2.metric("Price", price_str)
-            m3.metric("Beds", home.get("bedrooms") or "—")
-            m4.metric("Baths", home.get("bathrooms") or "—")
-            m5.metric("Sq Ft", f"{home.get('square_feet'):,}" if home.get("square_feet") else "—")
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Price", price_str)
+            m2.metric("Beds", home.get("bedrooms") or "—")
+            m3.metric("Baths", home.get("bathrooms") or "—")
+            m4.metric("Sq Ft", f"{home.get('square_feet'):,}" if home.get("square_feet") else "—")
+            st.caption(f"Availability: {availability_label(home.get('available_date'))}")
 
             tab_why, tab_tradeoffs = st.tabs(["📊 Why This Rank", "💡 Tradeoffs"])
 
@@ -706,9 +721,13 @@ def _render_home_tradeoff(home_a: dict, home_b: dict, *, why_winner: bool) -> No
             advantages.append(f"🛏 {beds_a} bed vs {beds_b} bed")
         score_a = home_a.get("nestai_home_score", 0)
         score_b = home_b.get("nestai_home_score", 0)
-        if score_a > score_b:
-            advantages.append(f"🏆 {score_a - score_b:.0f} pt NestAI Score advantage")
-        for adv in (advantages or ["Higher overall score from your priorities"]):
+        available_a = availability_label(home_a.get("available_date"))
+        available_b = availability_label(home_b.get("available_date"))
+        available_a_dt = parse_availability_date(available_a)
+        available_b_dt = parse_availability_date(available_b)
+        if available_a_dt and available_b_dt and available_a_dt < available_b_dt:
+            advantages.append(f"📅 available sooner ({available_a} vs {available_b})")
+        for adv in (advantages or ["A better overall balance of price, space, availability, and neighborhood details"]):
             st.markdown(f"• {adv}")
         # Key compromise
         if price_a > 0 and price_b > 0 and price_a > price_b:
@@ -756,9 +775,12 @@ def _render_home_decision_brief(scored: list[dict], visual_tier: str) -> None:
             why_parts.append(f"${price_w - price_r:,} more expensive but higher scored")
     if sqft_w > sqft_r + 50:
         why_parts.append(f"{sqft_w - sqft_r:,} sq ft more space")
-    score_margin = winner.get("nestai_home_score", 0) - runner_up.get("nestai_home_score", 0)
-    if score_margin > 0:
-        why_parts.append(f"{score_margin:.0f} pt score advantage")
+    available_w = availability_label(winner.get("available_date"))
+    available_r = availability_label(runner_up.get("available_date"))
+    available_w_dt = parse_availability_date(available_w)
+    available_r_dt = parse_availability_date(available_r)
+    if available_w_dt and available_r_dt and available_w_dt < available_r_dt:
+        why_parts.append(f"available sooner ({available_w} vs {available_r})")
     why_wins = " · ".join(why_parts) if why_parts else "Higher overall match to your priorities"
 
     # Key compromise
@@ -790,6 +812,8 @@ def _apply_filters(homes: list[dict]) -> list[dict]:
     min_beds = st.session_state.home_filter_min_beds or 0
     min_baths = st.session_state.home_filter_min_baths or 0.0
     min_sqft = st.session_state.home_filter_min_sqft or 0
+    availability_mode = st.session_state.home_filter_availability_mode or "Flexible / no preference"
+    selected_date = st.session_state.get("home_filter_availability_date")
 
     out = []
     for h in homes:
@@ -806,6 +830,8 @@ def _apply_filters(homes: list[dict]) -> list[dict]:
             continue
         sqft = h.get("square_feet") or 0
         if min_sqft and sqft < min_sqft:
+            continue
+        if not availability_matches(h.get("available_date"), availability_mode, selected_date):
             continue
         out.append(h)
     return out
@@ -858,7 +884,7 @@ def _render_comparison_table(homes: list[dict]) -> None:
         "Walk Score": [h.get("walk_score") or "—" for h in homes],
         "Transit Score": [h.get("transit_score") or "—" for h in homes],
         "Bike Score": [h.get("bike_score") or "—" for h in homes],
-        "Available": [h.get("available_date") or "—" for h in homes],
+        "Available": [availability_label(h.get("available_date")) for h in homes],
         "Pets": [h.get("pets_policy") or "—" for h in homes],
         "Cooling": [h.get("cooling") or "—" for h in homes],
         "Heating": [h.get("heating") or "—" for h in homes],

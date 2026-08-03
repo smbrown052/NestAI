@@ -158,7 +158,7 @@ class AuthApiTests(unittest.TestCase):
             json={"email": email, "password": "wrong-password"},
         )
         self.assertEqual(bad_login.status_code, 401)
-        self.assertEqual(bad_login.json()["detail"], "Invalid credentials")
+        self.assertEqual(bad_login.json()["detail"], "Incorrect password")
 
         login_response = self.client.post(
             "/auth/login",

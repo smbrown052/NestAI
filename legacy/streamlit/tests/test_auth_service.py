@@ -124,7 +124,9 @@ class StreamlitAuthServiceTests(unittest.TestCase):
 
     def test_error_message_mappings_and_default_navigation(self) -> None:
         self.assertEqual(login_error_message(0), "Account services are temporarily unavailable.")
-        self.assertEqual(login_error_message(401), "Invalid email or password.")
+        self.assertEqual(login_error_message(404), "Account not found.")
+        self.assertEqual(login_error_message(401), "Incorrect password.")
+        self.assertEqual(login_error_message(403), "This account is inactive.")
         self.assertEqual(registration_error_message(0), "Account services are temporarily unavailable.")
         self.assertEqual(registration_error_message(409), "That email is already registered.")
         self.assertEqual(registration_error_message(422), "Please check the registration fields and try again.")
@@ -233,7 +235,7 @@ class StreamlitAuthServiceTests(unittest.TestCase):
         response = manager.login("bad@example.com", "wrong-password")
         self.assertEqual(response.status_code, 401)
         error_msg = login_error_message(response.status_code)
-        self.assertEqual(error_msg, "Invalid email or password.")
+        self.assertEqual(error_msg, "Incorrect password.")
         self.assertFalse(manager.is_authenticated())
 
     def test_sign_up_success_sets_authenticated_state(self) -> None:

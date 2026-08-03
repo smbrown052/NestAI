@@ -451,6 +451,7 @@ def parse_apartment_text(text):
                         "floorplan_sqft_range": current_floorplan_sqft,
                         "has_den": parse_has_den(current_floorplan, current_floorplan_sqft),
                         "availability": availability,
+                        "available_date": availability,
                         "walk_score": walk_score,
                         "safety_score": safety_score,
                     }
@@ -517,7 +518,11 @@ def filter_units_by_request(df, request):
         ]
 
     if "available now" in req or "now" in req:
-        filtered = filtered[filtered["availability"].str.lower() == "now"]
+        availability_series = filtered.get("available_date", filtered.get("availability"))
+        filtered = filtered[
+            availability_series.isna()
+            | availability_series.astype(str).str.lower().isin(["now", "available now", "immediately", "unknown", ""])
+        ]
 
     if "cheapest" in req or "lowest price" in req:
         filtered = filtered.sort_values("price_num", ascending=True)

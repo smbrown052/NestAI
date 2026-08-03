@@ -218,7 +218,11 @@ def explain_match(row: pd.Series, profile: dict, match_pct: float) -> list[str]:
 
     out = reasons[:2] + tradeoffs[:1]
     if not out:
-        out = [f"{match_pct:.0f}% match based on your profile"]
+        out = (
+            [f"{match_pct:.0f}% match based on your profile"]
+            if profile
+            else ["Set up your profile for a personalized match percentage."]
+        )
     return out
 
 

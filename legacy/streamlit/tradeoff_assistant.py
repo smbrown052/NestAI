@@ -6,6 +6,8 @@ Showcase the incremental value of upgrading to a better apartment.
 import pandas as pd
 from typing import Dict, List, Tuple
 
+from availability import availability_label, parse_availability_date
+
 
 class TradeoffAnalyzer:
     """
@@ -68,6 +70,12 @@ class TradeoffAnalyzer:
             a for a in differences["apt1_amenities"] 
             if a not in differences["apt2_amenities"]
         ]
+        differences["availability_1"] = availability_label(
+            apt1.get("available_date") or apt1.get("availability")
+        )
+        differences["availability_2"] = availability_label(
+            apt2.get("available_date") or apt2.get("availability")
+        )
         
         return differences
     
@@ -123,11 +131,11 @@ class TradeoffAnalyzer:
         price_diff = diffs["price_diff"]
         
         if price_diff > 0:
-            explanation += f"💰 **If you spend ${abs(price_diff)}/month more**, you'll gain:\n\n"
+            explanation += f"💰 **{label2} costs ${abs(price_diff):,.0f}/month more and gives you:**\n\n"
         elif price_diff < 0:
-            explanation += f"💰 **If you spend ${abs(price_diff)}/month less**, you'll give up:\n\n"
+            explanation += f"💰 **{label2} costs ${abs(price_diff):,.0f}/month less, but you trade off:**\n\n"
         else:
-            explanation += f"💰 **Same price**, but you'll gain:\n\n"
+            explanation += f"💰 **At the same monthly price, the main differences are:**\n\n"
         
         gains = []
         
@@ -144,6 +152,16 @@ class TradeoffAnalyzer:
             gains.append(f"🚇 {abs(commute_diff):.0f} minutes less commuting")
         elif commute_diff < 0:
             gains.append(f"🚇 {abs(commute_diff):.0f} minutes more commuting")
+
+        availability_1 = parse_availability_date(diffs["availability_1"])
+        availability_2 = parse_availability_date(diffs["availability_2"])
+        if availability_1 and availability_2 and availability_1.date() != availability_2.date():
+            if availability_2 < availability_1:
+                gains.append(f"📅 available sooner ({diffs['availability_2']} vs {diffs['availability_1']})")
+            else:
+                gains.append(f"📅 available later ({diffs['availability_2']} vs {diffs['availability_1']})")
+        elif diffs["availability_2"] != diffs["availability_1"]:
+            gains.append(f"📅 availability: {diffs['availability_2']} vs {diffs['availability_1']}")
         
         # New amenities
         for amenity in diffs["new_amenities"]:
@@ -154,8 +172,7 @@ class TradeoffAnalyzer:
             gains.append(f"❌ loses {amenity}")
         
         if not gains:
-            explanation += "• Major metrics are very similar.\n"
-            explanation += "• Check amenities/availability as tie-breakers.\n"
+            explanation += "• Price, space, commute, and listing details are very similar.\n"
             return explanation
 
         for gain in gains:
@@ -192,9 +209,6 @@ class TradeoffAnalyzer:
         commute_r = self._to_number(runner_up.get("metro_min") or runner_up.get("commute_transit_min"), 999)
         commute_advantage = commute_r - commute_w  # positive = winner has shorter commute
 
-        score_w = self._to_number(winner.get("nestai_score", 0))
-        score_r = self._to_number(runner_up.get("nestai_score", 0))
-
         advantages = []
 
         if price_advantage > 0:
@@ -204,17 +218,24 @@ class TradeoffAnalyzer:
         if 0 < commute_advantage < 999:
             advantages.append(f"🚇 {commute_advantage:.0f} min shorter commute")
 
+        winner_available = availability_label(winner.get("available_date") or winner.get("availability"))
+        runner_available = availability_label(runner_up.get("available_date") or runner_up.get("availability"))
+        winner_available_dt = parse_availability_date(winner_available)
+        runner_available_dt = parse_availability_date(runner_available)
+        if winner_available_dt and runner_available_dt and winner_available_dt.date() != runner_available_dt.date():
+            if winner_available_dt < runner_available_dt:
+                advantages.append(f"📅 available sooner ({winner_available} vs {runner_available})")
+        elif winner_available != runner_available and winner_available != "Unknown":
+            advantages.append(f"📅 clearer availability ({winner_available})")
+
         winner_amenities = self._extract_amenities(winner)
         runner_amenities = self._extract_amenities(runner_up)
         exclusive = [a for a in winner_amenities if a not in runner_amenities]
         for amenity in exclusive[:2]:
             advantages.append(f"✨ Has {amenity}")
 
-        if score_w > score_r:
-            advantages.append(f"🏆 {score_w - score_r:.0f} pt NestAI Score advantage")
-
         if not advantages:
-            advantages = ["Higher overall lifestyle score from your priorities"]
+            advantages = ["A better overall balance of price, commute, space, and listing details"]
 
         for adv in advantages:
             explanation += f"• {adv}\n"
