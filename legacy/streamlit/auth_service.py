@@ -28,7 +28,7 @@ AUTH_STATE_DEFAULTS = {
     "auth_user": None,
     "auth_notice": None,
     "auth_error": None,
-    "main_nav": "Apartments",
+    "main_nav": "Home",
     "signup_account_type": "free",
     "pending_checkout_session_id": None,
     "pending_checkout_url": None,

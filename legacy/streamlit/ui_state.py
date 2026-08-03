@@ -4,12 +4,15 @@ from __future__ import annotations
 
 
 def get_navigation_options(authenticated: bool) -> list[str]:
-    options = ["Apartments", "Houses", "Pricing", "Profile"]
-    if authenticated:
-        options.append("Logout")
-    else:
-        options.extend(["Login", "Create Account"])
-    return options
+    _ = authenticated
+    return [
+        "Home",
+        "Apartment Search",
+        "Houses",
+        "Profile",
+        "Why NestAI",
+        "How to Use NestAI",
+    ]
 
 
 def get_account_type_options() -> list[str]:

@@ -323,7 +323,7 @@ for key, default in {
     "auth_user": None,
     "auth_notice": None,
     "auth_error": None,
-    "main_nav": "Apartments",
+    "main_nav": "Home",
 }.items():
     if key not in st.session_state:
         st.session_state[key] = default
@@ -350,51 +350,60 @@ if st.session_state.auth_error:
     st.session_state.auth_error = None
 
 nav_options = get_navigation_options(auth.is_authenticated())
-if st.session_state.main_nav not in nav_options:
-    st.session_state.main_nav = "Profile" if auth.is_authenticated() else "Apartments"
+hidden_screens = {"Login", "Create Account", "Pricing"}
+if st.session_state.main_nav not in {*nav_options, *hidden_screens}:
+    st.session_state.main_nav = "Apartment Search" if auth.is_authenticated() else "Home"
+active_screen = st.session_state.main_nav
 
-active_screen = st.segmented_control(
-    "Navigation",
-    options=nav_options,
-    selection_mode="single",
-    default=st.session_state.main_nav,
-)
-st.session_state.main_nav = active_screen
-
-if active_screen == "Logout":
-    if auth.is_authenticated():
-        auth.logout()
-        st.session_state.auth_notice = "Signed out successfully."
-    st.session_state.main_nav = "Apartments"
-    st.rerun()
+if auth.is_authenticated():
+    top_cols = st.columns([6, 1.2, 1.5, 1.0])
+    with top_cols[1]:
+        if st.button("Report a bug", use_container_width=True):
+            st.session_state.show_feedback_form = True
+            st.session_state.feedback_submitted_ref = None
+            st.rerun()
+    with top_cols[2]:
+        if st.button("Make a suggestion", use_container_width=True):
+            st.session_state.show_feedback_form = True
+            st.session_state.feedback_submitted_ref = None
+            st.rerun()
+    with top_cols[3]:
+        if st.button("Log out", use_container_width=True):
+            auth.logout()
+            st.session_state.auth_notice = "Signed out successfully."
+            st.session_state.main_nav = "Home"
+            st.rerun()
 
 
 # ── Sidebar — AI Apartment Advisor ────────────────────────────────────────────
 
 with st.sidebar:
-    # ── DEV DIAGNOSTIC — remove before production merge ──────────────────────
-    # Confirms whether app.py can see the environment flags and whether the
-    # helper functions return True.  Rendered unconditionally so we can
-    # distinguish "flag not set" from "flag set but helper broken".
-    st.write("DEV ENV:", repr(os.getenv("NESTAI_DEV_MODE")))
-    st.write("OWNER ENV:", repr(os.getenv("NESTAI_OWNER_MODE")))
-    st.write("IS DEV:", is_dev_mode())
-    st.write("IS OWNER:", is_owner_mode_env())
-    # ── END DEV DIAGNOSTIC ───────────────────────────────────────────────────
+    st.markdown("## 🧭 Navigation")
+    nav_choice = st.radio(
+        "Go to",
+        options=nav_options,
+        index=nav_options.index(active_screen) if active_screen in nav_options else 0,
+        label_visibility="collapsed",
+    )
+    if nav_choice != active_screen:
+        st.session_state.main_nav = nav_choice
+        st.rerun()
 
-    st.markdown("## 🧭 Workspace")
+    st.divider()
+    st.markdown("## 👤 Account")
     if auth.is_authenticated():
         user_preview = auth.user() or {}
         effective_plan = current_effective_plan_key(user_preview)
         plan_slug = normalize_plan(effective_plan)
-        st.caption(f"Signed in as {user_preview.get('display_name') or user_preview.get('email')}")
-        st.caption(f"Plan: {plan_display_name(plan_slug)}")
+        st.caption(user_preview.get("display_name") or user_preview.get("email"))
+        st.caption(f"Tier: {plan_display_name(plan_slug)}")
         st.caption(f"Saved units: {len(st.session_state.comparison_df)}")
+        if plan_slug == "free":
+            st.info("Want AI to make your search even easier? Upgrade to Premium.")
         if user_preview.get("subscription_status") == "pending_payment":
             st.warning(payment_required_message(user_preview.get("requested_plan") or user_preview.get("active_plan", "premium")))
     else:
-        st.caption("Sign in from the Account tab to save comparisons and access private features.")
-        st.caption("Use Profile, Login, or Create Account from the top navigation.")
+        st.caption("You are signed out.")
     render_plan_sidebar()
 
     st.divider()
@@ -476,35 +485,27 @@ with st.sidebar:
 
     st.divider()
 
-    st.divider()
-    st.markdown("## 📑 Navigation")
-    if not st.session_state.comparison_df.empty:
-        st.markdown(
-            """
-- [Parse Listing](#parse-listing)
-- [Property Summary](#property-summary)
+    if active_screen == "Apartment Search":
+        st.divider()
+        st.markdown("## 📑 Navigation")
+        if not st.session_state.comparison_df.empty:
+            st.markdown(
+                """
 - [Lifestyle Priorities](#lifestyle-priorities)
-- [Rankings](#rankings)
-- [Full Table](#full-table)
-            """
-        )
-        stat_col1, stat_col2 = st.columns(2)
-        with stat_col1:
-            st.metric("Total Units", len(st.session_state.comparison_df))
-        with stat_col2:
-            st.metric("Buildings", st.session_state.comparison_df["property"].nunique())
-    else:
-        st.caption("Paste an apartment listing to get started.")
-
-    st.divider()
-    if st.button(
-        "🐛 Report a Bug or Suggest an Improvement",
-        use_container_width=True,
-        key="open_feedback_btn",
-    ):
-        st.session_state.show_feedback_form = not st.session_state.show_feedback_form
-        st.session_state.feedback_submitted_ref = None
-        st.rerun()
+- [Filter Apartments](#filter-apartments)
+- [Ranked Shortlist and Breakdown](#rankings)
+- [Executive Decision Brief](#executive-decision-brief)
+- [Neighborhood Enrichment](#neighborhood-enrichment)
+- [Full Ranking Table](#full-table)
+                """
+            )
+            stat_col1, stat_col2 = st.columns(2)
+            with stat_col1:
+                st.metric("Total Units", len(st.session_state.comparison_df))
+            with stat_col2:
+                st.metric("Buildings", st.session_state.comparison_df["property"].nunique())
+        else:
+            st.caption("Paste an apartment listing to get started.")
 
 
 if active_screen == "Profile":
@@ -515,115 +516,124 @@ if active_screen == "Profile":
         visual_tier = current_visual_tier(user)
         st.markdown("### Account Dashboard")
         render_badge(visual_tier, icon="✦")
-        st.markdown(
-            (
-                f"<div class='nestai-profile-card {tier_class(visual_tier)}'>"
-                "<div class='nestai-eyebrow'>Profile</div>"
-                f"<h3>{html_escape(user.get('display_name') or 'NestAI Member')}</h3>"
-                f"<p class='nestai-section-note'>{html_escape(user.get('email') or '—')}</p>"
-                f"<p class='nestai-subtle'>Your active tier is <strong>{html_escape(plan_display_name(effective_plan_slug))}</strong>. "
-                "This dashboard keeps your plan status, limits, and unlocked value visible in one place.</p>"
-                "</div>"
-            ),
-            unsafe_allow_html=True,
+        account_tab, subscription_tab, referrals_tab, preferences_tab = st.tabs(
+            ["Account", "Subscription & Pricing", "Referrals", "Preferences"]
         )
 
-        quota = get_quota("monthly_analyses_limit")
-        saved_limit = get_quota("saved_property_limit")
-        payment_status = "Pending" if user.get("subscription_status") == "pending_payment" else ("Paid" if effective_plan_slug in {"premium", "premium_plus"} else "Not required")
-        saved_buildings = st.session_state.comparison_df["property"].nunique() if not st.session_state.comparison_df.empty and "property" in st.session_state.comparison_df.columns else 0
-        usage_cards = [
-            ("Active Tier", plan_display_name(effective_plan_slug), user.get("subscription_status") or "active"),
-            ("Usage Summary", f"{analyses_remaining() if analyses_remaining() is not None else 'Unlimited'} analyses left", f"Limit: {quota if quota is not None else 'Unlimited'}"),
-            ("Saved Properties", str(len(st.session_state.comparison_df)), f"Buildings tracked: {saved_buildings}"),
-            ("Current Limits", f"{saved_limit if saved_limit is not None else 'Unlimited'} saved", "Tier-aware limits and insights"),
-        ]
-        usage_cols = st.columns(4)
-        for col, (label, value, helper) in zip(usage_cols, usage_cards):
-            with col:
-                st.markdown(metric_card_html(label, value, helper, tier=visual_tier), unsafe_allow_html=True)
+        with account_tab:
+            st.markdown(
+                (
+                    f"<div class='nestai-profile-card {tier_class(visual_tier)}'>"
+                    "<div class='nestai-eyebrow'>Profile</div>"
+                    f"<h3>{html_escape(user.get('display_name') or 'NestAI Member')}</h3>"
+                    f"<p class='nestai-section-note'>{html_escape(user.get('email') or '—')}</p>"
+                    f"<p class='nestai-subtle'>Your active tier is <strong>{html_escape(plan_display_name(effective_plan_slug))}</strong>.</p>"
+                    "</div>"
+                ),
+                unsafe_allow_html=True,
+            )
 
-        status_cols = st.columns(3)
-        with status_cols[0]:
-            st.markdown(metric_card_html("Subscription Status", user.get("subscription_status") or "active", "Billing state", tier=visual_tier), unsafe_allow_html=True)
-        with status_cols[1]:
-            st.markdown(metric_card_html("Payment Status", payment_status, "Commercial plan readiness", tier=visual_tier), unsafe_allow_html=True)
-        with status_cols[2]:
-            st.markdown(metric_card_html("Beta Status", "Enabled" if user.get("beta_access") else "Standard", "Early-access visibility", tier=visual_tier), unsafe_allow_html=True)
+            quota = get_quota("monthly_analyses_limit")
+            saved_limit = get_quota("saved_property_limit")
+            payment_status = "Pending" if user.get("subscription_status") == "pending_payment" else ("Paid" if effective_plan_slug in {"premium", "premium_plus"} else "Not required")
+            saved_buildings = st.session_state.comparison_df["property"].nunique() if not st.session_state.comparison_df.empty and "property" in st.session_state.comparison_df.columns else 0
+            usage_cards = [
+                ("Active Tier", plan_display_name(effective_plan_slug), user.get("subscription_status") or "active"),
+                ("Usage Summary", f"{analyses_remaining() if analyses_remaining() is not None else 'Unlimited'} analyses left", f"Limit: {quota if quota is not None else 'Unlimited'}"),
+                ("Saved Properties", str(len(st.session_state.comparison_df)), f"Buildings tracked: {saved_buildings}"),
+                ("Current Limits", f"{saved_limit if saved_limit is not None else 'Unlimited'} saved", "Tier-aware limits and insights"),
+            ]
+            usage_cols = st.columns(4)
+            for col, (label, value, helper) in zip(usage_cols, usage_cards):
+                with col:
+                    st.markdown(metric_card_html(label, value, helper, tier=visual_tier), unsafe_allow_html=True)
 
-        unlocked = []
-        if has_feature("walk_score"):
-            unlocked.append("Neighborhood intelligence")
-        if has_feature("ai_chat"):
-            unlocked.append("AI advisor")
-        if has_feature("decision_reports"):
-            unlocked.append("Decision reports")
-        if has_feature("exports"):
-            unlocked.append("Exports")
-        if has_feature("negotiation"):
-            unlocked.append("Negotiation help")
-        unlocked = unlocked or ["Core parsing and ranking"]
-        st.markdown(
-            (
-                f"<div class='nestai-profile-card {tier_class(visual_tier)}'>"
-                "<div class='nestai-eyebrow'>Unlocked features</div>"
-                f"<h3>{html_escape(plan_meta := plan_display_name(effective_plan_slug))}</h3>"
-                f"<p class='nestai-section-note'>{' '.join(feature_pill(item, 'premium' if visual_tier in {'premium', 'premium_plus'} else 'default') for item in unlocked)}</p>"
-                "<p class='nestai-subtle'>Premium and Premium Plus expand the presentation, not just the buttons you can click.</p>"
-                "</div>"
-            ),
-            unsafe_allow_html=True,
-        )
+            status_cols = st.columns(3)
+            with status_cols[0]:
+                st.markdown(metric_card_html("Subscription Status", user.get("subscription_status") or "active", "Billing state", tier=visual_tier), unsafe_allow_html=True)
+            with status_cols[1]:
+                st.markdown(metric_card_html("Payment Status", payment_status, "Commercial plan readiness", tier=visual_tier), unsafe_allow_html=True)
+            with status_cols[2]:
+                st.markdown(metric_card_html("Beta Status", "Enabled" if user.get("beta_access") else "Standard", "Early-access visibility", tier=visual_tier), unsafe_allow_html=True)
 
-        if user.get("beta_approved_at"):
-            st.caption(f"Beta approved at {user.get('beta_approved_at')}")
+            unlocked = []
+            if has_feature("walk_score"):
+                unlocked.append("Neighborhood intelligence")
+            if has_feature("ai_chat"):
+                unlocked.append("AI advisor")
+            if has_feature("decision_reports"):
+                unlocked.append("Decision reports")
+            if has_feature("exports"):
+                unlocked.append("Exports")
+            if has_feature("negotiation"):
+                unlocked.append("Negotiation help")
+            unlocked = unlocked or ["Core parsing and ranking"]
+            st.markdown(
+                (
+                    f"<div class='nestai-profile-card {tier_class(visual_tier)}'>"
+                    "<div class='nestai-eyebrow'>Unlocked features</div>"
+                    f"<h3>{html_escape(plan_display_name(effective_plan_slug))}</h3>"
+                    f"<p class='nestai-section-note'>{' '.join(feature_pill(item, 'premium' if visual_tier in {'premium', 'premium_plus'} else 'default') for item in unlocked)}</p>"
+                    "</div>"
+                ),
+                unsafe_allow_html=True,
+            )
+            if user.get("beta_approved_at"):
+                st.caption(f"Beta approved at {user.get('beta_approved_at')}")
+            if user.get("is_admin"):
+                st.info("Admin account")
 
-        if user.get("subscription_status") == "pending_payment":
-            requested_plan = user.get("requested_plan") or st.session_state.get("signup_account_type", "premium")
-            st.warning(payment_required_message(requested_plan))
-            checkout_session_id = st.session_state.get("pending_checkout_session_id")
-            checkout_url = st.session_state.get("pending_checkout_url")
-            if checkout_url:
-                st.markdown(f"[Open checkout]({checkout_url})")
-            if checkout_session_id and st.button(
-                "Confirm payment completed",
-                use_container_width=True,
-                disabled=not api_available,
-            ):
-                if auth.confirm_pending_payment():
-                    st.session_state.auth_notice = "Payment verified. Premium access activated."
-                    st.rerun()
+        with subscription_tab:
+            if user.get("subscription_status") == "pending_payment":
+                requested_plan = user.get("requested_plan") or st.session_state.get("signup_account_type", "premium")
+                st.warning(payment_required_message(requested_plan))
+                checkout_session_id = st.session_state.get("pending_checkout_session_id")
+                checkout_url = st.session_state.get("pending_checkout_url")
+                if checkout_url:
+                    st.markdown(f"[Open checkout]({checkout_url})")
+                if checkout_session_id and st.button(
+                    "Confirm payment completed",
+                    use_container_width=True,
+                    disabled=not api_available,
+                ):
+                    if auth.confirm_pending_payment():
+                        st.session_state.auth_notice = "Payment verified. Premium access activated."
+                        st.rerun()
+            render_pricing_cards()
 
-        action_cols = st.columns(2)
-        with action_cols[0]:
-            if visual_tier in {"premium", "premium_plus"}:
-                if st.button("Manage Subscription", use_container_width=True):
-                    st.session_state.main_nav = "Pricing"
-                    st.rerun()
+        with referrals_tab:
+            summary_response = auth.api_client.request("GET", "/auth/referrals/summary")
+            if summary_response.status_code == 200:
+                summary_payload = summary_response.json()
+                st.text_input("Your referral code", value=summary_payload.get("referral_code") or "", disabled=True)
+                st.text_input("Your referral link", value=summary_payload.get("referral_link") or "", disabled=True)
+                credits_dollars = (summary_payload.get("earned_credit_cents") or 0) / 100
+                st.metric("Earned referral credits", f"${credits_dollars:,.2f}")
+                invitations = summary_payload.get("referrals") or []
+                if invitations:
+                    st.dataframe(pd.DataFrame(invitations), use_container_width=True)
             else:
-                if st.button("Upgrade Plan", use_container_width=True, type="primary"):
-                    st.session_state.main_nav = "Pricing"
+                st.info("Referral details are unavailable right now.")
+
+            with st.form("referral_invite_form"):
+                invite_email = st.text_input("Invite by email")
+                invite_submit = st.form_submit_button("Send referral invite", use_container_width=True, disabled=not api_available)
+            if invite_submit and invite_email.strip():
+                invite_response = auth.api_client.request("POST", "/auth/referrals/invite", json={"email": invite_email.strip()})
+                if invite_response.status_code in {200, 201}:
+                    st.success("Referral invitation saved.")
                     st.rerun()
-        with action_cols[1]:
-            if st.button("Review Pricing", use_container_width=True):
-                st.session_state.main_nav = "Pricing"
-                st.rerun()
+                else:
+                    st.error("Could not send referral invitation.")
 
-        render_lifestyle_profile_controls()
-
-        if user.get("is_admin"):
-            st.info("Admin account")
-
-        if st.button("Logout", key="profile_logout", use_container_width=True):
-            auth.logout()
-            st.session_state.main_nav = "Apartments"
-            st.rerun()
+        with preferences_tab:
+            render_lifestyle_profile_controls()
     else:
-        st.info("Sign in or create an account to see your profile, saved comparisons, and plan status.")
-        if st.button("Go to Login", use_container_width=True):
+        st.info("You must be signed in to view Profile.")
+        if st.button("Go to Sign in", use_container_width=True):
             st.session_state.main_nav = "Login"
             st.rerun()
-        if st.button("Go to Create Account", use_container_width=True):
+        if st.button("Go to Sign up", use_container_width=True):
             st.session_state.main_nav = "Create Account"
             st.rerun()
     st.stop()
@@ -673,17 +683,30 @@ if active_screen == "Create Account":
     if selected_account_type == "beta":
         st.info("Beta access is invite-only. A valid invite code is required.")
     elif selected_account_type == "premium":
-        st.info("Payment setup is coming soon. Your account will be created as Free with Premium requested.")
+        st.info("Premium starts with a free trial and requires explicit checkout consent.")
     elif selected_account_type == "premium_plus":
-        st.info("Payment setup is coming soon. Your account will be created as Free with Premium Plus requested.")
+        st.info("Premium Plus starts with a free trial and requires explicit checkout consent.")
 
     with st.form("register_form"):
         register_name = st.text_input("Display name", key="register_name")
         register_email = st.text_input("Email", key="register_email")
         register_password = st.text_input("Password", type="password", key="register_password")
         beta_invite_code = None
+        trial_consent = False
+        payment_method_confirmed = False
         if selected_account_type == "beta":
             beta_invite_code = st.text_input("Beta invite code", type="password", key="beta_invite_code")
+        if selected_account_type in {"premium", "premium_plus"}:
+            st.caption("Free trial ends in 7 days. Then monthly billing starts unless you cancel before the end date.")
+            st.caption("You will receive a reminder before billing.")
+            trial_consent = st.checkbox(
+                "I explicitly agree to automatic conversion after trial ends using my payment method on file.",
+                key="trial_consent_checkbox",
+            )
+            payment_method_confirmed = st.checkbox(
+                "I have provided and confirmed a payment method.",
+                key="payment_method_confirmed_checkbox",
+            )
         register_submit = st.form_submit_button("Create Account", use_container_width=True, disabled=not api_available)
 
     if register_submit:
@@ -694,6 +717,8 @@ if active_screen == "Create Account":
                 register_name,
                 account_type=selected_account_type,
                 beta_invite_code=beta_invite_code,
+                trial_consent=trial_consent,
+                payment_method_confirmed=payment_method_confirmed,
             )
 
             if response.status_code in {200, 201}:
@@ -726,14 +751,48 @@ if active_screen == "Pricing":
     st.caption("Premium and Premium Plus require payment setup before activation. Accounts are created as Free with your selected plan recorded.")
     st.stop()
 
+if active_screen == "Home":
+    st.markdown("### Welcome to NestAI")
+    st.write(
+        "NestAI helps you compare real monthly costs, floor plans, hidden fees, concessions, "
+        "reviews, tour notes, and decision risk so you can choose with confidence."
+    )
+    home_actions = st.columns(2)
+    with home_actions[0]:
+        if st.button("Sign in", use_container_width=True):
+            st.session_state.main_nav = "Login"
+            st.rerun()
+    with home_actions[1]:
+        if st.button("Sign up", use_container_width=True, type="primary"):
+            st.session_state.main_nav = "Create Account"
+            st.rerun()
+    st.stop()
+
+if active_screen == "Why NestAI":
+    st.markdown("### Why NestAI")
+    st.write(
+        "NestAI is built for people who already know their target area and want better decisions "
+        "through true monthly cost comparisons, hidden fee visibility, lease concession analysis, "
+        "building issue signals, negotiation guidance, and regret-risk support."
+    )
+    st.stop()
+
+if active_screen == "How to Use NestAI":
+    st.markdown("### How to Use NestAI")
+    st.write(
+        "Paste listing text, parse units, save the best options, apply your filters and priorities, "
+        "then review the ranked shortlist, decision brief, enrichment context, and full ranking table."
+    )
+    st.stop()
+
 if active_screen == "Houses":
     render_homes_tab()
     st.stop()
 
-if active_screen == "Apartments":
+if active_screen == "Apartment Search":
     pass
 
-if active_screen not in {"Apartments", "Houses", "Pricing", "Profile", "Login", "Create Account", "Logout"}:
+if active_screen not in {"Apartment Search", "Houses", "Pricing", "Profile", "Login", "Create Account"}:
     st.stop()
 
 
