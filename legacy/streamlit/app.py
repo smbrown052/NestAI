@@ -348,7 +348,9 @@ if st.session_state.auth_error:
     st.error(st.session_state.auth_error)
     st.session_state.auth_error = None
 
-nav_options = get_navigation_options(auth.is_authenticated())
+_current_user = auth.user() or {}
+_is_admin = bool(_current_user.get("is_admin"))
+nav_options = get_navigation_options(auth.is_authenticated(), is_admin=_is_admin)
 hidden_screens = {"Login", "Create Account", "Pricing"}
 if st.session_state.main_nav not in {*nav_options, *hidden_screens}:
     st.session_state.main_nav = "Apartment Search" if auth.is_authenticated() else "Home"
@@ -391,7 +393,7 @@ with st.sidebar:
     st.divider()
     st.markdown("## 👤 Account")
     if auth.is_authenticated():
-        user_preview = auth.user() or {}
+        user_preview = _current_user
         effective_plan = current_effective_plan_key(user_preview)
         plan_slug = normalize_plan(effective_plan)
         st.caption(user_preview.get("display_name") or user_preview.get("email"))
@@ -665,7 +667,7 @@ if active_screen == "Login":
                 if me_response.status_code == 200:
                     auth.set_authenticated(token, me_response.json())
                     st.session_state.auth_notice = "Signed in successfully."
-                    st.session_state.main_nav = "Profile"
+                    st.session_state.main_nav = "Apartment Search"
                     st.rerun()
                 else:
                     st.session_state.auth_error = "Could not load your profile after signing in."
@@ -743,10 +745,10 @@ if active_screen == "Create Account":
 
                 if selected_account_type in {"premium", "premium_plus"}:
                     st.session_state.auth_notice = payload.get("payment_required_message") or payment_required_message(selected_account_type)
-                    st.session_state.main_nav = "Profile"
+                    st.session_state.main_nav = "Apartment Search"
                 else:
                     st.session_state.auth_notice = "Account created and signed in."
-                    st.session_state.main_nav = "Profile"
+                    st.session_state.main_nav = "Apartment Search"
                 st.rerun()
             else:
                 if selected_account_type == "beta" and response.status_code == 401:
@@ -762,6 +764,9 @@ if active_screen == "Pricing":
     st.stop()
 
 if active_screen == "Home":
+    if auth.is_authenticated():
+        st.session_state.main_nav = "Apartment Search"
+        st.rerun()
     st.markdown("### Welcome to NestAI")
     st.write(
         "NestAI helps you compare real monthly costs, floor plans, hidden fees, concessions, "
@@ -793,6 +798,135 @@ if active_screen == "How to Use NestAI":
         "Paste listing text, parse units, save the best options, apply your filters and priorities, "
         "then review the ranked shortlist, decision brief, enrichment context, and full ranking table."
     )
+    st.stop()
+
+if active_screen == "Admin":
+    if not auth.is_authenticated() or not _is_admin:
+        st.error("Admin access required.")
+        st.stop()
+
+    st.markdown("### 🛡 Admin Panel")
+    (
+        admin_overview_tab,
+        admin_users_tab,
+        admin_beta_tab,
+        admin_codes_tab,
+        admin_feedback_tab,
+    ) = st.tabs(["Analytics", "User Management", "Beta Users", "Invite Codes", "Feedback & Bug Reports"])
+
+    with admin_overview_tab:
+        ov = auth.api_client.request("GET", "/admin/")
+        if ov.status_code == 200:
+            data = ov.json()
+            users_data = data.get("users", {})
+            cols = st.columns(4)
+            cols[0].metric("Total Users", users_data.get("total", 0))
+            cols[1].metric("Beta Testers", users_data.get("beta_testers", 0))
+            cols[2].metric("Premium Users", users_data.get("premium", 0))
+            cols[3].metric("Open Feedback", data.get("feedback", {}).get("open", 0))
+            cost_data = auth.api_client.request("GET", "/admin/ai-costs")
+            if cost_data.status_code == 200:
+                cd = cost_data.json()
+                cost_cols = st.columns(4)
+                cost_cols[0].metric("AI Calls (30d)", cd.get("total_calls", 0))
+                cost_cols[1].metric("Cache Hits", cd.get("cache_hits", 0))
+                cost_cols[2].metric("Est. Cost (USD)", f"${cd.get('estimated_cost_usd', 0):.4f}")
+                cost_cols[3].metric("Total Tokens", cd.get("total_tokens", 0))
+        else:
+            st.error("Could not load overview.")
+
+    with admin_users_tab:
+        users_resp = auth.api_client.request("GET", "/admin/users")
+        if users_resp.status_code == 200:
+            users_list = users_resp.json()
+            if users_list:
+                df_users = pd.DataFrame(users_list)
+                st.dataframe(df_users, use_container_width=True)
+            else:
+                st.info("No users found.")
+        else:
+            st.error("Could not load users.")
+
+    with admin_beta_tab:
+        beta_users_resp = auth.api_client.request("GET", "/admin/users")
+        if beta_users_resp.status_code == 200:
+            all_users = beta_users_resp.json()
+            beta_users = [u for u in all_users if u.get("beta_tester")]
+            st.markdown(f"**{len(beta_users)} beta testers**")
+            if beta_users:
+                st.dataframe(pd.DataFrame(beta_users), use_container_width=True)
+            st.markdown("#### Promote a user to beta")
+            user_id_input = st.number_input("User ID to promote", min_value=1, step=1, key="promote_beta_id")
+            if st.button("Promote to Beta", use_container_width=True):
+                promo_resp = auth.api_client.request("POST", f"/admin/users/{int(user_id_input)}/promote-beta")
+                if promo_resp.status_code == 200:
+                    st.success(promo_resp.json().get("message", "Done."))
+                    st.rerun()
+                else:
+                    st.error("Could not promote user.")
+        else:
+            st.error("Could not load users.")
+
+    with admin_codes_tab:
+        codes_resp = auth.api_client.request("GET", "/admin/beta-codes")
+        if codes_resp.status_code == 200:
+            codes_list = codes_resp.json()
+            if codes_list:
+                st.dataframe(pd.DataFrame(codes_list), use_container_width=True)
+            else:
+                st.info("No invite codes yet.")
+        else:
+            st.error("Could not load invite codes.")
+
+        st.markdown("#### Generate new invite code")
+        with st.form("generate_code_form"):
+            code_email = st.text_input("Restrict to email (optional)")
+            code_max_uses = st.number_input("Max uses", min_value=1, max_value=1000, value=1)
+            code_expires = st.date_input("Expires at (optional)", value=None)
+            gen_submit = st.form_submit_button("Generate Code", use_container_width=True)
+        if gen_submit:
+            expires_payload = code_expires.isoformat() if code_expires else None
+            gen_resp = auth.api_client.request(
+                "POST",
+                "/admin/beta-codes",
+                json={
+                    "email_restriction": code_email.strip() or None,
+                    "max_uses": int(code_max_uses),
+                    "expires_at": expires_payload,
+                },
+            )
+            if gen_resp.status_code == 200:
+                result = gen_resp.json()
+                invite_code = result.get("invite_code", "")
+                st.success(f"Code generated: `{invite_code}`")
+                st.code(invite_code)
+                st.text_input("Invite link", value=f"/signup?invite={invite_code}", disabled=True)
+                st.rerun()
+            else:
+                st.error("Could not generate invite code.")
+
+        st.markdown("#### Deactivate a code")
+        deact_id = st.number_input("Code ID to deactivate", min_value=1, step=1, key="deact_code_id")
+        if st.button("Deactivate", use_container_width=True, type="secondary"):
+            deact_resp = auth.api_client.request("POST", f"/admin/beta-codes/{int(deact_id)}/deactivate")
+            if deact_resp.status_code == 200:
+                st.success("Code deactivated.")
+                st.rerun()
+            else:
+                st.error("Could not deactivate code.")
+
+    with admin_feedback_tab:
+        fb_status_filter = st.selectbox("Filter by status", ["all", "new", "triaged", "in_progress", "resolved"], key="fb_status")
+        fb_params = f"?status={fb_status_filter}" if fb_status_filter != "all" else ""
+        fb_resp = auth.api_client.request("GET", f"/admin/feedback{fb_params}")
+        if fb_resp.status_code == 200:
+            fb_list = fb_resp.json()
+            if fb_list:
+                st.dataframe(pd.DataFrame(fb_list), use_container_width=True)
+            else:
+                st.info("No feedback reports found.")
+        else:
+            st.error("Could not load feedback reports.")
     st.stop()
 
 if active_screen == "Houses":

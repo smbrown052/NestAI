@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 
-def get_navigation_options(authenticated: bool) -> list[str]:
-    _ = authenticated
-    return [
+def get_navigation_options(authenticated: bool, is_admin: bool = False) -> list[str]:
+    options = [
         "Home",
         "Apartment Search",
         "Houses",
@@ -13,6 +12,9 @@ def get_navigation_options(authenticated: bool) -> list[str]:
         "Why NestAI",
         "How to Use NestAI",
     ]
+    if authenticated and is_admin:
+        options.append("Admin")
+    return options
 
 
 def get_account_type_options() -> list[str]:
