@@ -37,7 +37,7 @@ def _require_env(name: str) -> str:
 
 
 def main() -> None:
-    email = _require_env("ADMIN_BOOTSTRAP_EMAIL")
+    email = normalize_email(_require_env("ADMIN_BOOTSTRAP_EMAIL"))
     password = _require_env("ADMIN_BOOTSTRAP_PASSWORD")
 
     if len(password) < 12:
@@ -48,7 +48,7 @@ def main() -> None:
         sys.exit(1)
 
     # Import here so the module can be imported without a live DB for testing.
-    from app.auth.security import hash_password
+    from app.auth.security import hash_password, normalize_email
     from app.db.session import SessionLocal
     from app.db.models.user import User
     from app.db.models.credits import CreditBalance

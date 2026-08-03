@@ -33,6 +33,7 @@ from enrichment import (
     maps_api_configured,
     format_commute_display,
 )
+from availability import availability_label, availability_matches
 from ranking import compute_match_score, explain_match, price_position
 from llm_helpers import generate_negotiation_script, advisor_chat_response
 from lifestyle_scoring import LifestyleScorer, get_priority_weights_from_sliders
@@ -196,6 +197,9 @@ def compact_recommendation(row: pd.Series, ranked_df: pd.DataFrame) -> tuple[lis
         strength_indicators.append("Extra flex space")
     if row.get("has_laundry"):
         strength_indicators.append("In-unit laundry")
+    available = availability_label(row.get("available_date") or row.get("availability"))
+    if available != "Unknown":
+        strength_indicators.append(f"Available {available}")
 
     strength_indicators = strength_indicators[:4] or ["Balanced overall fit"]
     summary = reasons[0] if reasons else "Strong overall balance across budget, space, and neighborhood fit."
@@ -260,7 +264,7 @@ def render_decision_brief(top3: pd.DataFrame, ranked_df: pd.DataFrame, weights: 
     best = top3.iloc[0]
     alternative = top3.iloc[1] if len(top3) > 1 else None
     best_match = explain_match(best, st.session_state.user_profile, compute_match_score(best, st.session_state.user_profile))
-    best_reasons = best_match[:2] or [f"Highest NestAI Score at {best.get('nestai_score', 0):.0f}/100"]
+    best_reasons = best_match[:2] or ["Strong overall balance across price, space, commute, and listing details"]
     regret = regret_analyzer.analyze_apartment(0)
     concerns = regret.get("concerns") or []
     concern = concerns[0] if concerns else None
@@ -346,13 +350,12 @@ def render_rank_card(rank: int, row: pd.Series, ranked_df: pd.DataFrame, tier: s
             f"<div><div class='nestai-rank-number'>Rank #{rank}</div>"
             f"<h3>{html_escape(str(row.get('property', 'Unknown')))}</h3>"
             f"<div class='nestai-ranking-subtitle'>Unit {html_escape(str(row.get('unit', 'N/A')))}</div></div>"
-            f"<div><div class='nestai-ranking-score'>{float(row.get('nestai_score', 0)):.0f}/100</div>"
-            "<div class='nestai-ranking-subtitle'>NestAI Score</div></div>"
             "</div>"
             f"<p class='nestai-ranking-meta'>${int(price_num) if pd.notna(price_num) else 0:,}/mo · {price_compare}"
             f" · {int(sqft_num) if pd.notna(sqft_num) else 0} sqft · {html_escape(str(beds))} bed · {html_escape(str(baths))} bath</p>"
             f"<div>{''.join(pills)}</div>"
             f"<p class='nestai-section-note'>{html_escape(summary)}</p>"
+            f"<p class='nestai-section-note'>{html_escape(f'{compute_match_score(row, st.session_state.user_profile):.0f}% match based on your profile' if any(st.session_state.user_profile.values()) else 'Set up your profile for a personalized match percentage.')}</p>"
             "</div>"
         ),
         unsafe_allow_html=True,
@@ -416,10 +419,22 @@ if st.session_state.auth_error:
     st.error(st.session_state.auth_error)
     st.session_state.auth_error = None
 
+try:
+    _query_screen = st.query_params.get("screen")
+    _reset_token = st.query_params.get("reset_token")
+except Exception:
+    _query_screen = None
+    _reset_token = None
+if _reset_token:
+    st.session_state["reset_password_token"] = _reset_token
+    st.session_state.main_nav = "Reset Password"
+elif _query_screen in {"Forgot Password", "Reset Password"}:
+    st.session_state.main_nav = _query_screen
+
 _current_user = auth.user() or {}
 _is_admin = bool(_current_user.get("is_admin"))
 nav_options = get_navigation_options(auth.is_authenticated(), is_admin=_is_admin)
-hidden_screens = {"Login", "Create Account", "Pricing"}
+hidden_screens = {"Login", "Create Account", "Pricing", "Forgot Password", "Reset Password"}
 if st.session_state.main_nav not in {*nav_options, *hidden_screens}:
     st.session_state.main_nav = "Apartment Search" if auth.is_authenticated() else "Home"
 active_screen = st.session_state.main_nav
@@ -717,7 +732,7 @@ if active_screen == "Profile":
     st.stop()
 
 if active_screen == "Login":
-    st.markdown("### 🔐 Login")
+    st.markdown("### 🔐 Sign In")
     if not api_available:
         st.info(SERVICE_UNAVAILABLE_MESSAGE)
     with st.form("login_form"):
@@ -742,10 +757,19 @@ if active_screen == "Login":
             else:
                 st.session_state.auth_error = login_error_message(response.status_code)
             st.rerun()
+    nav_col1, nav_col2 = st.columns(2)
+    with nav_col1:
+        if st.button("Create an account", use_container_width=True):
+            st.session_state.main_nav = "Create Account"
+            st.rerun()
+    with nav_col2:
+        if st.button("Forgot password?", use_container_width=True):
+            st.session_state.main_nav = "Forgot Password"
+            st.rerun()
     st.stop()
 
 if active_screen == "Create Account":
-    st.markdown("### ✨ Create Account")
+    st.markdown("### ✨ Sign Up")
     if not api_available:
         st.info(SERVICE_UNAVAILABLE_MESSAGE)
     account_type_options = get_account_type_options()
@@ -824,6 +848,54 @@ if active_screen == "Create Account":
                 else:
                     st.session_state.auth_error = registration_error_message(response.status_code)
                 st.rerun()
+    if st.button("Already have an account? Sign in", use_container_width=True):
+        st.session_state.main_nav = "Login"
+        st.rerun()
+    st.stop()
+
+if active_screen == "Forgot Password":
+    st.markdown("### 🔑 Forgot Password")
+    if not api_available:
+        st.info(SERVICE_UNAVAILABLE_MESSAGE)
+    with st.form("forgot_password_form"):
+        forgot_email = st.text_input("Email", key="forgot_email")
+        forgot_submit = st.form_submit_button("Send reset instructions", use_container_width=True, disabled=not api_available)
+    if forgot_submit:
+        response = auth.forgot_password(forgot_email)
+        payload = response.json()
+        st.session_state.auth_notice = payload.get("message") or "If an account exists for that email, a password reset link has been sent."
+        reset_link = payload.get("reset_link")
+        if reset_link:
+            st.session_state.auth_notice = f"{st.session_state.auth_notice} Development reset link generated below."
+            st.session_state["dev_reset_link"] = reset_link
+        st.rerun()
+    if st.session_state.get("dev_reset_link"):
+        st.code(st.session_state["dev_reset_link"])
+    if st.button("Back to Sign In", use_container_width=True):
+        st.session_state.main_nav = "Login"
+        st.rerun()
+    st.stop()
+
+if active_screen == "Reset Password":
+    st.markdown("### 🔒 Reset Password")
+    if not api_available:
+        st.info(SERVICE_UNAVAILABLE_MESSAGE)
+    with st.form("reset_password_form"):
+        reset_token = st.text_input("Reset token", key="reset_password_token")
+        new_password = st.text_input("New password", type="password", key="reset_password_new")
+        reset_submit = st.form_submit_button("Reset password", use_container_width=True, disabled=not api_available)
+    if reset_submit:
+        response = auth.reset_password(reset_token, new_password)
+        if response.status_code == 200:
+            st.session_state.auth_notice = "Password reset successfully. Please sign in."
+            st.session_state["dev_reset_link"] = None
+            st.session_state.main_nav = "Login"
+        else:
+            st.session_state.auth_error = response.json().get("detail", "Could not reset password.")
+        st.rerun()
+    if st.button("Back to Sign In", key="reset_back_to_sign_in", use_container_width=True):
+        st.session_state.main_nav = "Login"
+        st.rerun()
     st.stop()
 
 if active_screen == "Pricing":
@@ -1003,7 +1075,7 @@ if active_screen == "Houses":
 if active_screen == "Apartment Search":
     pass
 
-if active_screen not in {"Apartment Search", "Houses", "Pricing", "Profile", "Login", "Create Account"}:
+if active_screen not in {"Apartment Search", "Houses", "Pricing", "Profile", "Login", "Create Account", "Forgot Password", "Reset Password"}:
     st.stop()
 
 
@@ -1252,6 +1324,18 @@ if auth.is_authenticated() and not st.session_state.comparison_df.empty:
         step=25,
     )
 
+    availability_mode = st.selectbox(
+        "Availability Date",
+        ["Flexible / no preference", "Available now", "Available by selected date"],
+        key="apt_availability_mode",
+    )
+    availability_selected_date = None
+    if availability_mode == "Available by selected date":
+        availability_selected_date = st.date_input(
+            "Available by",
+            key="apt_availability_date",
+        )
+
     llm_request = st.text_input(
         "Ask Nest AI to filter your saved units",
         value="1 bed not on the first floor within 10 min walk of subway/public transit",
@@ -1373,6 +1457,18 @@ if auth.is_authenticated() and not st.session_state.comparison_df.empty:
         & (working_df["price_num"] <= price_range[1])
         & (working_df["sqft_num"] >= sqft_range[0])
         & (working_df["sqft_num"] <= sqft_range[1])
+    ]
+    if "available_date" not in filtered_comp_df.columns and "availability" in filtered_comp_df.columns:
+        filtered_comp_df["available_date"] = filtered_comp_df["availability"]
+    filtered_comp_df = filtered_comp_df[
+        filtered_comp_df.apply(
+            lambda row: availability_matches(
+                row.get("available_date") or row.get("availability"),
+                availability_mode,
+                availability_selected_date,
+            ),
+            axis=1,
+        )
     ]
 
     filtered_comp_df = filter_units_by_request(filtered_comp_df, llm_request)
@@ -1510,8 +1606,7 @@ if auth.is_authenticated() and not st.session_state.comparison_df.empty:
 
         st.markdown("#### 🎯 Breakdown")
         st.caption(
-            "NestAI Score = 60% Lifestyle + 25% Profile Match + 15% Relative Rank (or 85%/15% when no profile is set). "
-            "Tradeoffs explain why each option was chosen over the next."
+            "Ranked using your saved listing data, profile, and preferences. Tradeoffs explain why each option beat the next."
         )
         for rank, (_, row) in enumerate(top3.iterrows(), start=1):
             unit_id = row.get("unit", f"Unit {rank}")
@@ -1672,7 +1767,7 @@ if auth.is_authenticated() and not st.session_state.comparison_df.empty:
         display_cols = [
             "property", "floorplan", "unit", "floor",
             "price", "beds", "baths", "sqft",
-            "has_den", "availability",
+            "has_den", "availability", "available_date",
             "nearest_metro", "metro_travel_mode", "metro_min",
             "commute_display",
             "commute_driving_min", "commute_transit_min",
@@ -1681,13 +1776,6 @@ if auth.is_authenticated() and not st.session_state.comparison_df.empty:
             "walk_score", "safety_score",
             "nearby_groceries", "restaurants_count", "nearby_gyms", "nearby_parks",
             "lifestyle_summary",
-            "nestai_score",
-            "lifestyle_score",
-            "lifestyle_commute_score",
-            "lifestyle_safety_score",
-            "lifestyle_nightlife_score",
-            "lifestyle_budget_score",
-            "lifestyle_gym_score",
         ]
 
         display_cols = [c for c in display_cols if c in ranked_df.columns]
