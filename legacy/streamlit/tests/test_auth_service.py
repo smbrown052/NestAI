@@ -285,3 +285,82 @@ class StreamlitAuthServiceTests(unittest.TestCase):
         error_msg = registration_error_message(response.status_code)
         self.assertEqual(error_msg, "That email is already registered.")
         self.assertFalse(manager.is_authenticated())
+
+
+def _run_forgot_password_block(response: object, state: dict) -> None:
+    """Reproduce the app.py forgot-password submit block without importing Streamlit."""
+    SERVICE_UNAVAILABLE_MESSAGE = "Account services are temporarily unavailable."
+
+    if response.status_code == 0:
+        state["auth_error"] = SERVICE_UNAVAILABLE_MESSAGE
+    else:
+        try:
+            payload = response.json()
+        except ValueError:
+            state["auth_error"] = f"Service error (HTTP {response.status_code}). Please try again."
+            return
+        else:
+            state["auth_notice"] = payload.get("message") or "If an account exists for that email, a password reset link has been sent."
+            reset_link = payload.get("reset_link")
+            if reset_link:
+                state["auth_notice"] = f"{state['auth_notice']} Development reset link generated below."
+                state["dev_reset_link"] = reset_link
+
+
+class FakeResponseBadJSON:
+    """Simulates a real requests.Response whose .json() raises ValueError (non-JSON body)."""
+
+    def __init__(self, status_code: int):
+        self.status_code = status_code
+
+    def json(self) -> None:
+        raise ValueError("No JSON object could be decoded")
+
+
+class ForgotPasswordUITests(unittest.TestCase):
+    def test_known_email_success_sets_auth_notice(self) -> None:
+        state: dict = {}
+        response = FakeResponse(200, {"message": "If an account exists for that email, a password reset link has been sent."})
+        _run_forgot_password_block(response, state)
+        self.assertIn("password reset link", state.get("auth_notice", ""))
+        self.assertIsNone(state.get("auth_error"))
+
+    def test_unknown_email_returns_same_neutral_notice(self) -> None:
+        # The backend always returns the same neutral message regardless of whether the
+        # account exists — the frontend must not reveal account existence either way.
+        state: dict = {}
+        response = FakeResponse(200, {"message": "If an account exists for that email, a password reset link has been sent."})
+        _run_forgot_password_block(response, state)
+        self.assertIn("password reset link", state.get("auth_notice", ""))
+        self.assertIsNone(state.get("auth_error"))
+        # Neutral wording must not mention whether the account was found
+        self.assertNotIn("not found", state.get("auth_notice", "").lower())
+        self.assertNotIn("no account", state.get("auth_notice", "").lower())
+
+    def test_unavailable_api_sets_auth_error_not_notice(self) -> None:
+        state: dict = {}
+        response = FakeResponse(0, {"detail": "Account services are temporarily unavailable."})
+        _run_forgot_password_block(response, state)
+        self.assertIsNotNone(state.get("auth_error"))
+        self.assertIsNone(state.get("auth_notice"))
+
+    def test_404_non_json_sets_error_with_status_code(self) -> None:
+        state: dict = {}
+        response = FakeResponseBadJSON(404)
+        _run_forgot_password_block(response, state)
+        self.assertIn("404", state.get("auth_error", ""))
+        self.assertIsNone(state.get("auth_notice"))
+
+    def test_422_non_json_sets_error_with_status_code(self) -> None:
+        state: dict = {}
+        response = FakeResponseBadJSON(422)
+        _run_forgot_password_block(response, state)
+        self.assertIn("422", state.get("auth_error", ""))
+        self.assertIsNone(state.get("auth_notice"))
+
+    def test_500_non_json_sets_error_with_status_code(self) -> None:
+        state: dict = {}
+        response = FakeResponseBadJSON(500)
+        _run_forgot_password_block(response, state)
+        self.assertIn("500", state.get("auth_error", ""))
+        self.assertIsNone(state.get("auth_notice"))

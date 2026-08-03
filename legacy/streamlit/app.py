@@ -862,12 +862,20 @@ if active_screen == "Forgot Password":
         forgot_submit = st.form_submit_button("Send reset instructions", use_container_width=True, disabled=not api_available)
     if forgot_submit:
         response = auth.forgot_password(forgot_email)
-        payload = response.json()
-        st.session_state.auth_notice = payload.get("message") or "If an account exists for that email, a password reset link has been sent."
-        reset_link = payload.get("reset_link")
-        if reset_link:
-            st.session_state.auth_notice = f"{st.session_state.auth_notice} Development reset link generated below."
-            st.session_state["dev_reset_link"] = reset_link
+        if response.status_code == 0:
+            st.session_state.auth_error = SERVICE_UNAVAILABLE_MESSAGE
+        else:
+            try:
+                payload = response.json()
+            except ValueError:
+                st.session_state.auth_error = f"Service error (HTTP {response.status_code}). Please try again."
+                st.rerun()
+            else:
+                st.session_state.auth_notice = payload.get("message") or "If an account exists for that email, a password reset link has been sent."
+                reset_link = payload.get("reset_link")
+                if reset_link:
+                    st.session_state.auth_notice = f"{st.session_state.auth_notice} Development reset link generated below."
+                    st.session_state["dev_reset_link"] = reset_link
         st.rerun()
     if st.session_state.get("dev_reset_link"):
         st.code(st.session_state["dev_reset_link"])
