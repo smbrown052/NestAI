@@ -34,12 +34,25 @@ class AuthApiTests(unittest.TestCase):
         for module_name in [
             "app.db.session",
             "app.db.base",
+            "app.db.models",
             "app.db.models.user",
             "app.db.models.beta_access",
+            "app.db.models.referral",
+            "app.db.models.billing",
+            "app.db.models.credits",
+            "app.db.models.feedback",
+            "app.db.models.ai_feedback",
+            "app.db.models.building",
+            "app.db.models.comparison",
+            "app.db.models.home_details",
+            "app.db.models.property",
+            "app.db.models.unit",
+            "app.db.models.usage_event",
             "app.auth.security",
             "app.auth.plans",
             "app.auth.dependencies",
             "app.auth.router",
+            "app.auth.schemas",
             "app.billing.service",
             "app.billing.router",
             "app.admin.router",
@@ -49,6 +62,8 @@ class AuthApiTests(unittest.TestCase):
 
         cls.session_module = importlib.import_module("app.db.session")
         cls.base_module = importlib.import_module("app.db.base")
+        # Import all models so every table is registered with Base.metadata
+        importlib.import_module("app.db.models")
         cls.user_module = importlib.import_module("app.db.models.user")
         cls.beta_access_module = importlib.import_module("app.db.models.beta_access")
         cls.billing_service = importlib.import_module("app.billing.service")
@@ -70,6 +85,8 @@ class AuthApiTests(unittest.TestCase):
             )
             db.add(admin_user)
             db.commit()
+            db.refresh(admin_user)
+            cls._admin_id = admin_user.id
         finally:
             db.close()
 
@@ -128,7 +145,7 @@ class AuthApiTests(unittest.TestCase):
 
         register_response = self._register(email, password, "Test User", "free")
         self.assertEqual(register_response.status_code, 201)
-        self.assertEqual(register_response.json()["user"]["email"], email)
+        self.assertEqual(register_response.json()["user"]["email"], email.lower())
         self.assertEqual(register_response.json()["user"]["display_name"], "Test User")
         self.assertEqual(register_response.json()["user"]["active_plan"], "free")
         self.assertEqual(register_response.json()["user"]["selected_account_type"], "free")
@@ -141,7 +158,7 @@ class AuthApiTests(unittest.TestCase):
             json={"email": email, "password": "wrong-password"},
         )
         self.assertEqual(bad_login.status_code, 401)
-        self.assertEqual(bad_login.json()["detail"], "Invalid email or password")
+        self.assertEqual(bad_login.json()["detail"], "Invalid credentials")
 
         login_response = self.client.post(
             "/auth/login",
@@ -154,12 +171,12 @@ class AuthApiTests(unittest.TestCase):
 
         me_response = self.client.get("/auth/me", headers={"Authorization": "Bearer " + token})
         self.assertEqual(me_response.status_code, 200)
-        self.assertEqual(me_response.json()["email"], email)
+        self.assertEqual(me_response.json()["email"], email.lower())
         self.assertEqual(me_response.json()["display_name"], "Test User")
 
         db = self.session_module.SessionLocal()
         try:
-            user_count = db.query(self.user_module.User).filter(self.user_module.User.email == email).count()
+            user_count = db.query(self.user_module.User).filter(self.user_module.User.email == email.lower()).count()
             self.assertEqual(user_count, 1)
         finally:
             db.close()

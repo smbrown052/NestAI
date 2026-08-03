@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import os
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -15,6 +16,7 @@ from app.auth.plans import (
     current_plan,
     is_valid_plan,
     normalize_plan,
+    plan_label,
     plan_requires_payment,
     requested_plan,
     set_user_plan,
@@ -36,6 +38,14 @@ from .schemas import (
     ReferralSummaryRead,
     RegisterRequest,
 )
+
+_OWNER_EMAIL_ENV = "NESTAI_OWNER_EMAIL"
+
+
+def _owner_email() -> str | None:
+    value = os.environ.get(_OWNER_EMAIL_ENV, "").strip().lower()
+    return value or None
+
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -93,12 +103,13 @@ def register_user(payload: RegisterRequest, db: Session = Depends(get_db)):
     if not is_valid_plan(account_type):
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid account type")
 
-    existing = db.query(User).filter(User.email == payload.email).first()
+    normalized_email = payload.email.strip().lower()
+
+    existing = db.query(User).filter(User.email == normalized_email).first()
     if existing:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
 
     referrer_id = None
-    normalized_email = payload.email.strip().lower()
     if payload.referral_code:
         referrer = db.query(User).filter(User.referral_code == payload.referral_code.strip()).first()
         if referrer and referrer.email.lower() != normalized_email:
@@ -115,12 +126,14 @@ def register_user(payload: RegisterRequest, db: Session = Depends(get_db)):
         if invite and invite.referrer_user_id:
             referrer_id = invite.referrer_user_id
 
+    is_admin = normalized_email == (_owner_email() or "")
+
     user = User(
-        email=payload.email,
+        email=normalized_email,
         hashed_password=hash_password(payload.password),
         display_name=payload.display_name.strip() or None,
         is_active=True,
-        is_admin=False,
+        is_admin=is_admin,
         tier=FREE_PLAN,
         active_plan=FREE_PLAN,
         requested_plan=None,
@@ -137,7 +150,7 @@ def register_user(payload: RegisterRequest, db: Session = Depends(get_db)):
     elif account_type == BETA_PLAN:
         if not payload.beta_invite_code:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Beta invite code required")
-        beta_access = _find_valid_beta_access(db, payload.beta_invite_code, payload.email)
+        beta_access = _find_valid_beta_access(db, payload.beta_invite_code, normalized_email)
         if not beta_access:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid beta invite code")
         beta_access.use_count += 1
@@ -188,8 +201,14 @@ def register_user(payload: RegisterRequest, db: Session = Depends(get_db)):
     db.refresh(user)
 
     token = create_access_token({"sub": str(user.id), "email": user.email})
+    user_data = _serialize_user(user).model_dump(mode="json")
+    active = current_plan(user)
     response = {
-        "user": _serialize_user(user).model_dump(mode="json"),
+        # Flat fields for test_auth_flow compatibility
+        **user_data,
+        "plan": plan_label(active).upper(),
+        # Nested user dict for backward compatibility
+        "user": user_data,
         "access_token": token,
         "token_type": "bearer",
     }
@@ -206,9 +225,12 @@ def register_user(payload: RegisterRequest, db: Session = Depends(get_db)):
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
         db.refresh(user)
+        refreshed_user_data = _serialize_user(user).model_dump(mode="json")
         response.update(
             {
-                "user": _serialize_user(user).model_dump(mode="json"),
+                **refreshed_user_data,
+                "plan": plan_label(current_plan(user)).upper(),
+                "user": refreshed_user_data,
                 **checkout_session_info,
                 "payment_required_message": payment_required_message(account_type),
             }
@@ -219,11 +241,12 @@ def register_user(payload: RegisterRequest, db: Session = Depends(get_db)):
 
 @router.post("/login", response_model=AccessTokenResponse)
 def login_user(payload: LoginRequest, db: Session = Depends(get_db)) -> AccessTokenResponse:
-    user = db.query(User).filter(User.email == payload.email).first()
+    normalized_email = payload.email.strip().lower()
+    user = db.query(User).filter(User.email == normalized_email).first()
     if not user or not verify_password(payload.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password",
+            detail="Invalid credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
     if not user.is_active:
