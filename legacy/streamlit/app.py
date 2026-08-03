@@ -202,6 +202,60 @@ def compact_recommendation(row: pd.Series, ranked_df: pd.DataFrame) -> tuple[lis
     return strength_indicators, summary
 
 
+def _apt_pref_score_boost(row: pd.Series, prefs: dict) -> float:
+    """Return a ±15 point adjustment to nestai_score based on apartment preference matches."""
+    boost = 0.0
+
+    def _match(has_feature: bool, pref: str, weight: float = 4.0) -> float:
+        if pref == "Yes":
+            return weight if has_feature else -weight
+        if pref == "No":
+            return weight if not has_feature else -weight
+        return 0.0
+
+    boost += _match(bool(row.get("has_laundry")), prefs.get("laundry", "No preference"))
+    boost += _match(bool(row.get("has_pool")), prefs.get("pool", "No preference"))
+    boost += _match(bool(row.get("has_gym") or row.get("has_fitness")), prefs.get("gym", "No preference"))
+
+    # Pets
+    pets_text = str(row.get("pets_policy") or "").lower()
+    has_pets = any(k in pets_text for k in ("yes", "allowed", "ok", "welcome", "friendly"))
+    boost += _match(has_pets, prefs.get("pets", "No preference"))
+
+    # Short-term: furnished / month-to-month / <12 months
+    short_term_pref = prefs.get("short_term", "No preference")
+    if short_term_pref != "No preference":
+        lease_text = str(row.get("availability") or row.get("lease_terms") or "").lower()
+        has_short = (
+            "month-to-month" in lease_text
+            or "month to month" in lease_text
+            or "furnished" in lease_text
+            or bool(row.get("has_short_term"))
+        )
+        boost += _match(has_short, short_term_pref)
+
+    # Parking
+    parking_pref = prefs.get("parking", "No preference")
+    has_parking = bool(row.get("has_parking"))
+    parking_text = str(row.get("parking_fee") or row.get("parking_type") or "").lower()
+    free_parking = has_parking and (
+        parking_text in ("", "included", "free") or "free" in parking_text
+    )
+    if parking_pref == "Free required":
+        boost += 5.0 if free_parking else -5.0
+    elif parking_pref == "Paid or free":
+        boost += 3.0 if has_parking else -3.0
+    # "No parking needed" → no adjustment
+
+    # Building access
+    access_pref = prefs.get("access", "No preference")
+    if access_pref == "Doorman/concierge preferred":
+        has_doorman = bool(row.get("has_doorman") or row.get("has_concierge"))
+        boost += 5.0 if has_doorman else -2.0
+
+    return max(-15.0, min(15.0, boost))
+
+
 def render_decision_brief(top3: pd.DataFrame, ranked_df: pd.DataFrame, weights: dict, regret_analyzer: RegretAnalyzer, tradeoff: TradeoffAnalyzer | None, tier: str) -> None:
     best = top3.iloc[0]
     alternative = top3.iloc[1] if len(top3) > 1 else None
@@ -212,26 +266,40 @@ def render_decision_brief(top3: pd.DataFrame, ranked_df: pd.DataFrame, weights: 
     concern = concerns[0] if concerns else None
 
     if alternative is not None and tradeoff:
-        alt_summary = tradeoff.generate_tradeoff_explanation(0, 1).split("\n")
-        alt_tradeoff = next((line.replace("• ", "") for line in alt_summary if line.strip().startswith("•")), "Closest alternative with a different balance of cost and space.")
+        # Why the winner beat the runner-up
+        why_wins = tradeoff.explain_why_winner()
+        why_wins_lines = [l.replace("• ", "").strip() for l in why_wins.split("\n") if l.strip().startswith("•")]
+        why_wins_summary = " · ".join(why_wins_lines[:2]) if why_wins_lines else " · ".join(best_reasons)
+
+        # Key compromise: what the winner gives up
+        diffs = tradeoff.get_difference_metrics(tradeoff.ranked_df.iloc[0], tradeoff.ranked_df.iloc[1])
+        compromise_parts = []
+        if diffs["price_diff"] > 0:
+            compromise_parts.append(f"${diffs['price_diff']:,.0f}/mo more expensive")
+        for item in diffs.get("lost_amenities", [])[:2]:
+            compromise_parts.append(f"no {item}")
+        main_compromise = "; ".join(compromise_parts) if compromise_parts else "Minor tradeoffs only"
+
         alternative_label = f"{alternative.get('property', 'Unknown')} · Unit {alternative.get('unit', 'N/A')}"
     elif alternative is not None:
-        alt_tradeoff = "Closest alternative if you want a different balance of price, commute, or space."
+        why_wins_summary = " · ".join(best_reasons)
+        main_compromise = "Closest alternative if you want a different balance of price, commute, or space."
         alternative_label = f"{alternative.get('property', 'Unknown')} · Unit {alternative.get('unit', 'N/A')}"
     else:
-        alt_tradeoff = "Add another saved unit to reveal the strongest alternative."
+        why_wins_summary = " · ".join(best_reasons)
+        main_compromise = "Add another saved unit to reveal key compromises."
         alternative_label = "No alternative yet"
 
     cards = [
         ("Best Overall Choice", f"{best.get('property', 'Unknown')} · Unit {best.get('unit', 'N/A')}"),
-        ("Why It Wins", " • ".join(best_reasons)),
-        ("Main Tradeoff", alt_tradeoff),
+        ("Why It Wins", why_wins_summary),
+        ("Key Compromise", main_compromise),
         ("Potential Regret", concern["title"] if concern else regret.get("recommendation", "No major red flags.")),
         ("Best Alternative", alternative_label),
     ]
 
     st.markdown("### Executive Decision Brief")
-    st.caption("A concise recommendation designed to feel more like an expert memo than raw AI output.")
+    st.caption("Explains why the top choice won, what it gives up, and what to watch for.")
     cols = st.columns(len(cards))
     for col, (label, value) in zip(cols, cards):
         with col:
@@ -786,9 +854,8 @@ if active_screen == "Home":
 if active_screen == "Why NestAI":
     st.markdown("### Why NestAI")
     st.write(
-        "NestAI is built for people who already know their target area and want better decisions "
-        "through true monthly cost comparisons, hidden fee visibility, lease concession analysis, "
-        "building issue signals, negotiation guidance, and regret-risk support."
+        "NestAI helps anyone compare apartments and homes for short- or long-term living by turning "
+        "listing details, costs, priorities, and tradeoffs into a personalized ranking and decision brief."
     )
     st.stop()
 
@@ -954,31 +1021,16 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-with st.expander("Why Nest AI?", expanded=False):
-    st.write("""
-Apartment hunting means comparing dozens of tabs, prices, floor plans, fees, locations, and
-availability dates — manually. Nest AI turns raw Apartments.com listing text into ranked,
-enriched, personalized recommendations with commute times, neighborhood data, and AI-powered
-negotiation tools.
-""")
-
-with st.expander("ℹ️ How to use NestAI", expanded=False):
-    st.write("""
-    **Try an example or paste your own listing:**
-
-    1. Open an apartment listing on Apartments.com.
-    2. Expand all floor plans and click **Show More** so all units are visible.
-    3. Press **Ctrl + A** then **Ctrl + C** to copy everything on the page.
-    4. Paste the text in the box below and click **✨ Analyze Apartment**.
-    5. Click **➕ Save Units** to add them to your comparison table.
-    6. Repeat for each building you want to compare (or load Example 1/2).
-    7. Optionally enable paid APIs for AI + official Walk/Transit/Bike scores.
-    8. Adjust Lifestyle Priority sliders, then review Rankings, Tradeoffs, and Concerns.
-
-    **To remove a building** from your search, use the 🗑 Remove Building panel in the sidebar.
-    """)
-
 # ── Paste & Analyze ───────────────────────────────────────────────────────────
+
+st.markdown(
+    "🏠 Source: <a href='https://www.apartments.com' target='_blank'>Apartments.com</a>",
+    unsafe_allow_html=True,
+)
+st.info(
+    "Expand all units before pressing Ctrl+A. "
+    "Listings are not synced, so refresh the source page and paste again to update results."
+)
 
 st.markdown("### 1. Paste Listing Text")
 
@@ -1129,21 +1181,52 @@ if st.session_state.last_result:
 
 # ── Filter & Rank ─────────────────────────────────────────────────────────────
 
-st.markdown("### <a id='lifestyle-priorities'>🎯 Lifestyle Priorities</a>", unsafe_allow_html=True)
+st.markdown("### <a id='lifestyle-priorities'>🎯 Apartment Priorities</a>", unsafe_allow_html=True)
 
 if auth.is_authenticated() and not st.session_state.comparison_df.empty:
     comp_df = st.session_state.comparison_df.copy()
 
-    st.info("Adjust these sliders to personalize the lifestyle ranking.")
-    priority_col1, priority_col2, priority_col3 = st.columns(3)
-    with priority_col1:
-        commute_priority = st.slider("🚇 Commute", 1, 5, 3, key="commute_slider")
-        safety_priority = st.slider("🛡️ Safety", 1, 5, 3, key="safety_slider")
-    with priority_col2:
-        nightlife_priority = st.slider("🍻 Nightlife", 1, 5, 2, key="nightlife_slider")
-        budget_priority = st.slider("💰 Budget", 1, 5, 4, key="budget_slider")
-    with priority_col3:
-        gym_priority = st.slider("💪 Gym/Fitness", 1, 5, 2, key="gym_slider")
+    st.info("Set your preferences to personalize the ranking. Yes/No filters affect the score; No preference is neutral.")
+    pref_col1, pref_col2, pref_col3 = st.columns(3)
+    with pref_col1:
+        apt_pref_pets = st.selectbox("🐾 Pets", ["Yes", "No", "No preference"], key="apt_pref_pets", index=2)
+        apt_pref_laundry = st.selectbox("🧺 In-unit laundry", ["Yes", "No", "No preference"], key="apt_pref_laundry", index=0)
+        apt_pref_pool = st.selectbox("🏊 Pool", ["Yes", "No", "No preference"], key="apt_pref_pool", index=2)
+    with pref_col2:
+        apt_pref_gym = st.selectbox("💪 Gym", ["Yes", "No", "No preference"], key="apt_pref_gym", index=2)
+        apt_pref_short_term = st.selectbox("📅 Short-term lease", ["Yes", "No", "No preference"], key="apt_pref_short_term", index=2)
+        apt_pref_parking = st.selectbox(
+            "🚗 Parking",
+            ["Free required", "Paid or free", "No parking needed", "No preference"],
+            key="apt_pref_parking",
+            index=3,
+        )
+    with pref_col3:
+        apt_pref_access = st.selectbox(
+            "🏢 Building access",
+            ["Doorman/concierge preferred", "Walk-up acceptable", "No preference"],
+            key="apt_pref_access",
+            index=2,
+        )
+        apt_pref_min_beds = st.selectbox(
+            "🛏 Min bedrooms",
+            ["Any", "Studio", "1", "2", "3", "4+"],
+            key="apt_pref_min_beds",
+            index=0,
+        )
+        apt_pref_min_baths = st.selectbox(
+            "🛁 Min bathrooms",
+            ["Any", "1", "1.5", "2", "2.5", "3+"],
+            key="apt_pref_min_baths",
+            index=0,
+        )
+
+    # Keep fixed internal weights for LifestyleScorer (sliders replaced by dropdowns)
+    commute_priority = 3
+    safety_priority = 3
+    nightlife_priority = 2
+    budget_priority = 4
+    gym_priority = 2
 
     st.markdown("### <a id='filter-apartments'>🔎 Filter Apartments</a>", unsafe_allow_html=True)
 
@@ -1294,6 +1377,21 @@ if auth.is_authenticated() and not st.session_state.comparison_df.empty:
 
     filtered_comp_df = filter_units_by_request(filtered_comp_df, llm_request)
 
+    # ── Apply min beds / min baths filters from preferences ───────────────
+    _min_beds_map = {"Studio": 0, "1": 1, "2": 2, "3": 3, "4+": 4}
+    if apt_pref_min_beds != "Any" and apt_pref_min_beds in _min_beds_map:
+        _mb = _min_beds_map[apt_pref_min_beds]
+        filtered_comp_df = filtered_comp_df[
+            filtered_comp_df["beds_num"].isna() | (filtered_comp_df["beds_num"] >= _mb)
+        ]
+
+    _min_baths_map = {"1": 1.0, "1.5": 1.5, "2": 2.0, "2.5": 2.5, "3+": 3.0}
+    if apt_pref_min_baths != "Any" and apt_pref_min_baths in _min_baths_map:
+        _mbath = _min_baths_map[apt_pref_min_baths]
+        filtered_comp_df = filtered_comp_df[
+            filtered_comp_df["baths_num"].isna() | (filtered_comp_df["baths_num"] >= _mbath)
+        ]
+
     weights = get_priority_weights_from_sliders(
         commute_priority,
         safety_priority,
@@ -1377,6 +1475,23 @@ if auth.is_authenticated() and not st.session_state.comparison_df.empty:
 
         ranked_df["nestai_score"] = ranked_df.apply(_compute_nestai_score, axis=1)
 
+        # ── Apply apartment preference score adjustments ────────────────────
+        _apt_prefs = {
+            "pets": apt_pref_pets,
+            "laundry": apt_pref_laundry,
+            "pool": apt_pref_pool,
+            "gym": apt_pref_gym,
+            "short_term": apt_pref_short_term,
+            "parking": apt_pref_parking,
+            "access": apt_pref_access,
+        }
+        ranked_df["nestai_score"] = ranked_df.apply(
+            lambda r: float(
+                max(0.0, min(100.0, r["nestai_score"] + _apt_pref_score_boost(r, _apt_prefs)))
+            ),
+            axis=1,
+        )
+
         ranked_df = ranked_df.sort_values(
             ["nestai_score", "lifestyle_score"],
             ascending=[False, False],
@@ -1395,18 +1510,17 @@ if auth.is_authenticated() and not st.session_state.comparison_df.empty:
 
         st.markdown("#### 🎯 Breakdown")
         st.caption(
-            "NestAI Score = 60% Lifestyle + 25% Profile Match + 15% Relative Rank (or 85%/15% when no profile is set)."
+            "NestAI Score = 60% Lifestyle + 25% Profile Match + 15% Relative Rank (or 85%/15% when no profile is set). "
+            "Tradeoffs explain why each option was chosen over the next."
         )
         for rank, (_, row) in enumerate(top3.iterrows(), start=1):
             unit_id = row.get("unit", f"Unit {rank}")
-            overview_price = row.get("price_num")
-            overview_sqft = row.get("sqft_num")
             with st.expander(
                 f"Why this ranks here · #{rank} · {row.get('property', 'Unknown')} · Unit {unit_id}",
                 expanded=(rank == 1),
             ):
-                tab1, tab2, tab3, tab4 = st.tabs(
-                    ["📊 Overview", "🏠 Amenities", "💡 Tradeoffs", "⚠️ Concerns"]
+                tab_amenities, tab_tradeoffs, tab_concerns = st.tabs(
+                    ["🏠 Amenities", "💡 Tradeoffs", "⚠️ Concerns"]
                 )
                 component_scores = {
                     "commute": row.get("lifestyle_commute_score", 0),
@@ -1416,29 +1530,7 @@ if auth.is_authenticated() and not st.session_state.comparison_df.empty:
                     "gym": row.get("lifestyle_gym_score", 0),
                 }
 
-                with tab1:
-                    score_cols = st.columns(3)
-                    score_cols[0].metric("NestAI Score", f"{row.get('nestai_score', 0):.0f}/100")
-                    score_cols[1].metric(
-                        "Price",
-                        f"${int(overview_price) if pd.notna(overview_price) else 0:,}/mo",
-                    )
-                    score_cols[2].metric(
-                        "Sq Ft",
-                        f"{int(overview_sqft) if pd.notna(overview_sqft) else 0}",
-                    )
-                    st.markdown(
-                        generate_lifestyle_explanation(
-                            rank,
-                            row,
-                            component_scores,
-                            weights,
-                            ranked_df,
-                            priority_rank_fn=lambda name: get_priority_rank(name, weights),
-                        )
-                    )
-
-                with tab2:
+                with tab_amenities:
                     st.markdown("**Building Amenities**")
                     st.markdown(generate_amenities_list(row))
                     amenity_col1, amenity_col2 = st.columns(2)
@@ -1455,13 +1547,16 @@ if auth.is_authenticated() and not st.session_state.comparison_df.empty:
                         st.write(f"🚶 **Walk Score:** {walk_score_value}")
                         st.write(f"💪 **Nearby Gyms:** {row.get('nearby_gyms', '—')}")
 
-                with tab3:
-                    if tradeoff and rank > 1:
-                        st.markdown(tradeoff.generate_tradeoff_explanation(rank - 2, rank - 1))
+                with tab_tradeoffs:
+                    if tradeoff:
+                        if rank == 1:
+                            st.markdown(tradeoff.explain_why_winner())
+                        else:
+                            st.markdown(tradeoff.generate_tradeoff_explanation(rank - 2, rank - 1))
                     else:
-                        st.info("This is your current top recommendation.")
+                        st.info("Add another saved unit to see tradeoff analysis.")
 
-                with tab4:
+                with tab_concerns:
                     analysis = regret_analyzer.analyze_apartment(rank - 1)
                     if analysis.get("concerns"):
                         st.write(f"**Regret Risk: {analysis['regret_risk']:.0f}/100**")
