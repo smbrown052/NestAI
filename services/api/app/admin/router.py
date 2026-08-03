@@ -15,11 +15,11 @@ from typing import Annotated
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from fastapi.security import HTTPBasic, HTTPBasicCredentials, HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 
-from app.auth.security import hash_password, verify_password
+from app.auth.security import hash_password, verify_password, decode_access_token
 from app.db.session import get_db
 from app.db.models.user import User
 from app.db.models.feedback import FeedbackReport
@@ -30,7 +30,8 @@ from app.db.models.ai_feedback import AICallLog
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
-security = HTTPBasic()
+_basic_security = HTTPBasic(auto_error=False)
+_bearer_security = HTTPBearer(auto_error=False)
 
 
 class BetaInviteCreateRequest(BaseModel):
@@ -76,16 +77,35 @@ def _serialize_beta_invite(invite: BetaAccess) -> BetaInviteRead:
 # ── Auth dependency ────────────────────────────────────────────────────────────
 
 def require_admin(
-    credentials: Annotated[HTTPBasicCredentials, Depends(security)],
+    bearer: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer_security)],
+    basic: Annotated[HTTPBasicCredentials | None, Depends(_basic_security)],
     db: Session = Depends(get_db),
 ) -> User:
-    user = db.query(User).filter(User.email == credentials.username).first()
-    if not user or not verify_password(credentials.password, user.hashed_password):
+    """Accept either a JWT ****** or HTTP Basic credentials."""
+    user: User | None = None
+
+    if bearer and bearer.scheme.lower() == "bearer":
+        try:
+            payload = decode_access_token(bearer.credentials)
+            user_id = payload.get("sub")
+            if user_id is not None:
+                user = db.query(User).filter(User.id == int(user_id)).first()
+        except Exception:
+            user = None
+
+    if user is None and basic is not None:
+        candidate = db.query(User).filter(User.email == basic.username).first()
+        if candidate and verify_password(basic.password, candidate.hashed_password):
+            user = candidate
+
+    if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid credentials",
-            headers={"WWW-Authenticate": "Basic"},
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
         )
+    if not user.is_active:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account is disabled")
     if not user.is_admin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
     return user
