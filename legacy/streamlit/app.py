@@ -384,7 +384,7 @@ with st.sidebar:
         index=nav_options.index(active_screen) if active_screen in nav_options else 0,
         label_visibility="collapsed",
     )
-    if nav_choice != active_screen:
+    if active_screen in nav_options and nav_choice != active_screen:
         st.session_state.main_nav = nav_choice
         st.rerun()
 

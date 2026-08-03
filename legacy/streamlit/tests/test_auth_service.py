@@ -23,6 +23,7 @@ from auth_service import (  # noqa: E402
     login_error_message,
     registration_error_message,
 )
+from ui_state import get_navigation_options  # noqa: E402
 
 
 class FakeResponse:
@@ -156,3 +157,129 @@ class StreamlitAuthServiceTests(unittest.TestCase):
                 os.environ.pop("STREAMLIT_SHARING_MODE", None)
             else:
                 os.environ["STREAMLIT_SHARING_MODE"] = prior_cloud
+
+    def test_hidden_screens_absent_from_nav_options(self) -> None:
+        # "Login" and "Create Account" must NOT appear in nav_options so that the
+        # sidebar radio guard (`active_screen in nav_options`) keeps them from being
+        # overridden back to "Home" when a user navigates to those screens.
+        nav_options = get_navigation_options(False)
+        self.assertIn("Home", nav_options)
+        self.assertNotIn("Login", nav_options)
+        self.assertNotIn("Create Account", nav_options)
+
+    def test_sign_in_button_sets_nav_to_login(self) -> None:
+        # Simulates clicking "Sign in" on the Home page: main_nav becomes "Login"
+        # and the sidebar guard must NOT reset it back.
+        nav_options = get_navigation_options(False)
+        hidden_screens = {"Login", "Create Account", "Pricing"}
+
+        active_screen = "Login"  # after Sign In button click + rerun
+        # The guard: sidebar radio should only fire when active_screen is a visible page.
+        sidebar_would_override = active_screen in nav_options
+        self.assertFalse(sidebar_would_override, "Sidebar must not override the Login screen")
+        self.assertIn(active_screen, hidden_screens)
+
+    def test_sign_up_button_sets_nav_to_create_account(self) -> None:
+        # Simulates clicking "Sign up" on the Home page: main_nav becomes "Create Account"
+        # and the sidebar guard must NOT reset it back.
+        nav_options = get_navigation_options(False)
+        hidden_screens = {"Login", "Create Account", "Pricing"}
+
+        active_screen = "Create Account"  # after Sign Up button click + rerun
+        sidebar_would_override = active_screen in nav_options
+        self.assertFalse(sidebar_would_override, "Sidebar must not override the Create Account screen")
+        self.assertIn(active_screen, hidden_screens)
+
+    def test_sign_in_success_sets_authenticated_state(self) -> None:
+        api_client = Mock()
+        api_client.login.return_value = FakeResponse(200, {"access_token": "tok-sign-in"})
+        api_client.me.return_value = FakeResponse(
+            200,
+            {
+                "id": 10,
+                "email": "signin@example.com",
+                "display_name": "Sign In User",
+                "tier": "free",
+                "active_plan": "free",
+                "is_admin": False,
+                "is_active": True,
+            },
+        )
+
+        state: dict = {}
+        manager = StreamlitAuthManager(api_client, state)
+        manager.initialize()
+
+        response = manager.login("signin@example.com", "correct-password")
+        self.assertEqual(response.status_code, 200)
+
+        token = response.json()["access_token"]
+        me = api_client.me.return_value.json()
+        manager.set_authenticated(token, me)
+
+        self.assertTrue(manager.is_authenticated())
+        self.assertEqual(state["auth_token"], "tok-sign-in")
+        self.assertEqual(state["auth_user"]["email"], "signin@example.com")
+        self.assertIsNone(state["auth_error"])
+
+    def test_sign_in_failure_returns_error_message(self) -> None:
+        api_client = Mock()
+        api_client.login.return_value = FakeResponse(401, {"detail": "Invalid email or password"})
+
+        state: dict = {}
+        manager = StreamlitAuthManager(api_client, state)
+        manager.initialize()
+
+        response = manager.login("bad@example.com", "wrong-password")
+        self.assertEqual(response.status_code, 401)
+        error_msg = login_error_message(response.status_code)
+        self.assertEqual(error_msg, "Invalid email or password.")
+        self.assertFalse(manager.is_authenticated())
+
+    def test_sign_up_success_sets_authenticated_state(self) -> None:
+        api_client = Mock()
+        api_client.request.return_value = FakeResponse(
+            201,
+            {
+                "access_token": "tok-sign-up",
+                "user": {
+                    "id": 20,
+                    "email": "signup@example.com",
+                    "display_name": "Sign Up User",
+                    "tier": "free",
+                    "active_plan": "free",
+                    "is_admin": False,
+                    "is_active": True,
+                },
+            },
+        )
+
+        state: dict = {}
+        manager = StreamlitAuthManager(api_client, state)
+        manager.initialize()
+
+        response = manager.register("signup@example.com", "strong-password", "Sign Up User")
+        self.assertIn(response.status_code, {200, 201})
+
+        payload = response.json()
+        token = payload.get("access_token")
+        user_payload = payload.get("user") or payload
+        if token:
+            manager.set_authenticated(token, user_payload)
+
+        self.assertTrue(manager.is_authenticated())
+        self.assertEqual(state["auth_user"]["email"], "signup@example.com")
+
+    def test_sign_up_failure_returns_error_message(self) -> None:
+        api_client = Mock()
+        api_client.request.return_value = FakeResponse(409, {"detail": "Email already registered"})
+
+        state: dict = {}
+        manager = StreamlitAuthManager(api_client, state)
+        manager.initialize()
+
+        response = manager.register("dup@example.com", "password", "Dup User")
+        self.assertEqual(response.status_code, 409)
+        error_msg = registration_error_message(response.status_code)
+        self.assertEqual(error_msg, "That email is already registered.")
+        self.assertFalse(manager.is_authenticated())
