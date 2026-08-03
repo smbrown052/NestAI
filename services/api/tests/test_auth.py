@@ -80,15 +80,28 @@ class AuthApiTests(unittest.TestCase):
     def _unique_email(self) -> str:
         return f"user-{self.id()}@example.com"
 
-    def _register(self, email: str, password: str, display_name: str, account_type: str, beta_invite_code: str | None = None):
+    def _register(
+        self,
+        email: str,
+        password: str,
+        display_name: str,
+        account_type: str,
+        beta_invite_code: str | None = None,
+        referral_code: str | None = None,
+    ):
         payload = {
             "email": email,
             "password": password,
             "display_name": display_name,
             "account_type": account_type,
         }
+        if account_type in {"premium", "premium_plus"}:
+            payload["trial_consent"] = True
+            payload["payment_method_confirmed"] = True
         if beta_invite_code is not None:
             payload["beta_invite_code"] = beta_invite_code
+        if referral_code is not None:
+            payload["referral_code"] = referral_code
         return self.client.post("/auth/register", json=payload)
 
     def _basic_headers(self, email: str, password: str) -> dict[str, str]:
@@ -139,7 +152,7 @@ class AuthApiTests(unittest.TestCase):
         token = login_response.json()["access_token"]
         self.assertTrue(token)
 
-        me_response = self.client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
+        me_response = self.client.get("/auth/me", headers={"Authorization": "Bearer " + token})
         self.assertEqual(me_response.status_code, 200)
         self.assertEqual(me_response.json()["email"], email)
         self.assertEqual(me_response.json()["display_name"], "Test User")
@@ -189,6 +202,7 @@ class AuthApiTests(unittest.TestCase):
         premium_response = self._register("premium@example.com", "CorrectHorseBatteryStaple!", "Premium User", "premium")
         self.assertEqual(premium_response.status_code, 201)
         premium_payload = premium_response.json()
+        premium_token = premium_payload["access_token"]
         self.assertEqual(premium_payload["user"]["requested_plan"], "premium")
         self.assertEqual(premium_payload["user"]["subscription_status"], "pending_payment")
         self.assertTrue(premium_payload["checkout_session_id"])
@@ -196,7 +210,7 @@ class AuthApiTests(unittest.TestCase):
 
         billing_status = self.client.get(
             "/billing/status",
-            headers={"Authorization": f"Bearer {premium_payload['access_token']}"},
+            headers={"Authorization": "Bearer " + premium_token},
         )
         self.assertEqual(billing_status.status_code, 200)
         self.assertEqual(billing_status.json()["requested_plan"], "premium")
@@ -222,7 +236,7 @@ class AuthApiTests(unittest.TestCase):
 
         premium_me = self.client.get(
             "/auth/me",
-            headers={"Authorization": f"Bearer {premium_payload['access_token']}"},
+            headers={"Authorization": "Bearer " + premium_token},
         )
         self.assertEqual(premium_me.status_code, 200)
         self.assertEqual(premium_me.json()["active_plan"], "premium")
@@ -231,6 +245,7 @@ class AuthApiTests(unittest.TestCase):
         plus_response = self._register("plus@example.com", "CorrectHorseBatteryStaple!", "Plus User", "premium_plus")
         self.assertEqual(plus_response.status_code, 201)
         plus_payload = plus_response.json()
+        plus_token = plus_payload["access_token"]
         self.assertEqual(plus_payload["user"]["requested_plan"], "premium_plus")
         self.assertEqual(plus_payload["user"]["active_plan"], "free")
         self.assertEqual(plus_payload["payment_required_message"], "Payment required to activate Premium Plus")
@@ -252,7 +267,7 @@ class AuthApiTests(unittest.TestCase):
 
         plus_me = self.client.get(
             "/auth/me",
-            headers={"Authorization": f"Bearer {plus_payload['access_token']}"},
+            headers={"Authorization": "Bearer " + plus_token},
         )
         self.assertEqual(plus_me.status_code, 200)
         self.assertEqual(plus_me.json()["active_plan"], "free")
@@ -274,3 +289,66 @@ class AuthApiTests(unittest.TestCase):
 
         blocked = self._register("locked@example.com", "CorrectHorseBatteryStaple!", "Locked User", "beta", invite_code)
         self.assertEqual(blocked.status_code, 401)
+
+    def test_referral_invite_and_reward_after_payment(self) -> None:
+        referrer = self._register("referrer@example.com", "CorrectHorseBatteryStaple!", "Referrer", "free")
+        self.assertEqual(referrer.status_code, 201)
+        referrer_token = referrer.json()["access_token"]
+        referrer_code = referrer.json()["user"]["referral_code"]
+        self.assertTrue(referrer_code)
+
+        invite_response = self.client.post(
+            "/auth/referrals/invite",
+            json={"email": "friend@example.com"},
+            headers={"Authorization": "Bearer " + referrer_token},
+        )
+        self.assertEqual(invite_response.status_code, 200)
+        self.assertEqual(invite_response.json()["status"], "invited")
+
+        premium_response = self._register(
+            "friend@example.com",
+            "CorrectHorseBatteryStaple!",
+            "Friend",
+            "premium",
+            referral_code=referrer_code,
+        )
+        self.assertEqual(premium_response.status_code, 201)
+        checkout_session_id = premium_response.json()["checkout_session_id"]
+
+        webhook_payload = {
+            "event_id": "evt_referral_reward_success",
+            "event_type": "payment_succeeded",
+            "checkout_session_id": checkout_session_id,
+            "payment_customer_id": "cus_referral_123",
+            "payment_subscription_id": "sub_referral_123",
+        }
+        raw_webhook = json.dumps(webhook_payload).encode("utf-8")
+        webhook_signature = self.billing_service.sign_webhook_payload(raw_webhook)
+        webhook_response = self.client.post(
+            "/billing/webhook",
+            data=raw_webhook,
+            headers={"Content-Type": "application/json", "X-NestAI-Signature": webhook_signature},
+        )
+        self.assertEqual(webhook_response.status_code, 200)
+
+        summary_response = self.client.get(
+            "/auth/referrals/summary",
+            headers={"Authorization": "Bearer " + referrer_token},
+        )
+        self.assertEqual(summary_response.status_code, 200)
+        self.assertEqual(summary_response.json()["earned_credit_cents"], 500)
+        self.assertTrue(any(r["status"] == "converted" for r in summary_response.json()["referrals"]))
+
+    def test_premium_signup_requires_trial_consent(self) -> None:
+        response = self.client.post(
+            "/auth/register",
+            json={
+                "email": "consent-missing@example.com",
+                "password": "CorrectHorseBatteryStaple!",
+                "display_name": "Consent Missing",
+                "account_type": "premium",
+                "trial_consent": False,
+                "payment_method_confirmed": True,
+            },
+        )
+        self.assertEqual(response.status_code, 422)

@@ -36,7 +36,16 @@ def create_checkout_session_endpoint(
     plan = normalize_plan(payload.plan)
     if plan not in PAYMENT_PLANS:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Plan does not require checkout")
-    session_info = create_checkout_session(db, current_user, plan)
+    try:
+        session_info = create_checkout_session(
+            db,
+            current_user,
+            plan,
+            trial_consent=payload.trial_consent,
+            payment_method_confirmed=payload.payment_method_confirmed,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
     return CheckoutSessionCreateResponse(**session_info)
 
 
@@ -105,4 +114,8 @@ def billing_status(current_user: User = Depends(get_current_user), db: Session =
         checkout_session_id=checkout_session_id,
         checkout_url=checkout_url,
         payment_required_message=payment_message,
+        trial_days=7 if requested in PAYMENT_PLANS else None,
+        future_monthly_price=("$49/mo" if requested == "premium_plus" else "$19/mo") if requested in PAYMENT_PLANS else None,
+        cancellation_terms="Cancel any time before trial ends to avoid charges." if requested in PAYMENT_PLANS else None,
+        billing_reminder="A billing reminder will be sent before your first charge." if requested in PAYMENT_PLANS else None,
     )

@@ -9,6 +9,7 @@ from app.db.models.credits import CreditBalance, CreditTransaction
 from app.db.models.feedback import FeedbackReport
 from app.db.models.home_details import HomeDetails
 from app.db.models.property import Property
+from app.db.models.referral import Referral
 from app.db.models.unit import Unit
 from app.db.models.usage_event import UsageEvent
 from app.db.models.user import User
@@ -24,6 +25,7 @@ __all__ = [
     "FeedbackReport",
     "HomeDetails",
     "Property",
+    "Referral",
     "Unit",
     "UsageEvent",
     "User",
