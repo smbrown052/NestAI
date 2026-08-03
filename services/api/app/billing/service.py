@@ -8,12 +8,13 @@ import json
 import os
 import secrets
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
 from app.auth.plans import FREE_PLAN, PAYMENT_PLANS, current_plan, normalize_plan, set_user_plan
 from app.db.models.billing import BillingEvent
+from app.db.models.referral import Referral
 from app.db.models.user import User
 
 STREAMLIT_BASE_URL_ENV = "NESTAI_STREAMLIT_URL"
@@ -52,16 +53,38 @@ def payment_required_message(plan: str) -> str:
     return "Payment required to activate Premium"
 
 
-def create_checkout_session(db: Session, user: User, requested_plan: str) -> dict:
+def _trial_days_for_plan(plan: str) -> int:
+    _ = plan
+    return 7
+
+
+def create_checkout_session(
+    db: Session,
+    user: User,
+    requested_plan: str,
+    *,
+    trial_consent: bool = False,
+    payment_method_confirmed: bool = False,
+) -> dict:
     plan = normalize_plan(requested_plan)
     if plan not in PAYMENT_PLANS:
         raise ValueError("Requested plan does not require payment")
+    if not trial_consent or not payment_method_confirmed:
+        raise ValueError("Checkout requires explicit trial consent and payment method confirmation")
 
     session_id = f"cs_{secrets.token_urlsafe(18)}"
+    trial_days = _trial_days_for_plan(plan)
+    trial_end = datetime.now(timezone.utc) + timedelta(days=trial_days)
+    monthly_price = "$49/mo" if plan == "premium_plus" else "$19/mo"
     payload = {
         "checkout_session_id": session_id,
         "requested_plan": plan,
         "user_id": user.id,
+        "trial_consent": True,
+        "payment_method_confirmed": True,
+        "trial_days": trial_days,
+        "trial_end_date": trial_end.date().isoformat(),
+        "monthly_price": monthly_price,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     event = BillingEvent(
@@ -85,6 +108,11 @@ def create_checkout_session(db: Session, user: User, requested_plan: str) -> dic
         "payment_required_message": payment_required_message(plan),
         "active_plan": current_plan(user),
         "requested_plan": plan,
+        "trial_days": trial_days,
+        "trial_end_date": trial_end.date().isoformat(),
+        "future_monthly_price": monthly_price,
+        "cancellation_terms": "Cancel any time before trial ends to avoid charges.",
+        "billing_reminder": "A billing reminder will be sent before your first charge.",
     }
 
 
@@ -132,6 +160,44 @@ def activate_purchased_plan(db: Session, *, checkout_session_id: str, event_id: 
     user.payment_subscription_id = subscription_id
     set_user_plan(user, requested, requested=None, subscription_status="active")
     user.subscription_status = "active"
+
+    if user.referrer_id:
+        existing_reward = (
+            db.query(Referral)
+            .filter(Referral.referred_user_id == user.id)
+            .filter(Referral.status == "converted")
+            .first()
+        )
+        if not existing_reward:
+            referral_row = (
+                db.query(Referral)
+                .filter(Referral.referrer_user_id == user.referrer_id)
+                .filter(Referral.referred_email == user.email.lower())
+                .order_by(Referral.created_at.desc())
+                .first()
+            )
+            if not referral_row:
+                referral_row = Referral(
+                    referrer_user_id=user.referrer_id,
+                    referred_user_id=user.id,
+                    referred_email=user.email.lower(),
+                    referral_code=None,
+                    status="converted",
+                    reward_cents=500,
+                    converted_at=datetime.now(timezone.utc),
+                    rewarded_at=datetime.now(timezone.utc),
+                )
+                db.add(referral_row)
+            else:
+                referral_row.referred_user_id = user.id
+                referral_row.status = "converted"
+                referral_row.reward_cents = 500
+                referral_row.converted_at = datetime.now(timezone.utc)
+                referral_row.rewarded_at = datetime.now(timezone.utc)
+            referrer = db.query(User).filter(User.id == user.referrer_id).first()
+            if referrer:
+                referrer.referral_credit_cents = (referrer.referral_credit_cents or 0) + 500
+
     db.commit()
     db.refresh(user)
     return user

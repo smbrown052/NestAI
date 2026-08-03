@@ -13,6 +13,9 @@ class RegisterRequest(BaseModel):
     display_name: str = Field(min_length=1, max_length=120)
     account_type: str = Field(default="free")
     beta_invite_code: str | None = None
+    referral_code: str | None = Field(default=None, max_length=64)
+    trial_consent: bool = False
+    payment_method_confirmed: bool = False
 
 
 class LoginRequest(BaseModel):
@@ -35,8 +38,32 @@ class AuthUserRead(BaseModel):
     payment_subscription_id: str | None = None
     beta_approved_at: datetime | None = None
     beta_access: bool = False
+    referrer_id: int | None = None
+    referral_code: str | None = None
+    referral_credit_cents: int = 0
     is_admin: bool
     is_active: bool
+
+
+class ReferralInviteRequest(BaseModel):
+    email: EmailStr
+
+
+class ReferralRead(BaseModel):
+    id: int
+    referred_email: EmailStr
+    status: str
+    reward_cents: int
+    created_at: datetime
+    converted_at: datetime | None = None
+    rewarded_at: datetime | None = None
+
+
+class ReferralSummaryRead(BaseModel):
+    referral_code: str
+    referral_link: str
+    earned_credit_cents: int
+    referrals: list[ReferralRead]
 
 
 class AccessTokenResponse(BaseModel):
@@ -46,6 +73,8 @@ class AccessTokenResponse(BaseModel):
 
 class CheckoutSessionCreateRequest(BaseModel):
     plan: str
+    trial_consent: bool = False
+    payment_method_confirmed: bool = False
 
 
 class CheckoutSessionCreateResponse(BaseModel):
@@ -54,6 +83,11 @@ class CheckoutSessionCreateResponse(BaseModel):
     payment_required_message: str
     active_plan: str
     requested_plan: str
+    trial_days: int | None = None
+    trial_end_date: str | None = None
+    future_monthly_price: str | None = None
+    cancellation_terms: str | None = None
+    billing_reminder: str | None = None
 
 
 class BillingStatusRead(BaseModel):
@@ -65,3 +99,8 @@ class BillingStatusRead(BaseModel):
     checkout_session_id: str | None = None
     checkout_url: str | None = None
     payment_required_message: str | None = None
+    trial_days: int | None = None
+    trial_end_date: str | None = None
+    future_monthly_price: str | None = None
+    cancellation_terms: str | None = None
+    billing_reminder: str | None = None

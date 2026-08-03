@@ -1,4 +1,3 @@
-import os
 import time as _time
 from html import escape as html_escape
 from pathlib import Path
@@ -55,7 +54,7 @@ except Exception:
 from credits import get_tier, has_feature, can_enrich_building, consume_analysis, analyses_remaining
 from cache import get_geocode, _address_key
 from feedback import submit_feedback, send_feedback_email
-from feature_access import get_effective_plan, get_quota, get_plan, is_dev_mode, is_owner_mode_env
+from feature_access import get_effective_plan, get_quota, get_plan
 from plan_ui import render_plan_sidebar, render_pricing_cards, render_upgrade_prompt
 from ui_state import get_account_type_options, get_navigation_options, plan_display_name
 from ui_theme import feature_pill, inject_global_styles, metric_card_html, normalize_plan, render_badge, tier_class
@@ -587,6 +586,15 @@ if active_screen == "Profile":
             if user.get("subscription_status") == "pending_payment":
                 requested_plan = user.get("requested_plan") or st.session_state.get("signup_account_type", "premium")
                 st.warning(payment_required_message(requested_plan))
+                billing_status_payload = auth.refresh_billing_status() or {}
+                if billing_status_payload.get("trial_days"):
+                    st.caption(f"Free trial: {billing_status_payload.get('trial_days')} days")
+                if billing_status_payload.get("future_monthly_price"):
+                    st.caption(f"Future price after trial: {billing_status_payload.get('future_monthly_price')}")
+                if billing_status_payload.get("cancellation_terms"):
+                    st.caption(billing_status_payload.get("cancellation_terms"))
+                if billing_status_payload.get("billing_reminder"):
+                    st.caption(billing_status_payload.get("billing_reminder"))
                 checkout_session_id = st.session_state.get("pending_checkout_session_id")
                 checkout_url = st.session_state.get("pending_checkout_url")
                 if checkout_url:
@@ -691,6 +699,7 @@ if active_screen == "Create Account":
         register_name = st.text_input("Display name", key="register_name")
         register_email = st.text_input("Email", key="register_email")
         register_password = st.text_input("Password", type="password", key="register_password")
+        referral_code = st.text_input("Referral code (optional)", key="register_referral_code")
         beta_invite_code = None
         trial_consent = False
         payment_method_confirmed = False
@@ -717,6 +726,7 @@ if active_screen == "Create Account":
                 register_name,
                 account_type=selected_account_type,
                 beta_invite_code=beta_invite_code,
+                referral_code=referral_code.strip() or None,
                 trial_consent=trial_consent,
                 payment_method_confirmed=payment_method_confirmed,
             )
@@ -903,7 +913,7 @@ if st.session_state.last_result:
 
     metro_val = format_travel(metro_travel_mode, metro_min)
     m3.metric(
-        "Nearest Metro",
+        "Subway / Transportation",
         metro_val if metro_val != "—" else "Not found",
     )
     if metro_val == "—":
@@ -972,10 +982,14 @@ if st.session_state.last_result:
                     ignore_index=True,
                 )
                 st.session_state.enrichment_done = False
+                st.session_state.parsed_df = pd.DataFrame()
                 st.success("Units added!")
                 st.rerun()
         else:
-            st.info("Sign in to save units to your comparison table.")
+            st.info("You must be signed in to save units.")
+            if st.button("Go to Sign in", key="goto_signin_save_units"):
+                st.session_state.main_nav = "Login"
+                st.rerun()
     else:
         st.warning("No unit rows were parsed from this listing.")
 
@@ -997,7 +1011,7 @@ if auth.is_authenticated() and not st.session_state.comparison_df.empty:
     with priority_col3:
         gym_priority = st.slider("💪 Gym/Fitness", 1, 5, 2, key="gym_slider")
 
-    st.markdown("### 🔎 Filter Your Apartments")
+    st.markdown("### <a id='filter-apartments'>🔎 Filter Apartments</a>", unsafe_allow_html=True)
 
     min_price = int(comp_df["price_num"].min())
     max_price = int(comp_df["price_num"].max())
@@ -1023,7 +1037,7 @@ if auth.is_authenticated() and not st.session_state.comparison_df.empty:
 
     llm_request = st.text_input(
         "Ask Nest AI to filter your saved units",
-        value="1 bed not on the first floor within 10 min walk of metro",
+        value="1 bed not on the first floor within 10 min walk of subway/public transit",
     )
 
     # ── Level 2 Enrichment (cache-first, building-level, credit-gated) ────────
@@ -1065,6 +1079,7 @@ if auth.is_authenticated() and not st.session_state.comparison_df.empty:
             ),
         )
     with status_col:
+        st.markdown("<a id='neighborhood-enrichment'></a>", unsafe_allow_html=True)
         if not has_feature("walk_score"):
             st.markdown(
                 "<div class='nestai-locked-card'><div class='nestai-eyebrow'>Locked intelligence</div><h3>Neighborhood enrichment</h3><p class='nestai-section-note'>Unlock Walk Score, commute context, and nearby essentials to make ranking more trustworthy.</p></div>",
@@ -1154,7 +1169,7 @@ if auth.is_authenticated() and not st.session_state.comparison_df.empty:
     )
 
     # ── Rankings ───────────────────────────────────────────────────────────
-    st.markdown("### <a id='rankings'>🏆 Nest AI Recommendations</a>", unsafe_allow_html=True)
+    st.markdown("### <a id='rankings'>🏆 Ranked Shortlist and Breakdown</a>", unsafe_allow_html=True)
     st.caption("Ranked by your lifestyle priorities, listing data, and your personal profile.")
 
     if filtered_comp_df.empty:
@@ -1235,7 +1250,8 @@ if auth.is_authenticated() and not st.session_state.comparison_df.empty:
         top3 = ranked_df.head(3)
         visual_tier = current_visual_tier(auth.user() if auth.is_authenticated() else None)
 
-        render_decision_brief(top3, ranked_df, weights, regret_analyzer := RegretAnalyzer(ranked_df, weights), tradeoff := (TradeoffAnalyzer(ranked_df) if len(ranked_df) > 1 else None), visual_tier)
+        regret_analyzer = RegretAnalyzer(ranked_df, weights)
+        tradeoff = TradeoffAnalyzer(ranked_df) if len(ranked_df) > 1 else None
 
         # ── Top-ranked cards ───────────────────────────────────────────────
         st.markdown("#### Ranked shortlist")
@@ -1295,9 +1311,9 @@ if auth.is_authenticated() and not st.session_state.comparison_df.empty:
                     with amenity_col1:
                         metro_min_val = row.get("metro_min")
                         if metro_min_val is not None and pd.notna(metro_min_val):
-                            st.write(f"🚇 **Metro:** {metro_min_val} min")
+                            st.write(f"🚇 **Subway / Transportation:** {metro_min_val} min")
                         else:
-                            st.write("🚇 **Metro:** Not found")
+                            st.write("🚇 **Subway / Transportation:** Not found")
                             st.caption("No transit stop found within ~30 min or transit data unavailable.")
                         st.write(f"🏥 **Hospital:** {row.get('hospital_min', '—')} min")
                     with amenity_col2:
@@ -1322,6 +1338,9 @@ if auth.is_authenticated() and not st.session_state.comparison_df.empty:
                             )
                     else:
                         st.success("✅ No major concerns!")
+
+        st.markdown("### <a id='executive-decision-brief'>Executive Decision Brief</a>", unsafe_allow_html=True)
+        render_decision_brief(top3, ranked_df, weights, regret_analyzer, tradeoff, visual_tier)
 
         # ── Neighborhood Profiles for top units ────────────────────────────
         if st.session_state.enrichment_done:
@@ -1463,7 +1482,10 @@ else:
     if auth.is_authenticated():
         st.info("Add units to compare first. Paste a listing above and click **Save Units**.")
     else:
-        st.info("Sign in to save units, compare apartments, and unlock personalized rankings.")
+        st.info("You must be signed in to save units, compare apartments, and unlock personalized rankings.")
+        if st.button("Go to Sign in", key="goto_signin_rankings"):
+            st.session_state.main_nav = "Login"
+            st.rerun()
 
 
 # ── Feedback Form ─────────────────────────────────────────────────────────────

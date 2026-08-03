@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -30,6 +30,11 @@ class User(Base):
     payment_subscription_id: Mapped[str | None] = mapped_column(String(255))
     beta_tester: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     beta_approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    referrer_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    referral_code: Mapped[str | None] = mapped_column(String(64), unique=True, index=True)
+    referral_credit_cents: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     notes: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, nullable=False

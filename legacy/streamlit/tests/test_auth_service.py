@@ -127,7 +127,7 @@ class StreamlitAuthServiceTests(unittest.TestCase):
         self.assertEqual(registration_error_message(0), "Account services are temporarily unavailable.")
         self.assertEqual(registration_error_message(409), "That email is already registered.")
         self.assertEqual(registration_error_message(422), "Please check the registration fields and try again.")
-        self.assertEqual(AUTH_STATE_DEFAULTS["main_nav"], "Apartments")
+        self.assertEqual(AUTH_STATE_DEFAULTS["main_nav"], "Home")
 
     def test_api_base_url_uses_environment_value(self) -> None:
         prior = os.environ.get(API_BASE_URL_ENV)

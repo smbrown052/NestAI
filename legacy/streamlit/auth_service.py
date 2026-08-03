@@ -180,11 +180,30 @@ class NestAIAPIClient:
             return False
         return response.status_code == 200
 
-    def register(self, email: str, password: str, display_name: str) -> requests.Response:
+    def register(
+        self,
+        email: str,
+        password: str,
+        display_name: str,
+        account_type: str = "free",
+        beta_invite_code: str | None = None,
+        referral_code: str | None = None,
+        trial_consent: bool = False,
+        payment_method_confirmed: bool = False,
+    ) -> requests.Response:
         return self.request(
             "POST",
             "/auth/register",
-            json={"email": email, "password": password, "display_name": display_name},
+            json={
+                "email": email,
+                "password": password,
+                "display_name": display_name,
+                "account_type": account_type,
+                "beta_invite_code": beta_invite_code,
+                "referral_code": referral_code,
+                "trial_consent": trial_consent,
+                "payment_method_confirmed": payment_method_confirmed,
+            },
         )
 
     def login(self, email: str, password: str) -> requests.Response:
@@ -330,13 +349,26 @@ class StreamlitAuthManager:
     def login(self, email: str, password: str) -> requests.Response:
         return self.api_client.login(email, password)
 
-    def register(self, email: str, password: str, display_name: str, account_type: str = "free", beta_invite_code: str | None = None) -> requests.Response:
+    def register(
+        self,
+        email: str,
+        password: str,
+        display_name: str,
+        account_type: str = "free",
+        beta_invite_code: str | None = None,
+        referral_code: str | None = None,
+        trial_consent: bool = False,
+        payment_method_confirmed: bool = False,
+    ) -> requests.Response:
         payload = {
             "email": email,
             "password": password,
             "display_name": display_name,
             "account_type": account_type,
             "beta_invite_code": beta_invite_code,
+            "referral_code": referral_code,
+            "trial_consent": trial_consent,
+            "payment_method_confirmed": payment_method_confirmed,
         }
         return self.api_client.request("POST", "/auth/register", json=payload)
 
