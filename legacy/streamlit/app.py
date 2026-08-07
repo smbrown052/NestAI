@@ -83,6 +83,49 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+st.markdown(
+    """
+    <style>
+    /* All sidebar buttons */
+    section[data-testid="stSidebar"] .stButton > button {
+        border-radius: 999px;
+        font-weight: 600;
+    }
+
+    /* Secondary sidebar buttons */
+    section[data-testid="stSidebar"] .stButton > button[kind="secondary"] {
+        background-color: #F3F4F6;
+        color: #172033 !important;
+        border: 1px solid #D8DEE8;
+    }
+
+    section[data-testid="stSidebar"] .stButton > button[kind="secondary"]:hover {
+        background-color: #E2E8F0;
+        color: #0F172A !important;
+        border-color: #CBD5E1;
+    }
+
+    /* Primary / active sidebar buttons */
+    section[data-testid="stSidebar"] .stButton > button[kind="primary"] {
+        background-color: #334EAC;
+        color: #FFFFFF !important;
+        border: 1px solid #334EAC;
+    }
+
+    section[data-testid="stSidebar"] .stButton > button[kind="primary"]:hover {
+        background-color: #2B438F;
+        color: #FFFFFF !important;
+        border-color: #2B438F;
+    }
+
+    /* Make button text inherit the intended color */
+    section[data-testid="stSidebar"] .stButton > button p {
+        color: inherit !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 api_client = NestAIAPIClient()
 auth = StreamlitAuthManager(api_client)
@@ -502,7 +545,12 @@ with st.sidebar:
     else:
         st.caption("You are signed out.")
 
-        if st.button("🔐 Sign In", use_container_width=True, key="sidebar_sign_in"):
+        if st.button(
+            "🔐 Sign In",
+            use_container_width=True,
+            key="sidebar_sign_in",
+            type="primary",
+        ):
             st.session_state.main_nav = "Login"
             st.rerun()
 
