@@ -11,3 +11,4 @@ python-multipart>=0.0.9
 pwdlib>=0.3.0
 argon2-cffi>=23.1.0
 resend
+stripe

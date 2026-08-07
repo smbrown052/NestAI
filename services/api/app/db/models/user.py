@@ -30,6 +30,16 @@ class User(Base):
     payment_subscription_id: Mapped[str | None] = mapped_column(String(255))
     beta_tester: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     beta_approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    stripe_customer_id = mapped_column(String, nullable=True)
+    stripe_subscription_id = mapped_column(String, nullable=True)
+
+    subscription_status = mapped_column(String, nullable=True)
+
+    trial_used = mapped_column(Boolean, nullable=False, default=False)
+
+    trial_ends_at = mapped_column(DateTime(timezone=True), nullable=True)
+
+    cancel_at_period_end = mapped_column(Boolean, nullable=False, default=False)
     referrer_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("users.id", ondelete="SET NULL"), index=True
     )
