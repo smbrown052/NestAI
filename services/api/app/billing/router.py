@@ -4,8 +4,13 @@ import stripe
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.database import get_db
-from app.models import User
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+import stripe
+import os
+
+from app.db.models.user import User
+from app.db.session import get_db
 from app.auth.dependencies import get_current_user
 
 router = APIRouter(prefix="/billing", tags=["billing"])
