@@ -129,7 +129,199 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+st.markdown(
+    """
+    <style>
 
+    .home-hero {
+        padding: 36px 40px;
+        border-radius: 28px;
+        background:
+            radial-gradient(circle at top right, rgba(67, 56, 202, 0.12), transparent 32%),
+            linear-gradient(135deg, #FFFFFF 0%, #F7F9FF 100%);
+        border: 1px solid #E4E8F2;
+        box-shadow: 0 18px 50px rgba(15, 23, 42, 0.06);
+        margin-bottom: 22px;
+    }
+
+    .home-eyebrow {
+        color: #4F46E5;
+        font-size: 0.78rem;
+        font-weight: 800;
+        letter-spacing: 0.14em;
+        margin-bottom: 10px;
+    }
+
+    .home-hero h1 {
+        font-size: 2.6rem;
+        line-height: 1.08;
+        margin: 0 0 14px 0;
+        color: #0F172A;
+        max-width: 780px;
+    }
+
+    .home-hero p {
+        color: #475569;
+        font-size: 1.08rem;
+        line-height: 1.65;
+        max-width: 850px;
+        margin: 0;
+    }
+
+    .home-card {
+        min-height: 190px;
+        padding: 24px;
+        border-radius: 22px;
+        background: #FFFFFF;
+        border: 1px solid #E3E8F0;
+        box-shadow: 0 10px 30px rgba(15, 23, 42, 0.045);
+        margin-bottom: 14px;
+    }
+
+    .home-card h3 {
+        color: #0F172A;
+        margin: 10px 0 8px 0;
+    }
+
+    .home-card p {
+        color: #64748B;
+        line-height: 1.55;
+    }
+
+    .home-icon {
+        font-size: 1.8rem;
+    }
+
+    .feature-card {
+        min-height: 215px;
+        padding: 22px;
+        border-radius: 20px;
+        background: #F8FAFC;
+        border: 1px solid #E2E8F0;
+    }
+
+    .feature-card h4 {
+        color: #0F172A;
+        margin: 10px 0 8px 0;
+    }
+
+    .feature-card p {
+        color: #64748B;
+        font-size: 0.92rem;
+        line-height: 1.5;
+    }
+
+    .feature-icon {
+        font-size: 1.55rem;
+    }
+
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+st.markdown(
+    """
+    <div class="home-hero">
+        <div class="home-eyebrow">NESTAI</div>
+        <h1>Choose your next home with more confidence.</h1>
+        <p>
+            Compare real monthly costs, commute tradeoffs, neighborhood fit,
+            amenities, concessions, and decision risk in one place.
+        </p>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+cta1, cta2 = st.columns(2)
+
+with cta1:
+    if st.button(
+        "Sign in",
+        key="home_sign_in",
+        use_container_width=True,
+        type="secondary",
+    ):
+        st.session_state.main_nav = "Login"
+        st.rerun()
+
+with cta2:
+    if st.button(
+        "Create free account",
+        key="home_sign_up",
+        use_container_width=True,
+        type="primary",
+    ):
+        st.session_state.main_nav = "Create Account"
+        st.rerun()
+
+st.markdown("### How NestAI works")
+
+step1, step2, step3 = st.columns(3)
+
+with step1:
+    st.markdown(
+        """
+        <div class="home-card">
+            <div class="home-icon">📋</div>
+            <h3>1. Add listings</h3>
+            <p>Bring in apartments or homes you are seriously considering.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+with step2:
+    st.markdown(
+        """
+        <div class="home-card">
+            <div class="home-icon">🧠</div>
+            <h3>2. Compare what matters</h3>
+            <p>See cost, commute, amenities, neighborhood fit, and tradeoffs side by side.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+with step3:
+    st.markdown(
+        """
+        <div class="home-card">
+            <div class="home-icon">🏡</div>
+            <h3>3. Make the decision</h3>
+            <p>Get rankings and AI-powered decision support instead of juggling tabs and notes.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+st.markdown("### More than a listing comparison")
+
+feat1, feat2, feat3, feat4 = st.columns(4)
+
+features = [
+    ("💵", "True monthly cost", "Factor in rent, fees, concessions, parking, and other recurring costs."),
+    ("📍", "Neighborhood context", "Compare commute and lifestyle factors around each property."),
+    ("⚖️", "Explicit tradeoffs", "See what you gain and give up with every option."),
+    ("✨", "AI decision brief", "Turn a shortlist into a concise recommendation you can act on."),
+]
+
+for col, (icon, title, body) in zip([feat1, feat2, feat3, feat4], features):
+    with col:
+        st.markdown(
+            f"""
+            <div class="feature-card">
+                <div class="feature-icon">{icon}</div>
+                <h4>{title}</h4>
+                <p>{body}</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+st.info(
+    "Free accounts can fully compare and enrich their first 2 properties."
+)
 api_client = NestAIAPIClient()
 auth = StreamlitAuthManager(api_client)
 
