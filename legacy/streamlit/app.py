@@ -475,19 +475,43 @@ with st.sidebar:
 
     st.divider()
     st.markdown("## 👤 Account")
+
     if auth.is_authenticated():
         user_preview = _current_user
         effective_plan = current_effective_plan_key(user_preview)
         plan_slug = normalize_plan(effective_plan)
+
         st.caption(user_preview.get("display_name") or user_preview.get("email"))
         st.caption(f"Tier: {plan_display_name(plan_slug)}")
         st.caption(f"Saved units: {len(st.session_state.comparison_df)}")
+
         if plan_slug == "free":
             st.info("Want AI to make your search even easier? Upgrade to Premium.")
+
         if user_preview.get("subscription_status") == "pending_payment":
-            st.warning(payment_required_message(user_preview.get("requested_plan") or user_preview.get("active_plan", "premium")))
+            st.warning(
+                payment_required_message(
+                    user_preview.get("requested_plan")
+                    or user_preview.get("active_plan", "premium")
+                )
+            )
+
     else:
         st.caption("You are signed out.")
+
+        if st.button(
+            "🔐 Sign In",
+            key="sidebar_sign_in",
+            use_container_width=True,
+        ):
+            st.session_state.main_nav = "Login"
+            st.query_params.clear()
+            st.rerun()
+
+        if st.button("🔐 Sign In", use_container_width=True, key="sidebar_sign_in"):
+            st.session_state.main_nav = "Login"
+            st.rerun()
+
     render_plan_sidebar()
 
     st.divider()
@@ -898,11 +922,20 @@ if active_screen == "Reset Password":
             st.session_state.auth_notice = "Password reset successfully. Please sign in."
             st.session_state["dev_reset_link"] = None
             st.session_state.main_nav = "Login"
-        else:
-            st.session_state.auth_error = response.json().get("detail", "Could not reset password.")
-        st.rerun()
-    if st.button("Back to Sign In", key="reset_back_to_sign_in", use_container_width=True):
+            st.query_params.clear()
+            st.rerun()
+    if st.button(
+        "Back to Sign In",
+        key="reset_back_to_sign_in",
+        use_container_width=True,
+    ):
         st.session_state.main_nav = "Login"
+        st.session_state["dev_reset_link"] = None
+
+        # Remove reset-password params from the URL so they don't
+        # force the app back onto Reset Password after rerun.
+        st.query_params.clear()
+
         st.rerun()
     st.stop()
 
