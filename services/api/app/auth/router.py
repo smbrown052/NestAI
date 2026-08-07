@@ -5,8 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import os
 import secrets
-from services.api.email_service import send_password_reset_email
-
+from email_service import send_password_reset_email
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
