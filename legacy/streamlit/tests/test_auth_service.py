@@ -287,24 +287,41 @@ class StreamlitAuthServiceTests(unittest.TestCase):
         self.assertFalse(manager.is_authenticated())
 
 
-def _run_forgot_password_block(response: object, state: dict) -> None:
-    """Reproduce the app.py forgot-password submit block without importing Streamlit."""
-    SERVICE_UNAVAILABLE_MESSAGE = "Account services are temporarily unavailable."
+    def _run_forgot_password_block(response: object, state: dict) -> None:
+        """Reproduce the app.py forgot-password submit block without importing Streamlit."""
+        SERVICE_UNAVAILABLE_MESSAGE = "Account services are temporarily unavailable."
 
-    if response.status_code == 0:
-        state["auth_error"] = SERVICE_UNAVAILABLE_MESSAGE
-    else:
+        if response.status_code == 0:
+            state["auth_error"] = SERVICE_UNAVAILABLE_MESSAGE
+            return
+
         try:
             payload = response.json()
         except ValueError:
-            state["auth_error"] = f"Service error (HTTP {response.status_code}). Please try again."
+            state["auth_error"] = (
+                f"Service error (HTTP {response.status_code}). Please try again."
+            )
             return
+
+        if response.status_code >= 400:
+            state["auth_error"] = payload.get(
+                "detail",
+                "Could not process password reset request."
+            )
+            return
+
+        state["auth_notice"] = (
+            payload.get("message")
+            or "If an account exists for that email, a password reset link has been sent."
+        )
+
+        reset_link = payload.get("reset_link")
+
+        if reset_link:
+            state["auth_notice"] += " Development reset link generated below."
+            state["dev_reset_link"] = reset_link
         else:
-            state["auth_notice"] = payload.get("message") or "If an account exists for that email, a password reset link has been sent."
-            reset_link = payload.get("reset_link")
-            if reset_link:
-                state["auth_notice"] = f"{state['auth_notice']} Development reset link generated below."
-                state["dev_reset_link"] = reset_link
+            state["dev_reset_link"] = None
 
 
 class FakeResponseBadJSON:

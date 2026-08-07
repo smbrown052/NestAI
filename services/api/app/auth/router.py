@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import os
 import secrets
+from services.api.email_service import send_password_reset_email
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -294,33 +295,57 @@ def login_user(payload: LoginRequest, db: Session = Depends(get_db)) -> AccessTo
 
 
 @router.post("/forgot-password", response_model=ForgotPasswordResponse)
-def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db)) -> ForgotPasswordResponse:
+def forgot_password(
+    payload: ForgotPasswordRequest,
+    db: Session = Depends(get_db),
+) -> ForgotPasswordResponse:
     normalized_email = normalize_email(payload.email)
     user = db.query(User).filter(User.email == normalized_email).first()
     reset_link = None
 
     if user and user.is_active:
         now = datetime.now(timezone.utc)
+
         db.query(PasswordResetToken).filter(
             PasswordResetToken.user_id == user.id,
             PasswordResetToken.used_at.is_(None),
         ).update({"used_at": now}, synchronize_session=False)
+
         raw_token = secrets.token_urlsafe(32)
+
         db.add(
             PasswordResetToken(
                 user_id=user.id,
                 token_hash=hash_reset_token(raw_token),
-                expires_at=now.replace(microsecond=0) + timedelta(seconds=_RESET_TOKEN_TTL_SECONDS),
+                expires_at=now.replace(microsecond=0)
+                + timedelta(seconds=_RESET_TOKEN_TTL_SECONDS),
             )
         )
         db.commit()
-        reset_link = _dev_reset_link(raw_token)
+
+        settings = get_settings()
+
+        if settings.is_development:
+            reset_link = _dev_reset_link(raw_token)
+        else:
+            base_url = (
+                os.environ.get("NESTAI_STREAMLIT_URL")
+                or "https://nest--ai--v1.streamlit.app"
+            ).rstrip("/")
+
+            production_reset_link = (
+                f"{base_url}/?screen=Reset%20Password&reset_token={raw_token}"
+            )
+
+            send_password_reset_email(
+                to_email=user.email,
+                reset_link=production_reset_link,
+            )
 
     return ForgotPasswordResponse(
         message="If an account exists for that email, a password reset link has been sent.",
         reset_link=reset_link,
     )
-
 
 @router.post("/reset-password")
 def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db)):

@@ -14,7 +14,7 @@ from typing import Any, Mapping
 
 import requests
 
-DEFAULT_API_BASE_URL = "http://127.0.0.1:8001"
+DEFAULT_API_BASE_URL = "http://127.0.0.1:8000"
 API_BASE_URL_ENV = "NESTAI_API_BASE_URL"
 SERVICE_UNAVAILABLE_MESSAGE = "Account services are temporarily unavailable."
 API_REQUEST_TIMEOUT_SECONDS = 20
