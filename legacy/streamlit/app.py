@@ -72,55 +72,58 @@ st.set_page_config(page_title="NestAI", page_icon="🏠", layout="wide")
 inject_global_styles()
 st.markdown(
     """
-    <div class="nestai-hero">
-        <div class="nestai-eyebrow">NestAI</div>
-        <h2>Upgrade your apartment search from raw listings to decision intelligence.</h2>
-        <p class="nestai-subtle">
-            Cleaner comparisons, stronger recommendations, and tier-aware insights that feel
-            like a premium SaaS product instead of a default listing tool.
-        </p>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-st.markdown(
-    """
     <style>
-    /* All sidebar buttons */
+    /* Base sidebar button shape */
     section[data-testid="stSidebar"] .stButton > button {
-        border-radius: 999px;
-        font-weight: 600;
+        border-radius: 999px !important;
+        font-weight: 600 !important;
+        opacity: 1 !important;
     }
 
-    /* Secondary sidebar buttons */
+    /* INACTIVE sidebar nav buttons */
     section[data-testid="stSidebar"] .stButton > button[kind="secondary"] {
-        background-color: #F3F4F6;
-        color: #172033 !important;
-        border: 1px solid #D8DEE8;
+        background-color: #1F2937 !important;
+        border: 1px solid #374151 !important;
+        color: #F9FAFB !important;
     }
 
+    /* Force all nested text/icons to stay bright */
+    section[data-testid="stSidebar"] .stButton > button[kind="secondary"] * {
+        color: #F9FAFB !important;
+        opacity: 1 !important;
+    }
+
+    /* Inactive hover */
     section[data-testid="stSidebar"] .stButton > button[kind="secondary"]:hover {
-        background-color: #E2E8F0;
-        color: #0F172A !important;
-        border-color: #CBD5E1;
+        background-color: #2D3748 !important;
+        border-color: #4B5563 !important;
+        color: #FFFFFF !important;
     }
 
-    /* Primary / active sidebar buttons */
+    section[data-testid="stSidebar"] .stButton > button[kind="secondary"]:hover * {
+        color: #FFFFFF !important;
+    }
+
+    /* ACTIVE sidebar nav button */
     section[data-testid="stSidebar"] .stButton > button[kind="primary"] {
-        background-color: #334EAC;
+        background: linear-gradient(135deg, #3B5BDB, #4338CA) !important;
+        border: 1px solid #4F46E5 !important;
         color: #FFFFFF !important;
-        border: 1px solid #334EAC;
     }
 
+    section[data-testid="stSidebar"] .stButton > button[kind="primary"] * {
+        color: #FFFFFF !important;
+        opacity: 1 !important;
+    }
+
+    /* Active hover */
     section[data-testid="stSidebar"] .stButton > button[kind="primary"]:hover {
-        background-color: #2B438F;
-        color: #FFFFFF !important;
-        border-color: #2B438F;
+        background: linear-gradient(135deg, #314CC4, #3730A3) !important;
+        border-color: #4338CA !important;
     }
 
-    /* Make button text inherit the intended color */
-    section[data-testid="stSidebar"] .stButton > button p {
-        color: inherit !important;
+    section[data-testid="stSidebar"] .stButton > button[kind="primary"]:hover * {
+        color: #FFFFFF !important;
     }
     </style>
     """,
