@@ -499,15 +499,6 @@ with st.sidebar:
     else:
         st.caption("You are signed out.")
 
-        if st.button(
-            "🔐 Sign In",
-            key="sidebar_sign_in",
-            use_container_width=True,
-        ):
-            st.session_state.main_nav = "Login"
-            st.query_params.clear()
-            st.rerun()
-
         if st.button("🔐 Sign In", use_container_width=True, key="sidebar_sign_in"):
             st.session_state.main_nav = "Login"
             st.rerun()
