@@ -381,7 +381,7 @@ def _render_dev_plan_switcher() -> None:
 
 # ── Pricing cards ─────────────────────────────────────────────────────────────
 
-def render_pricing_cards() -> None:
+def render_pricing_cards(api_client) -> None:
     """Render the public plan cards.
 
     Reads ``st.session_state["nestai_highlight_plan"]`` to visually emphasise
@@ -406,13 +406,28 @@ def render_pricing_cards() -> None:
 
 
     cols = st.columns(4)
+
     for col, card in zip(cols, PRICING_PLANS):
         with col:
-            is_highlighted = highlight == card["id"] and not (plan == card["id"])
-            _render_plan_card(card, is_current=(plan == card["id"]), highlighted=is_highlighted)
+            is_highlighted = (
+                highlight == card["id"]
+                and not (plan == card["id"])
+            )
+
+            _render_plan_card(
+                card,
+                is_current=(plan == card["id"]),
+                highlighted=is_highlighted,
+                api_client=api_client,
+            )
 
 
-def _render_plan_card(card: dict, is_current: bool, highlighted: bool = False) -> None:
+def _render_plan_card(
+    card: dict,
+    is_current: bool,
+    highlighted: bool = False,
+    api_client=None,
+) -> None:
     """Render a single plan card."""
     plan_id = card["id"]
     visual_plan = PLAN_PREMIUM_PLUS if plan_id == PLAN_OWNER_TEST else plan_id
@@ -509,7 +524,6 @@ def _render_plan_card(card: dict, is_current: bool, highlighted: bool = False) -
             key=f"plan_cta_{plan_id}",
             type="primary",
         ):
-            api_client = NestAIAPIClient()
 
             response = api_client.request(
                 "POST",
@@ -547,7 +561,6 @@ def _render_plan_card(card: dict, is_current: bool, highlighted: bool = False) -
             key=f"plan_cta_{plan_id}",
             type="primary",
         ):
-            api_client = NestAIAPIClient()
 
             response = api_client.request(
                 "POST",

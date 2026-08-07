@@ -1075,7 +1075,7 @@ if active_screen == "Reset Password":
     st.stop()
 
 if active_screen == "Pricing":
-    render_pricing_cards()
+    render_pricing_cards(api_client)
     st.caption("Premium and Premium Plus require payment setup before activation. Accounts are created as Free with your selected plan recorded.")
     st.stop()
 
