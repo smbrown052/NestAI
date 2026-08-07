@@ -463,15 +463,18 @@ if auth.is_authenticated():
 
 with st.sidebar:
     st.markdown("## 🧭 Navigation")
-    nav_choice = st.radio(
-        "Go to",
-        options=nav_options,
-        index=nav_options.index(active_screen) if active_screen in nav_options else 0,
-        label_visibility="collapsed",
-    )
-    if active_screen in nav_options and nav_choice != active_screen:
-        st.session_state.main_nav = nav_choice
-        st.rerun()
+
+    for nav_item in nav_options:
+        if st.button(
+            nav_item,
+            key=f"sidebar_nav_{nav_item}",
+            use_container_width=True,
+            type="primary" if active_screen == nav_item else "secondary",
+        ):
+            st.query_params.clear()
+            st.session_state.pop("reset_password_token", None)
+            st.session_state.main_nav = nav_item
+            st.rerun()
 
     st.divider()
     st.markdown("## 👤 Account")
