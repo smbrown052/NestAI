@@ -219,109 +219,7 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-st.markdown(
-    """
-    <div class="home-hero">
-        <div class="home-eyebrow">NESTAI</div>
-        <h1>Choose your next home with more confidence.</h1>
-        <p>
-            Compare real monthly costs, commute tradeoffs, neighborhood fit,
-            amenities, concessions, and decision risk in one place.
-        </p>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
 
-cta1, cta2 = st.columns(2)
-
-with cta1:
-    if st.button(
-        "Sign in",
-        key="home_sign_in",
-        use_container_width=True,
-        type="secondary",
-    ):
-        st.session_state.main_nav = "Login"
-        st.rerun()
-
-with cta2:
-    if st.button(
-        "Create free account",
-        key="home_sign_up",
-        use_container_width=True,
-        type="primary",
-    ):
-        st.session_state.main_nav = "Create Account"
-        st.rerun()
-
-st.markdown("### How NestAI works")
-
-step1, step2, step3 = st.columns(3)
-
-with step1:
-    st.markdown(
-        """
-        <div class="home-card">
-            <div class="home-icon">📋</div>
-            <h3>1. Add listings</h3>
-            <p>Bring in apartments or homes you are seriously considering.</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-with step2:
-    st.markdown(
-        """
-        <div class="home-card">
-            <div class="home-icon">🧠</div>
-            <h3>2. Compare what matters</h3>
-            <p>See cost, commute, amenities, neighborhood fit, and tradeoffs side by side.</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-with step3:
-    st.markdown(
-        """
-        <div class="home-card">
-            <div class="home-icon">🏡</div>
-            <h3>3. Make the decision</h3>
-            <p>Get rankings and AI-powered decision support instead of juggling tabs and notes.</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-st.markdown("### More than a listing comparison")
-
-feat1, feat2, feat3, feat4 = st.columns(4)
-
-features = [
-    ("💵", "True monthly cost", "Factor in rent, fees, concessions, parking, and other recurring costs."),
-    ("📍", "Neighborhood context", "Compare commute and lifestyle factors around each property."),
-    ("⚖️", "Explicit tradeoffs", "See what you gain and give up with every option."),
-    ("✨", "AI decision brief", "Turn a shortlist into a concise recommendation you can act on."),
-]
-
-for col, (icon, title, body) in zip([feat1, feat2, feat3, feat4], features):
-    with col:
-        st.markdown(
-            f"""
-            <div class="feature-card">
-                <div class="feature-icon">{icon}</div>
-                <h4>{title}</h4>
-                <p>{body}</p>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-st.info(
-    "Free accounts can fully compare and enrich their first 2 properties."
-)
 api_client = NestAIAPIClient()
 auth = StreamlitAuthManager(api_client)
 
@@ -1185,20 +1083,130 @@ if active_screen == "Home":
     if auth.is_authenticated():
         st.session_state.main_nav = "Apartment Search"
         st.rerun()
-    st.markdown("### Welcome to NestAI")
-    st.write(
-        "NestAI helps you compare real monthly costs, floor plans, hidden fees, concessions, "
-        "reviews, tour notes, and decision risk so you can choose with confidence."
+
+    st.markdown(
+        """
+        <div class="home-hero">
+            <div class="home-eyebrow">NESTAI</div>
+            <h1>Choose your next home with more confidence.</h1>
+            <p>
+                Compare real monthly costs, commute tradeoffs, neighborhood fit,
+                amenities, concessions, and decision risk in one place.
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
-    home_actions = st.columns(2)
-    with home_actions[0]:
-        if st.button("Sign in", use_container_width=True):
+
+    cta1, cta2 = st.columns(2)
+
+    with cta1:
+        if st.button(
+            "Sign in",
+            key="home_sign_in",
+            use_container_width=True,
+            type="secondary",
+        ):
             st.session_state.main_nav = "Login"
             st.rerun()
-    with home_actions[1]:
-        if st.button("Sign up", use_container_width=True, type="primary"):
+
+    with cta2:
+        if st.button(
+            "Create free account",
+            key="home_sign_up",
+            use_container_width=True,
+            type="primary",
+        ):
             st.session_state.main_nav = "Create Account"
             st.rerun()
+
+    st.markdown("### How NestAI works")
+
+    step1, step2, step3 = st.columns(3)
+
+    with step1:
+        st.markdown(
+            """
+            <div class="home-card">
+                <div class="home-icon">📋</div>
+                <h3>1. Add listings</h3>
+                <p>Bring in apartments or homes you are seriously considering.</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with step2:
+        st.markdown(
+            """
+            <div class="home-card">
+                <div class="home-icon">🧠</div>
+                <h3>2. Compare what matters</h3>
+                <p>See cost, commute, amenities, neighborhood fit, and tradeoffs side by side.</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with step3:
+        st.markdown(
+            """
+            <div class="home-card">
+                <div class="home-icon">🏡</div>
+                <h3>3. Make the decision</h3>
+                <p>Get rankings and AI-powered decision support instead of juggling tabs and notes.</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("### More than a listing comparison")
+
+    feat1, feat2, feat3, feat4 = st.columns(4)
+
+    features = [
+        (
+            "💵",
+            "True monthly cost",
+            "Factor in rent, fees, concessions, parking, and other recurring costs.",
+        ),
+        (
+            "📍",
+            "Neighborhood context",
+            "Compare commute and lifestyle factors around each property.",
+        ),
+        (
+            "⚖️",
+            "Explicit tradeoffs",
+            "See what you gain and give up with every option.",
+        ),
+        (
+            "✨",
+            "AI decision brief",
+            "Turn a shortlist into a concise recommendation you can act on.",
+        ),
+    ]
+
+    for col, (icon, title, body) in zip(
+        [feat1, feat2, feat3, feat4],
+        features,
+    ):
+        with col:
+            st.markdown(
+                f"""
+                <div class="feature-card">
+                    <div class="feature-icon">{icon}</div>
+                    <h4>{title}</h4>
+                    <p>{body}</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+    st.info(
+        "Free accounts can fully compare and enrich their first 2 properties."
+    )
+
     st.stop()
 
 if active_screen == "Why NestAI":
