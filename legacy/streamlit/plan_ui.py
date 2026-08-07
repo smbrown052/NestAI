@@ -24,6 +24,7 @@ from __future__ import annotations
 from html import escape
 
 import streamlit as st
+from auth_service import NestAIAPIClient
 
 from feature_access import (
     PLAN_FREE,
@@ -146,7 +147,7 @@ PRICING_PLANS: list[dict] = [
         "description": PLAN_DESCRIPTIONS[PLAN_PREMIUM],
         "eyebrow": "Recommended",
         "features": PREMIUM_FEATURE_LABELS,
-        "cta_label": "Choose Premium",
+        "cta_label": "Start 7-day free trial",
     },
     {
         "id": PLAN_PREMIUM_PLUS,
@@ -159,7 +160,7 @@ PRICING_PLANS: list[dict] = [
         # All Premium features are inherited; extras are listed separately.
         "features": PREMIUM_FEATURE_LABELS,
         "extras": PREMIUM_PLUS_EXTRA_LABELS,
-        "cta_label": "Choose Premium Plus",
+        "cta_label": "Start 7-day free trial",
     },
 ]
 
@@ -403,14 +404,6 @@ def render_pricing_cards() -> None:
         unsafe_allow_html=True,
     )
 
-    # Show billing notice if the user just clicked an upgrade CTA
-    intent = st.session_state.get("nestai_upgrade_intent")
-    if intent and intent in (PLAN_PREMIUM, PLAN_PREMIUM_PLUS):
-        intent_label = _PLAN_LABELS.get(intent, intent)
-        st.info(
-            f"💳 **Billing setup is coming soon.**  \n"
-            f"Your selected plan (**{intent_label}**) has been saved for checkout."
-        )
 
     cols = st.columns(4)
     for col, card in zip(cols, PRICING_PLANS):
@@ -453,6 +446,15 @@ def _render_plan_card(card: dict, is_current: bool, highlighted: bool = False) -
         ),
         unsafe_allow_html=True,
     )
+    if plan_id == PLAN_PREMIUM:
+        st.success(
+            "🎉 7-day free trial • Then $12/month • Cancel anytime before the trial ends."
+        )
+
+    elif plan_id == PLAN_PREMIUM_PLUS:
+        st.success(
+            "🎉 7-day free trial • Then $25/month • Cancel anytime before the trial ends."
+        )
 
     if plan_id == PLAN_PREMIUM_PLUS:
         st.markdown("**Everything in Premium, plus:**")
@@ -502,23 +504,78 @@ def _render_plan_card(card: dict, is_current: bool, highlighted: bool = False) -
             st.rerun()
     elif plan_id == PLAN_PREMIUM:
         if st.button(
-            card.get("cta_label", "Choose Premium"),
+            "Start 7-day free trial",
             use_container_width=True,
             key=f"plan_cta_{plan_id}",
             type="primary",
         ):
-            st.session_state.nestai_upgrade_intent = PLAN_PREMIUM
-            st.session_state.nestai_highlight_plan = None
-            st.rerun()
+            api_client = NestAIAPIClient()
+
+            response = api_client.request(
+                "POST",
+                "/billing/checkout?plan=premium",
+            )
+
+            if response.status_code == 200:
+                checkout_url = response.json().get("checkout_url")
+
+                if checkout_url:
+                    st.session_state["premium_checkout_url"] = checkout_url
+            else:
+                try:
+                    detail = response.json().get(
+                        "detail",
+                        "Could not start checkout.",
+                    )
+                except Exception:
+                    detail = "Could not start checkout."
+
+                st.error(detail)
+
+        if st.session_state.get("premium_checkout_url"):
+            st.link_button(
+                "Continue to Stripe →",
+                st.session_state["premium_checkout_url"],
+                use_container_width=True,
+            )
+
+
     elif plan_id == PLAN_PREMIUM_PLUS:
         if st.button(
-            card.get("cta_label", "Choose Premium Plus"),
+            "Start 7-day free trial",
             use_container_width=True,
             key=f"plan_cta_{plan_id}",
+            type="primary",
         ):
-            st.session_state.nestai_upgrade_intent = PLAN_PREMIUM_PLUS
-            st.session_state.nestai_highlight_plan = None
-            st.rerun()
+            api_client = NestAIAPIClient()
+
+            response = api_client.request(
+                "POST",
+                "/billing/checkout?plan=premium_plus",
+            )
+
+            if response.status_code == 200:
+                checkout_url = response.json().get("checkout_url")
+
+                if checkout_url:
+                    st.session_state["premium_plus_checkout_url"] = checkout_url
+            else:
+                try:
+                    detail = response.json().get(
+                        "detail",
+                        "Could not start checkout.",
+                    )
+                except Exception:
+                    detail = "Could not start checkout."
+
+                st.error(detail)
+
+        if st.session_state.get("premium_plus_checkout_url"):
+            st.link_button(
+                "Continue to Stripe →",
+                st.session_state["premium_plus_checkout_url"],
+                use_container_width=True,
+            )
 
 
 # ── Inline upgrade prompt ─────────────────────────────────────────────────────
