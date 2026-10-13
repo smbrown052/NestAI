@@ -10,11 +10,10 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from passlib.context import CryptContext
+import bcrypt
 from pwdlib import PasswordHash
 
 PASSWORD_HASHER = PasswordHash.recommended()
-LEGACY_PASSWORD_HASHER = CryptContext(schemes=["bcrypt"], deprecated="auto")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 JWT_TOKEN_TYPE = "access"
 DEFAULT_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "10080"))
@@ -35,7 +34,8 @@ def verify_password(password: str, hashed_password: str) -> bool:
         return PASSWORD_HASHER.verify(password, hashed_password)
     except Exception:
         try:
-            return LEGACY_PASSWORD_HASHER.verify(password, hashed_password)
+            # Retain bcrypt's historical 72-byte behavior for existing accounts.
+            return bcrypt.checkpw(password.encode("utf-8")[:72], hashed_password.encode("ascii"))
         except Exception:
             return False
 

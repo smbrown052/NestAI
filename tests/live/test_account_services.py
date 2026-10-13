@@ -61,7 +61,8 @@ def test_live_grounded_advisor_and_filtered_artifacts(tier):
     try:
         saved = session.get(base + "/properties", timeout=30)
         assert saved.status_code == 200
-        ids = [row["id"] for row in saved.json()["properties"] if not row["parsed"].get("is_archived")]
+        ids = [row["id"] for row in saved.json()["properties"]
+               if row["kind"] == "apartment" and not row["parsed"].get("is_archived")]
         if not ids:
             pytest.skip(f"BLOCKED: seed saved sample listings in dedicated {tier} account")
         parsed = session.post(base + "/requests", json={
@@ -96,5 +97,46 @@ def test_live_grounded_advisor_and_filtered_artifacts(tier):
         assert content["report_level"] == ("plus" if tier == "plus" else "premium")
         if tier == "plus":
             assert content["analytics"]["baseline"]["ranked"] == ranked
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("tier", ["premium", "plus"])
+def test_live_enrichment_commute_and_review_only_negotiation(tier):
+    if os.getenv("NESTAI_LIVE_ALLOW_ACCOUNT_OPERATIONS") != "1":
+        pytest.skip("BLOCKED: authorize dedicated-account provider use with NESTAI_LIVE_ALLOW_ACCOUNT_OPERATIONS=1")
+    base, session = account(tier)
+    try:
+        saved = session.get(base + "/properties", timeout=30)
+        assert saved.status_code == 200
+        properties = [row for row in saved.json()["properties"]
+                      if row["kind"] == "apartment" and not row["parsed"].get("is_archived")]
+        if not properties:
+            pytest.skip(f"BLOCKED: seed apartment sample in dedicated {tier} account")
+        selected = {"property_ids": [properties[0]["id"]]}
+        enrichment = session.post(base + "/enrichment", json={
+            **selected, "idempotency_key": uuid4().hex
+        }, timeout=180)
+        assert enrichment.status_code == 200, f"Live enrichment failed ({enrichment.status_code})"
+        assert enrichment.json()["mock"] is False
+        commute = session.post(base + "/commute", json={
+            **selected, "idempotency_key": uuid4().hex,
+            "destination": "Union Station, Washington, DC", "mode": "transit"
+        }, timeout=90)
+        assert commute.status_code == 200, f"Live commute failed ({commute.status_code})"
+        assert commute.json()["mock"] is False and commute.json()["routes"]
+        negotiation = session.post(base + "/negotiation", json={
+            **selected, "idempotency_key": uuid4().hex,
+            "question": "Draft a rent negotiation request for my review using only this listing's facts. Do not send it."
+        }, timeout=90)
+        assert negotiation.status_code == 200, f"Live negotiation failed ({negotiation.status_code})"
+        assert negotiation.json()["mock"] is False and negotiation.json()["answer"].strip()
+        if tier == "plus":
+            analytics = session.post(base + "/analytics", json={
+                **selected, "idempotency_key": uuid4().hex,
+                "priorities": {"price": 1, "space": 5}
+            }, timeout=30)
+            assert analytics.status_code == 200
+            assert analytics.json()["sensitivity"]
     finally:
         session.close()

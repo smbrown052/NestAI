@@ -25,7 +25,7 @@ router = APIRouter(tags=["account platform"])
 def entitlements(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     plan = service.effective_plan(user)
     usage = {row.metric: row.count for row in db.query(MonthlyUsage).filter_by(user_id=user.id, period=service.period())}
-    usage["properties"] = db.query(AccountProperty).filter_by(user_id=user.id).count()
+    usage["properties"] = service.active_property_count(db, user)
     balance = db.query(CreditBalance).filter_by(user_id=user.id).first()
     return {"plan": plan, "period": service.period(), "timezone": "UTC",
             "limits": service.limits(user), "usage": usage, "features": service.features(user),
@@ -70,12 +70,15 @@ def patch_profile(payload: schemas.ProfilePatch, db: Session = Depends(get_db), 
 @router.post("/requests")
 def natural_request(payload: schemas.NaturalRequest, user: User = Depends(get_current_user)):
     service.gate(user, "natural_filter")
-    from shared.constraints import parse_constraints, ConstraintError
+    from shared.constraints import parse_decision_request, ConstraintError
     try:
-        constraints = parse_constraints(payload.request)
+        constraints, priorities = parse_decision_request(payload.request)
     except ConstraintError as exc:
         raise HTTPException(422, str(exc)) from None
-    return {"constraints": constraints.to_dict(), "priorities": {}, "summary": constraints.summary(),
+    summary = constraints.summary()
+    if priorities:
+        summary.append("Relative priorities: " + ", ".join(f"{key}={value:g}" for key, value in priorities.items()))
+    return {"constraints": constraints.to_dict(), "priorities": priorities, "summary": summary,
             "method": "shared_deterministic_constraints"}
 
 
@@ -178,9 +181,14 @@ def patch_property(property_id: str, payload: schemas.PropertyPatch,
 
 
 def archive_property(property_id, archived, db, user):
-    service.lock_account(db, user)
+    user = service.lock_account(db, user)
     row = service.properties(db, user, [property_id])[0]
+    if not archived:
+        service.gate(user, "restore")
+        if row.parsed.get("is_archived"):
+            service.require_property_slot(db, user)
     row.parsed = {**row.parsed, "is_archived": archived}
+    row.updated_at = datetime.now(timezone.utc)
     db.commit()
     return service.serialize(db, row)
 
@@ -302,6 +310,7 @@ def report(payload: schemas.PaidRequest, db: Session = Depends(get_db), user: Us
     def work(account):
         selected = records(db, account, payload)
         comparison = service.ranking(db, account, payload.property_ids, payload.constraints, payload.priorities)
+        selected = service.ranked_snapshots(selected, comparison["ranked"])
         report_id = hashlib.sha256(f"{account.id}:{payload.idempotency_key}".encode()).hexdigest()
         deeper_report = service.features(account)["analytics"]
         snapshot = {"properties": selected, "comparison": comparison,

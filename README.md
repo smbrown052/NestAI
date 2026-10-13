@@ -175,7 +175,8 @@ Live account-service checks require `NESTAI_RUN_LIVE_TESTS=1`,
 with saved samples, not customer accounts. Set
 `NESTAI_LIVE_ALLOW_ACCOUNT_OPERATIONS=1` only when provider spending and
 report/AI quota consumption on those accounts are authorized. These checks
-exercise reauthentication, an actual grounded advisor call, strict filtering,
+exercise reauthentication, actual grounded advisor/negotiation calls, neighborhood
+enrichment, a public-destination commute, strict filtering, Plus analytics,
 and downloaded report/export content. Provider credential-read checks alone
 do not prove the advisor works. Neither service smoke checks nor local browser
 tests replace the required deployed browser journeys across all three tiers.

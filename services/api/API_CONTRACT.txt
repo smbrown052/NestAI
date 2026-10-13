@@ -14,7 +14,9 @@ DELETE /properties/{id} -> {deleted:id}
 PATCH /properties/{id} {fees:{parking?,utilities?,pet_fee?,renters_insurance?,other?}}
 -> saved property. Fees are finite nonnegative monthly amounts or null (unknown).
 POST /properties/{id}/archive {} /restore {} -> saved property (is_archived:true/false).
-Archived properties still count toward the saved-property cap, but do not rank/export.
+Archived properties do not count toward the active saved-property cap or rank/export.
+Restore is paid/beta-only and requires an available active slot; explicit unarchiving
+via upsert enforces the same gate/limit. Updates that omit is_archived retain its state.
 These operations retain data and are account-owned/account-locked.
 kind: apartment | home | rental_home. Parsing does not automatically save.
 Apartment parsing delegates to the authoritative legacy text_parser (including
@@ -41,14 +43,17 @@ snapshots verbatim, without assigning/dereferencing shared cache unit ownership.
 Null-owned properties/comparisons, session-only records, buildings/units caches and
 legacy SQLite data stay unclaimed. Administrative proof/audit is required before
 any future manual ownership correction; never match solely by address/session.
-Property count is shared across kinds and counts current saved properties.
+Property count is shared across kinds and counts current active saved properties.
 
 GET /profile -> {preferences:object}
 PUT /profile {preferences:object} -> {preferences:object}
 PATCH /profile {display_name:string} -> {display_name:string|null}; trim/persist account name.
-POST /requests {request:string} -> {constraints,priorities:{},summary,method}
+POST /requests {request:string} -> {constraints,priorities,summary,method}
 uses shared deterministic natural-language constraints without an AI/provider call.
-Unsupported/ambiguous instructions return 422; it does not invent priorities.
+Explicit "prioritize commute over price" or "space is more important than price"
+instructions map to relative weights of 3:1; other supported axes get neutral 1.
+Requests without explicit priorities return {}. Unsupported, conflicting or
+ambiguous instructions return 422; unstated preferences are never invented.
 POST /feedback {idempotency_key,category?:bug|feature|feedback|general,title,
                 description,actual_behavior?,expected_behavior?,route_or_screen?,
                 user_contact_allowed?:false}
@@ -128,6 +133,9 @@ Sensitivity follows the shared decision function, increasing each priority to
 twice its original weight plus one and reporting the scenario winner.
 Reports -> {report_id,filename,media_type:"application/json",content,download_url}
 Premium reports include normalized comparison scores/components and account facts.
+Report property snapshots and both normalized/raw unit lists contain only eligible
+ranked options under the supplied constraints; excluded/archived records remain
+saved but do not leak into the report artifact.
 Plus reports additionally embed shared sensitivity analytics and cost/space/peer
 analysis from the same locked account snapshot.
 GET /reports/{report_id}/download -> deterministic JSON attachment, same account only.
@@ -166,10 +174,19 @@ GET /billing/prices -> {premium:{amount_cents,currency,recurring},
 GET /billing/status -> {active_plan,requested_plan,subscription_status,
                        trial_used,trial_ends_at,cancel_at_period_end,billing_configured}
 POST /billing/portal -> {portal_url}; existing subscribers use the portal.
+Optional {plan:premium|premium_plus} opens Stripe's existing-subscription plan-change
+confirmation flow using the configured target price. It never creates a second
+subscription or activates local entitlements; signed webhooks synchronize the plan.
+Stripe's portal configuration must allow the approved subscription-update products.
 POST /billing/webhook requires Stripe-Signature and STRIPE_WEBHOOK_SECRET.
 Verified, unique Stripe events retrieve canonical current subscriptions, match
 account customer + configured price, and update lifecycle atomically. Checkout
 redirects and unsigned/local events NEVER activate paid access.
+Portal upgrades/downgrades resolve the plan from the current subscription item's
+configured price, not stale checkout plan metadata. Unknown/multiple item prices
+do not grant paid access; ambiguous plan-price configuration is rejected for retry.
+Subscription state is fetched while holding the account lock so concurrent event
+handlers cannot overwrite newer entitlements with a pre-lock snapshot.
 active/trialing grant paid features; past_due/unpaid/canceled/incomplete revoke them.
 Cancel-at-period-end retains entitlement while subscription remains active.
 Trial reuse does not block paid checkout; only first consented trial gets seven days.

@@ -44,7 +44,8 @@ def advisor(records, question, negotiation=False, grounding=None):
         output_limit = min(2000, max(1, int(os.getenv("NESTAI_AI_MAX_OUTPUT_TOKENS", "800"))))
     except ValueError:
         raise HTTPException(503, "AI provider configuration is invalid") from None
-    context = json.dumps({"question": question, "grounding": grounding, "citations": citations}, allow_nan=False)
+    context = json.dumps({"question": question, "grounding": grounding, "citations": citations},
+                         allow_nan=False, separators=(",", ":"))
     if len(context) > 60_000:
         raise HTTPException(422, "Select fewer properties for grounded advice")
     result = request_json(

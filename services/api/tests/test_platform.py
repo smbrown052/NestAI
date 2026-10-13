@@ -16,6 +16,7 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -318,6 +319,28 @@ def test_profile_name_patch_and_natural_requests(api):
     assert client.post("/requests", headers=headers[0], json={"request": "invent unsafe neighborhood rankings"}).status_code == 422
 
 
+def test_natural_requests_keep_explicit_priorities_separate_from_constraints(api):
+    paid(api)
+    client, _, headers, _, _ = api
+    response = client.post("/requests", headers=headers[0], json={
+        "request": "under $2500 and at least 2 beds and prioritize commute over price"})
+    assert response.status_code == 200, response.text
+    parsed = response.json()
+    assert parsed["constraints"]["rent_lt"] == 2500
+    assert parsed["constraints"]["min_beds"] == 2
+    assert parsed["priorities"]["commute"] == 3 and parsed["priorities"]["price"] == 1
+    assert parsed["priorities"]["space"] == 1
+    only_priority = client.post("/requests", headers=headers[0], json={
+        "request": "space is more important than price"})
+    assert only_priority.status_code == 200, only_priority.text
+    assert only_priority.json()["priorities"]["space"] == 3
+    for request in ("prioritize commute over commute", "prioritize price and prioritize commute over price",
+                    "prioritize unverified safety", "under $2500 and invent priorities"):
+        assert client.post("/requests", headers=headers[0], json={"request": request}).status_code == 422
+    assert client.post("/requests", headers=headers[1], json={
+        "request": "prioritize space over price"}).status_code == 403
+
+
 def test_property_fee_patch_archive_restore_and_quota_preservation(api):
     client, _, headers, _, _ = api
     prop = save(api, monthly_rent=2000, square_feet=1000)
@@ -332,12 +355,44 @@ def test_property_fee_patch_archive_restore_and_quota_preservation(api):
     assert client.patch("/properties/" + prop["id"], headers=headers[1], json={"fees": {"parking": 1}}).status_code == 404
     response = client.post("/properties/" + prop["id"] + "/archive", headers=headers[0], json={})
     assert response.status_code == 200 and response.json()["is_archived"] is True
-    assert client.get("/entitlements", headers=headers[0]).json()["usage"]["properties"] == 1
+    assert client.get("/entitlements", headers=headers[0]).json()["usage"]["properties"] == 0
     assert client.post("/ranking", headers=headers[0], json={}).json()["ranked"] == []
     assert client.post("/properties/" + prop["id"] + "/restore", headers=headers[1], json={}).status_code == 404
+    assert client.post("/properties/" + prop["id"] + "/restore", headers=headers[0], json={}).status_code == 403
+    paid(api)
     response = client.post("/properties/" + prop["id"] + "/restore", headers=headers[0], json={})
     assert response.status_code == 200 and response.json()["is_archived"] is False
     assert client.post("/ranking", headers=headers[0], json={}).json()["ranked"][0]["monthly_total"] == 2180
+
+
+def test_active_property_limit_archive_and_implicit_restore(api, monkeypatch):
+    client, _, headers, _, _ = api
+    first = save(api, "first", units=[{"id": "0012", "price": 2000}])
+    second = save(api, "second")
+    assert client.post(f"/properties/{first['id']}/archive", headers=headers[0], json={}).status_code == 200
+    assert client.post(f"/properties/{first['id']}/archive", headers=headers[0], json={}).status_code == 200
+    save(api, "replacement")
+    payload = {"kind": "apartment", "external_id": "first", "idempotency_key": "update-archived",
+               "parsed": {"address": "Updated"}}
+    updated = client.post("/properties", headers=headers[0], json=payload)
+    assert updated.status_code == 200 and updated.json()["is_archived"] is True
+    assert updated.json()["units"][0]["id"] == "0012"
+    assert client.post("/properties", headers=headers[0], json={
+        **payload, "idempotency_key": "implicit-restore", "parsed": {"is_archived": False}}).status_code == 403
+    assert client.post("/properties", headers=headers[0], json={
+        "kind": "home", "external_id": "third", "idempotency_key": "third", "parsed": {"address": "Third"}}).status_code == 429
+    assert client.post("/properties", headers=headers[0], json={
+        **payload, "idempotency_key": "invalid-archive", "parsed": {"is_archived": "false"}}).status_code == 422
+    paid(api)
+    monkeypatch.setenv("NESTAI_QUOTA_PREMIUM_PROPERTIES", "2")
+    assert client.post(f"/properties/{first['id']}/restore", headers=headers[0], json={}).status_code == 429
+    assert client.post("/properties", headers=headers[0], json={
+        **payload, "idempotency_key": "paid-implicit", "parsed": {"is_archived": False}}).status_code == 429
+    assert client.delete("/properties/" + second["id"], headers=headers[0]).status_code == 200
+    restored = client.post(f"/properties/{first['id']}/restore", headers=headers[0], json={})
+    assert restored.status_code == 200 and restored.json()["is_archived"] is False
+    assert client.post(f"/properties/{first['id']}/restore", headers=headers[0], json={}).status_code == 200
+    assert client.get("/entitlements", headers=headers[0]).json()["usage"]["properties"] == 2
 
 
 def test_feedback_persists_admin_table_with_owned_idempotency(api):
@@ -574,6 +629,32 @@ def test_exports_share_ui_filtered_ranked_set(api):
     assert all("units" not in row for row in json_export)
 
 
+@pytest.mark.parametrize("plan", ["premium", "premium_plus"])
+def test_report_snapshots_only_include_ranked_properties_and_units(api, plan):
+    paid(api, plan)
+    client, _, headers, _, _ = api
+    prop = save(api, units=[
+        {"id": "0012", "price": 2000, "sqft": 900},
+        {"id": "excluded", "price": 3500, "sqft": 1000},
+        {"id": "archived-unit", "price": 1800, "sqft": 1000, "is_archived": True},
+    ])
+    excluded = save(api, "excluded-property", units=[{"id": "expensive", "price": 4000, "sqft": 900}])
+    archived = save(api, "archived-property", is_archived=True, units=[{"id": "cheap", "price": 1700, "sqft": 900}])
+    query = {"property_ids": [prop["id"], excluded["id"], archived["id"]],
+             "constraints": {"rent_lte": 2500}, "priorities": {"price": 1}}
+    ranked = client.post("/ranking", headers=headers[0], json=query).json()["ranked"]
+    response = client.post("/reports", headers=headers[0], json={**query, "idempotency_key": "filtered-report"})
+    assert response.status_code == 200, response.text
+    snapshot = json.loads(response.json()["content"])
+    assert snapshot["comparison"]["ranked"] == ranked
+    assert [row["id"] for row in snapshot["properties"]] == [prop["id"]]
+    assert [unit["id"] for unit in snapshot["properties"][0]["units"]] == ["0012"]
+    assert [unit["id"] for unit in snapshot["properties"][0]["parsed"]["units"]] == ["0012"]
+    saved = client.get("/properties", headers=headers[0]).json()["properties"]
+    assert len(saved) == 3
+    assert len(next(row for row in saved if row["id"] == prop["id"])["units"]) == 3
+
+
 def test_premium_and_plus_reports_use_consistent_snapshot_levels(api):
     paid(api)
     client, _, headers, _, _ = api
@@ -780,6 +861,37 @@ def test_billing_portal_and_live_billing_opt_in(api, monkeypatch):
     assert response.status_code == 200 and response.json()["portal_url"] == "https://billing.stripe.com/test"
 
 
+def test_portal_plan_change_targets_existing_subscription_without_activation(api, monkeypatch):
+    client, factory, headers, ids, _ = api
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_placeholder")
+    monkeypatch.setenv("STRIPE_PREMIUM_PLUS_PRICE_ID", "price_plus")
+    with factory() as db:
+        user = db.get(User, ids[0])
+        user.stripe_customer_id = "cus_portal"
+        user.stripe_subscription_id = "sub_portal"
+        user.active_plan = user.tier = "premium"
+        db.commit()
+    sub = {"id": "sub_portal", "customer": "cus_portal", "status": "active",
+           "items": {"data": [{"id": "si_portal", "price": {"id": "price_premium"}, "quantity": 1}]}}
+    with patch("stripe.Subscription.retrieve", return_value=sub), patch(
+        "stripe.Price.retrieve", return_value={"id": "price_plus", "active": True, "type": "recurring"}
+    ), patch("stripe.billing_portal.Session.create", return_value={"url": "https://billing.stripe.com/confirm"}) as create:
+        response = client.post("/billing/portal", headers=headers[0], json={"plan": "premium_plus"})
+    assert response.status_code == 200, response.text
+    flow = create.call_args.kwargs["flow_data"]
+    assert flow["type"] == "subscription_update_confirm"
+    assert flow["subscription_update_confirm"] == {
+        "subscription": "sub_portal", "items": [{"id": "si_portal", "price": "price_plus", "quantity": 1}]}
+    assert client.get("/entitlements", headers=headers[0]).json()["plan"] == "premium"
+    assert client.post("/billing/portal", headers=headers[0], json={"plan": "free"}).status_code == 422
+    assert client.post("/billing/portal", headers=headers[0], json={"plan": "premium", "customer": "cus_other"}).status_code == 422
+    assert client.post("/billing/portal", headers=headers[1], json={"plan": "premium_plus"}).status_code == 409
+    sub["customer"] = "cus_other"
+    with patch("stripe.Subscription.retrieve", return_value=sub), patch("stripe.billing_portal.Session.create") as create:
+        assert client.post("/billing/portal", headers=headers[0], json={"plan": "premium_plus"}).status_code == 409
+        create.assert_not_called()
+
+
 def test_verified_webhook_idempotency_lifecycle_and_out_of_order(api, monkeypatch):
     client, factory, headers, ids, _ = api
     secret = "local-testing-only"
@@ -818,6 +930,168 @@ def test_verified_webhook_idempotency_lifecycle_and_out_of_order(api, monkeypatc
     sub["id"], sub["status"] = "sub_test", "canceled"
     assert send("evt_old_subscription", "customer.subscription.deleted").json().get("ignored") is True
     assert client.get("/entitlements", headers=headers[0]).json()["plan"] == "premium"
+
+
+def test_portal_price_changes_override_stale_metadata_and_preserve_data(api, monkeypatch):
+    client, factory, headers, ids, _ = api
+    monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "local-testing-only")
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_placeholder")
+    monkeypatch.setenv("STRIPE_PREMIUM_PRICE_ID", "price_premium")
+    monkeypatch.setenv("STRIPE_PREMIUM_PLUS_PRICE_ID", "price_plus")
+    prop = save(api)
+    with factory() as db:
+        user = db.get(User, ids[0])
+        user.stripe_customer_id = "cus_portal"
+        db.add(CreditBalance(user_id=user.id, credits_remaining=87))
+        db.add(MonthlyUsage(user_id=user.id, period="2026-10", metric="analyses", count=4))
+        db.commit()
+    sub = {"id": "sub_portal", "customer": "cus_portal",
+           "metadata": {"nestai_user_id": str(ids[0]), "nestai_plan": "premium"},
+           "items": {"data": [{"price": {"id": "price_plus"}, "quantity": 1}]}, "status": "active"}
+
+    def send(event_id):
+        raw = json.dumps({"id": event_id, "type": "customer.subscription.updated", "livemode": False,
+                          "data": {"object": {"id": sub["id"], "customer": sub["customer"]}}}).encode()
+        def price(price_id, **kwargs):
+            return {"id": price_id, "active": True, "type": "recurring"}
+        with patch("stripe.Subscription.retrieve", return_value=sub), patch("stripe.Price.retrieve", side_effect=price):
+            return client.post("/billing/webhook", content=raw,
+                               headers={"Stripe-Signature": stripe_signature(raw, "local-testing-only")})
+
+    assert send("evt_upgrade").status_code == 200
+    entitlement = client.get("/entitlements", headers=headers[0]).json()
+    assert entitlement["plan"] == "premium_plus" and entitlement["features"]["analytics"] is True
+    assert send("evt_upgrade").json()["duplicate"] is True
+    assert client.post("/billing/checkout", headers=headers[0], json={
+        "plan": "premium", "idempotency_key": "already-subscribed"}).status_code == 409
+    sub["metadata"]["nestai_plan"] = "premium_plus"
+    sub["items"]["data"][0]["price"]["id"] = "price_premium"
+    sub["cancel_at_period_end"] = True
+    assert send("evt_downgrade").status_code == 200
+    assert client.get("/entitlements", headers=headers[0]).json()["plan"] == "premium"
+    assert client.get("/billing/status", headers=headers[0]).json()["cancel_at_period_end"] is True
+    del sub["metadata"]["nestai_user_id"]
+    sub["items"]["data"][0]["price"]["id"] = "price_plus"
+    assert send("evt_existing_without_metadata").status_code == 200
+    assert client.get("/entitlements", headers=headers[0]).json()["plan"] == "premium_plus"
+    sub["metadata"]["nestai_user_id"] = str(ids[1])
+    sub["status"] = "canceled"
+    assert send("evt_wrong_owner").status_code == 200
+    assert client.get("/entitlements", headers=headers[0]).json()["plan"] == "premium_plus"
+    sub["metadata"]["nestai_user_id"] = str(ids[0])
+    sub["status"] = "active"
+    sub["items"]["data"][0]["price"]["id"] = "price_unknown"
+    assert send("evt_unknown_price").status_code == 200
+    assert client.get("/entitlements", headers=headers[0]).json()["plan"] == "free"
+    with factory() as db:
+        assert db.query(CreditBalance).one().credits_remaining == 87
+        assert db.query(MonthlyUsage).one().count == 4
+        assert db.get(AccountProperty, prop["id"]) is not None
+
+
+def test_webhook_price_lookup_failure_rolls_back_for_retry(api, monkeypatch):
+    import stripe
+    client, factory, headers, ids, _ = api
+    monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "local-testing-only")
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_placeholder")
+    monkeypatch.setenv("STRIPE_PREMIUM_PRICE_ID", "price_premium")
+    with factory() as db:
+        db.get(User, ids[0]).stripe_customer_id = "cus_retry"
+        db.commit()
+    sub = {"id": "sub_retry", "customer": "cus_retry", "metadata": {"nestai_user_id": str(ids[0])},
+           "items": {"data": [{"price": {"id": "price_premium"}}]}, "status": "active"}
+    raw = json.dumps({"id": "evt_retry", "type": "customer.subscription.updated", "livemode": False,
+                      "data": {"object": {"id": sub["id"], "customer": sub["customer"]}}}).encode()
+    with patch("stripe.Subscription.retrieve", return_value=sub), patch(
+        "stripe.Price.retrieve", side_effect=stripe.APIConnectionError("mock unavailable")
+    ):
+        assert client.post("/billing/webhook", content=raw, headers={
+            "Stripe-Signature": stripe_signature(raw, "local-testing-only")}).status_code == 502
+    assert client.get("/entitlements", headers=headers[0]).json()["plan"] == "free"
+    with patch("stripe.Subscription.retrieve", return_value=sub), patch(
+        "stripe.Price.retrieve", return_value={"id": "price_premium", "active": True, "type": "recurring"}
+    ):
+        response = client.post("/billing/webhook", content=raw, headers={
+            "Stripe-Signature": stripe_signature(raw, "local-testing-only")})
+    assert response.status_code == 200 and response.json()["duplicate"] is False
+    assert client.get("/entitlements", headers=headers[0]).json()["plan"] == "premium"
+
+
+def test_postgres_webhook_reads_current_subscription_under_account_lock(api, monkeypatch):
+    client, factory, headers, ids, backend = api
+    if backend != "postgres":
+        pytest.skip("Row-lock concurrency validated only on PostgreSQL")
+    monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "local-testing-only")
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_placeholder")
+    monkeypatch.setenv("STRIPE_PREMIUM_PRICE_ID", "price_premium")
+    with factory() as db:
+        db.get(User, ids[0]).stripe_customer_id = "cus_locked"
+        db.commit()
+    sub = {"id": "sub_locked", "customer": "cus_locked", "metadata": {"nestai_user_id": str(ids[0])},
+           "items": {"data": [{"price": {"id": "price_premium"}}]}, "status": "active"}
+
+    def retrieve(*args, **kwargs):
+        with factory() as db:
+            with pytest.raises(OperationalError):
+                db.query(User).filter_by(id=ids[0]).with_for_update(nowait=True).one()
+        return sub
+
+    raw = json.dumps({"id": "evt_locked", "type": "customer.subscription.updated", "livemode": False,
+                      "data": {"object": {"id": sub["id"], "customer": sub["customer"]}}}).encode()
+    with patch("stripe.Subscription.retrieve", side_effect=retrieve), patch(
+        "stripe.Price.retrieve", return_value={"id": "price_premium", "active": True, "type": "recurring"}
+    ):
+        assert client.post("/billing/webhook", content=raw, headers={
+            "Stripe-Signature": stripe_signature(raw, "local-testing-only")}).status_code == 200
+    assert client.get("/entitlements", headers=headers[0]).json()["plan"] == "premium"
+
+
+def test_postgres_concurrent_save_and_restore_share_active_cap(api, monkeypatch):
+    client, factory, headers, ids, backend = api
+    if backend != "postgres":
+        pytest.skip("Row-lock concurrency validated only on PostgreSQL")
+    paid(api)
+    monkeypatch.setenv("NESTAI_QUOTA_PREMIUM_PROPERTIES", "1")
+    prop = save(api, "archived")
+    assert client.post(f"/properties/{prop['id']}/archive", headers=headers[0], json={}).status_code == 200
+
+    def run(operation):
+        if operation == "restore":
+            return client.post(f"/properties/{prop['id']}/restore", headers=headers[0], json={}).status_code
+        return client.post("/properties", headers=headers[0], json={
+            "kind": "home", "external_id": "concurrent-home", "parsed": {"address": "Other"},
+            "idempotency_key": "concurrent-save"}).status_code
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        assert sorted(executor.map(run, ["save", "restore"])) == [200, 429]
+    assert client.get("/entitlements", headers=headers[0]).json()["usage"]["properties"] == 1
+    with factory() as db:
+        assert db.query(AccountProperty).filter_by(user_id=ids[0]).count() in {1, 2}
+
+    def archive_all():
+        for row in client.get("/properties", headers=headers[0]).json()["properties"]:
+            assert client.post(f"/properties/{row['id']}/archive", headers=headers[0], json={}).status_code == 200
+
+    archive_all()
+    def save_kind(kind):
+        return client.post("/properties", headers=headers[0], json={
+            "kind": kind, "external_id": kind, "parsed": {"address": kind},
+            "idempotency_key": kind}).status_code
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(save_kind, ["apartment", "rental_home"]))
+    assert sorted(results) == [200, 429]
+    successful = "apartment" if results[0] == 200 else "rental_home"
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        assert list(executor.map(save_kind, [successful, successful])) == [200, 200]
+    assert client.get("/entitlements", headers=headers[0]).json()["usage"]["properties"] == 1
+
+    archive_all()
+    other = save(api, "restore-other", is_archived=True)
+    def restore_id(property_id):
+        return client.post(f"/properties/{property_id}/restore", headers=headers[0], json={}).status_code
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        assert sorted(executor.map(restore_id, [prop["id"], other["id"]])) == [200, 429]
+    assert client.get("/entitlements", headers=headers[0]).json()["usage"]["properties"] == 1
 
 
 def test_postgres_concurrent_quota_and_idempotency(api, monkeypatch):

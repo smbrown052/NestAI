@@ -115,19 +115,36 @@ def serialize(db, row):
             "created_at": row.created_at.isoformat(), "updated_at": row.updated_at.isoformat()}
 
 
+def active_property_count(db, user):
+    return db.query(AccountProperty).filter(
+        AccountProperty.user_id == user.id,
+        AccountProperty.parsed["is_archived"].as_boolean().is_not(True),
+    ).count()
+
+
+def require_property_slot(db, user):
+    cap = limits(user)["properties"]
+    if active_property_count(db, user) >= cap:
+        raise HTTPException(429, {"code": "property_limit", "limit": cap})
+
+
 def save(db, user, payload):
     parsed = payload.parsed
+    if "is_archived" in parsed and not isinstance(parsed["is_archived"], bool):
+        raise HTTPException(422, "is_archived must be a boolean")
     if len(json.dumps(parsed, allow_nan=False)) > 500_000:
         raise HTTPException(413, "Parsed property is too large")
     identity = payload.external_id or hashlib.sha256(
         json.dumps({"kind": payload.kind, "parsed": parsed}, sort_keys=True).encode()
     ).hexdigest()
     row = db.query(AccountProperty).filter_by(user_id=user.id, external_id=identity).first()
+    archived = parsed.get("is_archived", bool(row and row.parsed.get("is_archived")))
+    if row and row.parsed.get("is_archived") and not archived:
+        gate(user, "restore")
+        require_property_slot(db, user)
     if not row:
-        count = db.query(AccountProperty).filter_by(user_id=user.id).count()
-        cap = limits(user)["properties"]
-        if count >= cap:
-            raise HTTPException(429, {"code": "property_limit", "limit": cap})
+        if not archived:
+            require_property_slot(db, user)
         row = AccountProperty(id=str(uuid4()), user_id=user.id, external_id=identity,
                               kind=payload.kind, parsed=parsed)
         db.add(row)
@@ -323,6 +340,22 @@ def export_rows(ranked, scope):
             result.append(row)
             seen.add(row["property_id"])
     return result
+
+
+def ranked_snapshots(selected, ranked):
+    eligible = {}
+    for row in ranked:
+        eligible.setdefault(row["property_id"], set()).add(row.get("unit_id"))
+    snapshots = []
+    for record in selected:
+        if record["id"] not in eligible:
+            continue
+        units = [unit for unit in record["units"] if unit["id"] in eligible[record["id"]]]
+        parsed = dict(record["parsed"])
+        if "units" in parsed:
+            parsed["units"] = units
+        snapshots.append({**record, "parsed": parsed, "units": units})
+    return snapshots
 
 
 def csv_export(rows, scope):

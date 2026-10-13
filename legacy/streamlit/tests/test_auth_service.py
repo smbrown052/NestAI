@@ -38,6 +38,96 @@ class FakeResponse:
 
 
 class StreamlitAuthServiceTests(unittest.TestCase):
+    def comparison_ui(self, state=None):
+        ui = Mock()
+        ui.session_state = state or {}
+        ui.form.return_value = nullcontext()
+        ui.expander.return_value = nullcontext()
+        ui.number_input.side_effect = [0, 0, 0, 0]
+        ui.text_input.return_value = ""
+        ui.slider.return_value = 1.0
+        ui.checkbox.return_value = False
+        ui.form_submit_button.return_value = False
+        ui.button.return_value = False
+        ui.selectbox.side_effect = [0, "units"]
+        return ui
+
+    def test_natural_priorities_are_not_overwritten_by_default_sliders(self):
+        import api_views
+        ui = self.comparison_ui()
+        ui.text_input.return_value = "prioritize space over price"
+        ui.form_submit_button.return_value = True
+        with patch.object(api_views, "st", ui), patch.object(api_views, "capability", return_value=True), patch.object(api_views, "api_call", side_effect=[
+            {"constraints": {}, "priorities": {"space": 5.0, "price": 1.0}},
+            {"ranked": []},
+        ]) as call:
+            api_views.render_comparison(Mock(), [{"id": "one"}])
+        self.assertEqual(call.call_args.args[3]["priorities"], {"space": 5.0, "price": 1.0})
+        ui.caption.assert_any_call("Applied priorities: {'space': 5.0, 'price': 1.0}")
+
+    def test_export_passes_exact_comparison_inputs(self):
+        import api_views
+        ui = self.comparison_ui({"account_filters": {"max_budget": 2000, "priorities": {"price": 4.0}}})
+        ui.button.side_effect = lambda label, **kwargs: label == "Prepare CSV export"
+        with patch.object(api_views, "st", ui), patch.object(api_views, "display_frame"), patch.object(api_views, "capability", side_effect=lambda name: name == "can_export"), patch.object(api_views, "api_call", side_effect=[
+            {"ranked": [{"property_id": "one", "unit_id": "unit-one", "price_num": 1500}]}, "csv",
+        ]) as call:
+            api_views.render_comparison(Mock(), [{"id": "one"}])
+        self.assertEqual(call.call_args.args[3], {
+            "property_ids": ["one"], "constraints": {"rent_lte": 2000},
+            "priorities": {"price": 4.0}, "format": "csv", "scope": "units",
+        })
+
+    def test_manual_priorities_explicitly_override_natural_priorities(self):
+        import api_views
+        ui = self.comparison_ui()
+        ui.text_input.return_value = "prioritize space"
+        ui.checkbox.return_value = True
+        ui.form_submit_button.return_value = True
+        with patch.object(api_views, "st", ui), patch.object(api_views, "capability", return_value=True), patch.object(api_views, "api_call", side_effect=[
+            {"constraints": {}, "priorities": {"space": 5.0}},
+            {"ranked": []},
+        ]) as call:
+            api_views.render_comparison(Mock(), [{"id": "one"}])
+        self.assertEqual(call.call_args.args[3]["priorities"], {
+            "price": 1.0, "space": 1.0, "commute": 1.0, "walkability": 1.0, "pets": 1.0,
+        })
+
+    def test_numeric_inputs_do_not_weaken_natural_constraints(self):
+        import api_views
+        ui = self.comparison_ui()
+        ui.text_input.return_value = "at least 3 bedrooms and up to $2000"
+        ui.number_input.side_effect = [3000, 1, 0, 0]
+        ui.form_submit_button.return_value = True
+        with patch.object(api_views, "st", ui), patch.object(api_views, "capability", return_value=False), patch.object(api_views, "api_call", side_effect=[
+            {"constraints": {"min_beds": 3, "rent_lte": 2000}, "priorities": {}},
+            {"ranked": []},
+        ]) as call:
+            api_views.render_comparison(Mock(), [{"id": "one"}])
+        self.assertEqual(call.call_args.args[3]["constraints"], {"min_beds": 3, "rent_lte": 2000})
+
+    def test_changed_comparison_clears_old_downloads_even_for_empty_results(self):
+        import api_views
+        ui = self.comparison_ui({
+            "account_export": "private stale CSV", "account_report": {"content": "{}"},
+            "account_comparison_fingerprint": "old",
+        })
+        with patch.object(api_views, "st", ui), patch.object(api_views, "capability", return_value=False), patch.object(api_views, "api_call", return_value={"ranked": []}):
+            api_views.render_comparison(Mock(), [{"id": "one"}])
+        self.assertNotIn("account_export", ui.session_state)
+        self.assertNotIn("account_report", ui.session_state)
+
+    def test_failed_hydration_clears_stale_account_snapshot(self):
+        import api_views
+        ui = Mock()
+        ui.session_state = {"account_properties": [{"id": "old"}], "user_profile": {"max_budget": 9000},
+                            "account_entitlements": {"plan": "premium"}, "account_export": "old"}
+        with patch.object(api_views, "st", ui), patch.object(api_views, "api_call", return_value=None):
+            self.assertFalse(api_views.hydrate_account(Mock()))
+        self.assertEqual(ui.session_state["account_properties"], [])
+        self.assertEqual(ui.session_state["user_profile"], {})
+        self.assertNotIn("account_export", ui.session_state)
+
     def test_property_fee_form_preserves_unknown_values_and_scopes_widgets(self):
         import api_views
         ui = Mock()

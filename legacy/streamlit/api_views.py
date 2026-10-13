@@ -58,6 +58,9 @@ def hydrate_account(client):
     profile = api_call(client, "GET", "/profile", quiet=True)
     if not all(isinstance(value, dict) for value in [entitlements, properties, profile]):
         st.session_state.pop("account_entitlements", None)
+        st.session_state["account_properties"] = []
+        st.session_state["user_profile"] = {}
+        clear_comparison_downloads()
         return False
     features = entitlements.get("features", {})
     if features and "capabilities" not in entitlements:
@@ -72,6 +75,11 @@ def hydrate_account(client):
     ]
     st.session_state["user_profile"] = profile.get("preferences", {})
     return True
+
+
+def clear_comparison_downloads():
+    for key in ("account_export", "account_report", "account_export_scope"):
+        st.session_state.pop(key, None)
 
 
 def display_frame(frame):
@@ -260,15 +268,22 @@ def render_comparison(client, properties):
         sqft = st.number_input("Minimum square feet", min_value=0, value=int(filters.get("min_sqft") or 0))
         request = st.text_input("Natural-language request", value=filters.get("request", ""), disabled=not capability("can_use_natural_language_filtering"))
         priorities = {}
+        manual_priorities = False
         if capability("can_use_lifestyle_score"):
+            manual_priorities = st.checkbox(
+                "Use manual priority weights instead of request priorities",
+                value=bool(filters.get("manual_priorities", False)),
+            )
             st.caption("Priority weights (0 ignores a priority; the backend normalizes the total).")
             for priority in ["price", "space", "commute", "walkability", "pets"]:
                 priorities[priority] = st.slider(priority.title(), 0.0, 5.0, float(filters.get("priorities", {}).get(priority, 1.0)), 0.5)
         apply = st.form_submit_button("Apply request and numeric filters")
     if apply:
-        st.session_state["account_filters"] = {"max_budget": budget or None, "min_beds": beds, "min_baths": baths, "min_sqft": sqft, "request": request, "priorities": priorities}
+        clear_comparison_downloads()
+        st.session_state["account_filters"] = {"max_budget": budget or None, "min_beds": beds, "min_baths": baths, "min_sqft": sqft, "request": request.strip(), "priorities": priorities, "manual_priorities": manual_priorities}
         filters = st.session_state["account_filters"]
     if st.button("Reset filters"):
+        clear_comparison_downloads()
         st.session_state["account_filters"] = {}
         st.rerun()
     if filters:
@@ -279,26 +294,44 @@ def render_comparison(client, properties):
     if filters.get("request"):
         parsed_request = api_call(client, "POST", "/requests", {"request": filters["request"]})
         if parsed_request is None:
+            clear_comparison_downloads()
             return
-        constraints = {**parsed_request.get("constraints", {}), **constraints}
-        priorities = {**parsed_request.get("priorities", {}), **filters.get("priorities", {})}
+        combined = dict(parsed_request.get("constraints", {}))
+        for key, value in constraints.items():
+            existing = combined.get(key)
+            combine = max if key.startswith("min_") else min
+            combined[key] = value if existing is None else combine(existing, value)
+        constraints = combined
+        priorities = (
+            filters.get("priorities", {}) if filters.get("manual_priorities")
+            else parsed_request.get("priorities") or filters.get("priorities", {})
+        )
     else:
         priorities = filters.get("priorities", {})
     if priorities and sum(priorities.values()) <= 0:
+        clear_comparison_downloads()
         st.warning("Choose at least one nonzero priority before applying.")
         return
     ids = [item["id"] for item in properties]
+    comparison_inputs = {"property_ids": ids, "constraints": constraints, "priorities": priorities}
+    st.caption(f"Applied constraints: {constraints or 'None'}")
+    st.caption(f"Applied priorities: {priorities or 'Default priorities'}")
     if not ids:
+        clear_comparison_downloads()
         st.info("Save a listing to begin your comparison.")
         return
-    result = api_call(client, "POST", "/ranking", {"property_ids": ids, "constraints": constraints, "priorities": priorities})
+    result = api_call(client, "POST", "/ranking", comparison_inputs)
     if result is None:
+        clear_comparison_downloads()
         return
     rows = result.get("ranked", [])
+    fingerprint = hashlib.sha256(json.dumps([comparison_inputs, rows], sort_keys=True).encode()).hexdigest()
+    if fingerprint != st.session_state.get("account_comparison_fingerprint"):
+        clear_comparison_downloads()
+        st.session_state["account_comparison_fingerprint"] = fingerprint
     if not rows:
         st.info("No saved listings match these filters.")
         return
-    st.caption(f"Applied constraints: {constraints or 'None'}")
     frame = pd.DataFrame(rows)
     for key, noun in [("beds_num", "bed"), ("baths_num", "bath"), ("bathrooms", "bath"), ("baths", "bath")]:
         if key in frame:
@@ -322,15 +355,21 @@ def render_comparison(client, properties):
         if capability("can_use_ai_explanations") and detail.get("components"):
             st.write("Score components:", detail["components"])
     if capability("can_export"):
-        scope = st.selectbox("CSV export scope", ["properties", "units"], format_func=lambda value: "All property types" if value == "properties" else "Apartment units")
+        scope = st.selectbox("CSV export scope", ["listings", "units", "properties"], format_func=lambda value: {
+            "listings": "Visible comparison listings", "units": "Apartment units",
+            "properties": "Property summaries (one matching listing per property)",
+        }[value])
+        if scope != st.session_state.get("account_export_scope"):
+            st.session_state.pop("account_export", None)
         if st.button("Prepare CSV export"):
-            exported = api_call(client, "POST", "/exports", {"property_ids": ids, "format": "csv", "scope": scope}, raw=True)
+            exported = api_call(client, "POST", "/exports", {**comparison_inputs, "format": "csv", "scope": scope}, raw=True)
             if exported is not None:
                 st.session_state["account_export"] = exported
+                st.session_state["account_export_scope"] = scope
     if capability("can_export") and "account_export" in st.session_state:
         st.download_button("Download comparison CSV", st.session_state["account_export"], "nestai-comparison.csv", "text/csv")
     if capability("can_generate_ai_reports") and st.button("Generate decision report"):
-        report = api_call(client, "POST", "/reports", {"property_ids": ids, "constraints": constraints, "priorities": priorities, "idempotency_key": str(uuid.uuid4())})
+        report = api_call(client, "POST", "/reports", {**comparison_inputs, "idempotency_key": str(uuid.uuid4())})
         if report is not None:
             st.session_state["account_report"] = report
     if capability("can_generate_ai_reports") and st.session_state.get("account_report"):

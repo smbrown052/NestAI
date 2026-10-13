@@ -143,19 +143,58 @@ def create_checkout_session(
     return response
 
 
-def portal(user: User) -> dict:
+def portal(user: User, requested_plan: str | None = None) -> dict:
     stripe, key = stripe_client()
     if not user.stripe_customer_id:
         raise HTTPException(409, "No Stripe customer exists for this account")
     try:
+        base = return_url()
+        options = {}
+        if requested_plan is not None:
+            plan = normalize_plan(requested_plan)
+            if plan not in PAYMENT_PLANS:
+                raise HTTPException(422, "Invalid paid plan")
+            if not user.stripe_subscription_id:
+                raise HTTPException(409, "No existing Stripe subscription to change")
+            sub = plain(stripe.Subscription.retrieve(user.stripe_subscription_id, api_key=key))
+            items = (sub.get("items") or {}).get("data", [])
+            if sub.get("customer") != user.stripe_customer_id or sub.get("status") not in {"active", "trialing", "past_due"}:
+                raise HTTPException(409, "No manageable subscription exists for this account")
+            if len(items) != 1 or not items[0].get("id") or items[0].get("quantity", 1) != 1:
+                raise HTTPException(409, "Subscription requires manual billing management")
+            options["flow_data"] = {
+                "type": "subscription_update_confirm",
+                "subscription_update_confirm": {
+                    "subscription": user.stripe_subscription_id,
+                    "items": [{"id": items[0]["id"], "price": price_for(plan)["id"], "quantity": 1}],
+                },
+                "after_completion": {"type": "redirect", "redirect": {"return_url": base}},
+            }
         session = stripe.billing_portal.Session.create(
             customer=user.stripe_customer_id,
-            return_url=return_url(),
-            api_key=key,
+            return_url=base,
+            api_key=key, **options,
         )
         return {"portal_url": session["url"]}
     except stripe.StripeError:
         raise HTTPException(502, "Stripe portal is temporarily unavailable") from None
+
+
+def subscription_plan(sub):
+    # Portal price changes do not update checkout's nestai_plan metadata.
+    items = (sub.get("items") or {}).get("data", [])
+    if len(items) != 1 or items[0].get("quantity", 1) != 1:
+        return "free"
+    item_price = items[0].get("price") or {}
+    price_id = item_price if isinstance(item_price, str) else item_price.get("id")
+    matches = []
+    for plan, prefix in (("premium", "STRIPE_PREMIUM"), ("premium_plus", "STRIPE_PREMIUM_PLUS")):
+        if os.getenv(prefix + "_PRICE_ID") or os.getenv(prefix + "_PRODUCT_ID"):
+            if price_for(plan)["id"] == price_id:
+                matches.append(plan)
+    if len(matches) > 1:
+        raise HTTPException(503, "Stripe plans must use distinct prices")
+    return matches[0] if matches else "free"
 
 
 def process_webhook(db: Session, raw: bytes, signature: str) -> dict:
@@ -195,34 +234,38 @@ def process_webhook(db: Session, raw: bytes, signature: str) -> dict:
             subscription_id = (obj.get("parent") or {}).get("subscription_details", {}).get("subscription")
     if subscription_id:
         sdk, key = stripe_client()
+        customer = obj.get("customer")
+        user = db.query(User).filter_by(stripe_customer_id=customer).populate_existing().with_for_update().first() if customer else None
         try:
             # Read current state instead of trusting arrival order or checkout redirect.
             sub = plain(sdk.Subscription.retrieve(subscription_id, api_key=key))
+            if user is None:
+                metadata = sub.get("metadata") or {}
+                try:
+                    user_id = int(metadata.get("nestai_user_id", ""))
+                except (ValueError, TypeError):
+                    user_id = None
+                user = db.query(User).filter(User.id == user_id).populate_existing().with_for_update().first() if user_id else None
+                if user:
+                    # Refresh after acquiring the account lock: another webhook may have waited too.
+                    sub = plain(sdk.Subscription.retrieve(subscription_id, api_key=key))
         except sdk.StripeError:
             db.rollback()
             raise HTTPException(502, "Stripe subscription lookup failed; retry webhook") from None
         metadata = sub.get("metadata") or {}
-        try:
-            user_id = int(metadata.get("nestai_user_id", ""))
-        except (ValueError, TypeError):
-            user_id = None
-        user = db.query(User).filter(User.id == user_id).populate_existing().with_for_update().first() if user_id else None
-        if user and user.stripe_customer_id == sub.get("customer"):
+        owner = metadata.get("nestai_user_id")
+        if user and user.stripe_customer_id == sub.get("customer") and (
+            str(owner) == str(user.id) or (owner is None and user.stripe_subscription_id == sub["id"])
+        ):
             if user.stripe_subscription_id and user.stripe_subscription_id != sub["id"] and (
                 user.subscription_status in {"active", "trialing", "past_due"}
                 or sub.get("status") not in {"active", "trialing"}
             ):
                 db.commit()
                 return {"received": True, "ignored": True}
-            plan = normalize_plan(metadata.get("nestai_plan"))
-            items = (sub.get("items") or {}).get("data", [])
-            configured_price = price_for(plan) if plan in PAYMENT_PLANS else None
-            valid_price = configured_price and any(
-                item.get("price", {}).get("id") == configured_price["id"] for item in items
-            )
             status = sub.get("status", "incomplete")
             previous = current_plan(user)
-            active = plan if valid_price and status in {"active", "trialing"} else "free"
+            active = subscription_plan(sub) if status in {"active", "trialing"} else "free"
             set_user_plan(user, active, subscription_status=status)
             user.stripe_subscription_id = user.payment_subscription_id = sub["id"]
             user.payment_customer_id = user.stripe_customer_id

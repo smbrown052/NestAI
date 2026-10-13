@@ -52,14 +52,14 @@
     {"command": "cd services/api && TEST_POSTGRES_URL=<isolated-postgresql-url> python -m pytest tests -q", "passed": 90, "skipped": 1, "failed": 0, "kind": "Latest backend-owner checkpoint; follow-up fixes still pending"},
     {"command": "python -m pytest <each owned Streamlit test file separately> -q", "passed": 225, "failed": 0, "kind": "Latest frontend-owner checkpoint; browser integration still pending"},
     {"command": "make regression", "passed": 59, "failed": 7, "errors": 50, "skipped": 2, "kind": "Resume baseline backend stage; unit stage passed. Initial isolated nestai_baseline database was absent (now created). Genuine failures included bcrypt compatibility, oversized advisor context, archive/restore counts and portal price changes. Browser stage not reached. This is not final validation."},
-    {"command": "make live-smoke", "passed": 0, "failed": 0, "skipped": 10, "kind": "Resume live checks explicitly Blocked: live opt-in and dedicated account/provider configuration unavailable. Exit code zero with skips is not release acceptance."}
+    {"command": "make live-smoke", "passed": 0, "failed": 0, "skipped": 12, "kind": "Resume live checks explicitly Blocked: live opt-in and dedicated account/provider configuration unavailable. Includes actual authenticated advisor/negotiation, enrichment, commute, filtered artifacts and Plus analytics checks; none exercised without authorization. Exit code zero with skips is not release acceptance."}
   ],
   "validation": {
     "codeql": "Initial committed snapshot: 0 alerts",
     "automated_review": "Unavailable: review binary not installed; independent read-only reviewer used",
     "ci": "Checkpoint run 38476028615 action_required; GitHub job/log APIs confirm 0 total jobs. Owner approval required. Logs download returns 404 because no jobs ran.",
     "final_validation": "parallel_validation circuit breaker after consecutive timeouts; cannot claim final scan passed",
-    "public_access": "Web fetch failed DNS lookup; browser MCP transport unavailable"
+    "public_access": "Resume public navigation failed: browser MCP Transport closed. Previous session log URL returns HTTP 404. Hosting entrypoints and deployed revisions remain unverified."
   },
   "tiers": {
     "Free": "Blocked",
@@ -72,6 +72,11 @@
     "Approved Stripe product prices and sandbox credentials not verified",
     "Hosted SQLite backup and ownership evidence unavailable",
     "GitHub Actions requires approval before the new regression workflow can run",
-    "Final parallel validation is circuit-breaker blocked after consecutive timeouts"
+    "Final parallel validation was circuit-breaker blocked in prior session; must retry for resumed changes",
+    "FastAPI live providers: OPENAI_API_KEY, GOOGLE_MAPS_API_KEY and optional WALKSCORE_API_KEY missing",
+    "Stripe sandbox: configure STRIPE_SECRET_KEY (test only), STRIPE_PREMIUM_PRICE_ID, STRIPE_PREMIUM_PLUS_PRICE_ID, STRIPE_WEBHOOK_SECRET and enable approved portal plan changes; deliver sandbox subscription.updated events to registered /billing/webhook",
+    "Live acceptance: configure HTTPS NESTAI_LIVE_API_BASE_URL and dedicated NESTAI_LIVE_FREE/PREMIUM/PLUS_EMAIL and _PASSWORD securely; seed apartment samples; explicitly authorize NESTAI_RUN_LIVE_TESTS=1 and NESTAI_LIVE_ALLOW_ACCOUNT_OPERATIONS=1",
+    "Owner must approve GitHub Actions checkpoint run 38476028615 (action_required, zero jobs), then required regression must run",
+    "Owner must provide hosting-console access/deployment authorization and verify Streamlit legacy/streamlit/app.py, FastAPI main:app, and deployed commit identifiers before public tier journeys"
   ]
 }

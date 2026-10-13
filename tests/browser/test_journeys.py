@@ -135,6 +135,69 @@ def test_apartment_save_dedup_persists_and_free_has_no_native_downloads(page, ru
     navigate(page, "Profile")
     page.get_by_role("tab", name="Preferences", exact=True).click()
     expect(page.get_by_role("spinbutton", name="Max monthly budget ($)", exact=True)).to_have_value("3500")
+    # A new WebSocket is not permanent authentication; durable account data is.
+    saved_ids = {item["id"] for item in properties(runtime, user)}
+    page.reload()
+    idle(page)
+    expect(page.get_by_role("button", name="Log out", exact=True)).to_have_count(0)
+    sign_in(page, runtime, user)
+    expect(page.get_by_role("heading", name="Saved comparison", exact=True)).to_be_visible()
+    expect(page.locator('[data-testid="stTable"]').first.locator("tbody tr")).to_have_count(42)
+    assert {item["id"] for item in properties(runtime, user)} == saved_ids
+    navigate(page, "Profile")
+    page.get_by_role("tab", name="Preferences", exact=True).click()
+    expect(page.get_by_role("spinbutton", name="Max monthly budget ($)", exact=True)).to_have_value("3500")
+    healthy(page)
+
+
+def test_natural_priorities_and_filtered_downloads_match_visible_comparison(page, runtime, account):
+    user = account("premium_plus")
+    sign_in(page, runtime, user)
+    save_example(page, "app_listing_1.txt")
+    save_example(page, "app_listing_2.txt")
+    page.get_by_role("textbox", name="Natural-language request", exact=True).fill("prioritize space over price")
+    page.get_by_role("button", name="Apply request and numeric filters", exact=True).click()
+    expect(page.get_by_text(re.compile(r"^Applied priorities:.*space"))).to_be_visible()
+    idle(page)
+    space_options = page.get_by_role("combobox", name="Listing details", exact=True).input_value()
+    page.get_by_role("textbox", name="Natural-language request", exact=True).fill("prioritize price over space")
+    page.get_by_role("button", name="Apply request and numeric filters", exact=True).click()
+    idle(page)
+    assert page.get_by_role("combobox", name="Listing details", exact=True).input_value() != space_options
+    save_example(page, "home_example_1.txt", kind="Rental house")
+    page.get_by_role("spinbutton", name="Maximum rent ($/month)", exact=True).fill("2800")
+    page.get_by_role("spinbutton", name="Minimum square feet", exact=True).fill("800")
+    page.get_by_role("button", name="Apply request and numeric filters", exact=True).click()
+    saved = properties(runtime, user)
+    parsed_request = requests.post(runtime["api"] + "/requests", headers=user["headers"],
+                                   json={"request": "prioritize price over space"}, timeout=10)
+    assert parsed_request.status_code == 200, parsed_request.text
+    inputs = {"property_ids": [item["id"] for item in saved],
+              "constraints": {"rent_lte": 2800, "min_sqft": 800},
+              "priorities": parsed_request.json()["priorities"]}
+    response = requests.post(runtime["api"] + "/ranking", headers=user["headers"], json=inputs, timeout=10)
+    assert response.status_code == 200, response.text
+    ranked = response.json()["ranked"]
+    assert 0 < len(ranked) < 43
+    assert any(row.get("unit_id") is None for row in ranked)
+    expected = [(row["property_id"], row.get("unit_id")) for row in ranked]
+    page.get_by_role("button", name="Prepare CSV export", exact=True).click()
+    with page.expect_download() as csv_download:
+        page.get_by_role("button", name="Download comparison CSV", exact=True).click()
+    with open(csv_download.value.path(), encoding="utf-8-sig") as handle:
+        rows = list(csv.DictReader(handle))
+    assert [(row["property_id"], row["unit_id"] or None) for row in rows] == expected
+    page.get_by_role("button", name="Generate decision report", exact=True).click()
+    with page.expect_download() as report_download:
+        page.get_by_role("button", name="Download report", exact=True).click()
+    with open(report_download.value.path(), encoding="utf-8") as handle:
+        report = json.load(handle)
+    assert [(row["property_id"], row.get("unit_id")) for row in report["comparison"]["ranked"]] == expected
+    page.get_by_role("spinbutton", name="Maximum rent ($/month)", exact=True).fill("2600")
+    page.get_by_role("button", name="Apply request and numeric filters", exact=True).click()
+    expect(page.get_by_role("button", name="Download comparison CSV", exact=True)).to_have_count(0)
+    expect(page.get_by_role("button", name="Download report", exact=True)).to_have_count(0)
+    healthy(page)
 
 
 def test_paid_csv_download_contains_actual_saved_units(page, runtime, account):

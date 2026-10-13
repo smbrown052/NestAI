@@ -1,7 +1,9 @@
 """Authenticated billing endpoints and Stripe-signed webhook."""
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, Request, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 from app.auth.dependencies import get_current_user
 from app.auth.plans import current_plan
@@ -17,6 +19,11 @@ class Checkout(BaseModel):
     trial_consent: bool = False
     payment_method_confirmed: bool = False
     idempotency_key: str = Field(min_length=1, max_length=128)
+
+
+class Portal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    plan: Literal["premium", "premium_plus"] | None = None
 
 
 @router.post("/checkout")
@@ -45,8 +52,8 @@ def prices(user: User = Depends(get_current_user)):
 
 
 @router.post("/portal")
-def portal(user: User = Depends(get_current_user)):
-    return service.portal(user)
+def portal(payload: Portal | None = None, user: User = Depends(get_current_user)):
+    return service.portal(user, payload.plan if payload else None)
 
 
 @router.post("/webhook")

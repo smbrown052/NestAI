@@ -4,23 +4,24 @@ from datetime import UTC, datetime, timedelta
 
 import jwt
 from jwt import InvalidTokenError
-from passlib.context import CryptContext
+import bcrypt
 
 from app.core.config import get_settings
-
-_password_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 
 def normalize_email(email: str) -> str:
     return email.strip().lower()
 
 
 def hash_password(password: str) -> str:
-    return _password_context.hash(password)
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("ascii")
 
 
 def verify_password(password: str, password_hash: str) -> bool:
-    return _password_context.verify(password, password_hash)
+    try:
+        # Historical bcrypt hashes used only the first 72 UTF-8 bytes.
+        return bcrypt.checkpw(password.encode("utf-8")[:72], password_hash.encode("ascii"))
+    except (ValueError, UnicodeError):
+        return False
 
 
 def create_access_token(subject: str, expires_delta: timedelta | None = None) -> str:
