@@ -1,7 +1,6 @@
 """Reuse the audited legacy parsers/scorer without importing the UI runtime."""
 
 import importlib.util
-import json
 from pathlib import Path
 import sys
 
@@ -21,19 +20,16 @@ def _load(name: str, path: Path):
 
 def parse_listing(text: str, kind: str) -> dict:
     if kind == "apartment":
-        parsed = _load("apartments", ROOT / "parser/apartment_listing.py").parse_apartment_listing(text)
+        parsed = _load("apartment_text", ROOT / "text_parser.py").parse_apartment_text(text)
         for unit in parsed.get("units", []):
-            unit["id"] = unit["unit_label"]
+            unit["id"] = unit.get("unit", unit.get("unit_label"))
         return parsed
     result = _load("homes", ROOT / "parser/home_listing.py").parse_home_listing_text(text)
     from dataclasses import asdict
     return asdict(result)
 
 
-def rank(rows: list[dict], priorities: dict[str, float]) -> list[dict]:
-    if not rows:
-        return []
-    import pandas as pd
-    scorer = _load("scorer", ROOT / "lifestyle_scoring.py").LifestyleScorer(priorities or None)
-    frame = scorer.score_apartments(pd.DataFrame(rows))
-    return json.loads(frame.to_json(orient="records"))
+def rank(rows: list[dict], priorities: dict[str, float] | None = None,
+         constraints: dict | None = None, profile: dict | None = None) -> list[dict]:
+    from shared.decision import rank_rows
+    return rank_rows(rows, priorities or None, constraints, profile)

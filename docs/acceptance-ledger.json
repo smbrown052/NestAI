@@ -18,7 +18,16 @@
     {"id": "billing", "cause": "Mock signup billing and registered Stripe checkout routes disagree", "status": "Pending", "regression": "Sandbox signature/lifecycle/idempotency and frontend endpoint alignment"},
     {"id": "plus", "cause": "Decorative explanatory panel instead of additional analytics", "status": "Pending", "regression": "Backend gates, sensitivity, chart points and detailed report download"},
     {"id": "exports", "cause": "CSV public download unverified; native table download can bypass paid gate", "status": "Pending", "regression": "Actual browser downloads and sanitized content"},
-    {"id": "feedback", "cause": "Frontend SQLite feedback disconnected from PostgreSQL admin view", "status": "Pending", "regression": "Persistence, validation and suppressed external notifications"}
+    {"id": "feedback", "cause": "Frontend SQLite feedback disconnected from PostgreSQL admin view", "status": "Pending", "regression": "Persistence, validation and suppressed external notifications"},
+    {"id": "parsed-units", "classification": "Bug", "cause": "Parsed/saved session states diverged; units confused with properties", "fix": "Active parser plus separate property and unit identities", "status": "Parser passed; UI pending", "regression": "tests/test_decision_contract.py; tests/browser/test_journeys.py::test_apartment_save_dedup_persists_and_free_has_no_native_downloads"},
+    {"id": "preferences", "classification": "Persistence bug; scoring decision", "cause": "Ephemeral preferences; soft weighting mistaken for exclusion", "fix": "Account profile persistence; explicit hard pet filter separate from soft scoring", "status": "Pending", "regression": "services/api/tests/test_platform.py::test_profile_isolation; tests/browser/test_api_integration.py::test_numeric_and_natural_constraints_share_results_hard_pets_and_soft_mismatch"},
+    {"id": "renter-rating", "classification": "Misleading metric bug", "cause": "Reviews labeled as safety", "fix": "Accurate renter-rating metric; remove unsupported safety inference", "status": "Passed", "regression": "tests/test_decision_contract.py"},
+    {"id": "paid-features", "classification": "Incomplete features", "cause": "No authoritative end-to-end advisor, commute, negotiation or priority workflow", "fix": "Grounded backend providers with stored provenance, separate quotas and user-reviewed drafts", "status": "Live blocked", "regression": "services/api/tests/test_platform.py::test_paid_services_mock_and_shared_ai_quota; test_live_commute_and_enrichment_mocked_transport_persist_verified_fields; tests/live/test_providers.py"},
+    {"id": "navigation", "classification": "UX bug", "cause": "Mixed old/new account components and misleading Home routing", "fix": "Home overview, unified account sections, accurate bed/bath labels", "status": "Pending", "regression": "tests/browser/test_journeys.py::test_signup_and_all_navigation"},
+    {"id": "referrals", "classification": "Approved scope removal", "cause": "Unsupported MVP promises in UI", "fix": "Remove navigation/support promises without deleting records", "status": "Pending", "regression": "services/api/tests/test_platform.py::test_legacy_credits_and_referrals_unchanged; browser navigation"},
+    {"id": "balances-grants", "classification": "Preservation safeguard", "cause": "Multiple legacy entitlement/credit models", "fix": "Retain monetary balances and trusted grants separately; no fabricated ownership", "status": "Pending", "regression": "services/api/tests/test_platform.py::test_month_rollover_does_not_reset_legacy_credits; test_additive_migration_preserves_unowned_and_credits"},
+    {"id": "free-journeys", "classification": "Test correction", "cause": "Shared fixtures exhaust Free limits across independent journeys", "fix": "Separate apartment and house accounts plus explicit mixed-property boundary test", "status": "Pending", "regression": "tests/browser/test_journeys.py::test_free_house_account_and_shared_limit; test_free_mixed_account_uses_one_shared_property_allowance"},
+    {"id": "purchase-prices", "classification": "Integration bug", "cause": "Null monthly rent masked known sale price; purchase amounts mislabeled monthly", "fix": "Explicit rent/purchase semantics, comparable peer groups and rent-only constraints", "status": "Passed", "regression": "tests/test_decision_contract.py"}
   ],
   "product_decisions": {
     "free_saved_properties": 2,
@@ -30,8 +39,16 @@
     "price_conflict": "Unresolved: UI $12/$25, mock billing $19/$49, documentation Premium $24.99; no prices changed"
   },
   "test_runs": [
-    {"command": "python -m pytest tests/test_decision_contract.py legacy/streamlit/tests/test_ranking_ui_updates.py legacy/streamlit/tests/test_home_parser.py legacy/streamlit/tests/test_house_parser.py -q", "passed": 138, "failed": 0, "kind": "deterministic parser/math"}
+    {"command": "python -m pytest tests/test_decision_contract.py legacy/streamlit/tests/test_ranking_ui_updates.py legacy/streamlit/tests/test_home_parser.py legacy/streamlit/tests/test_house_parser.py -q", "passed": 151, "failed": 0, "kind": "deterministic parser/math"},
+    {"command": "cd services/api && TEST_POSTGRES_URL=<isolated-postgresql-url> python -m pytest tests -q", "passed": 90, "skipped": 1, "failed": 0, "kind": "Latest backend-owner checkpoint; follow-up fixes still pending"},
+    {"command": "python -m pytest <each owned Streamlit test file separately> -q", "passed": 225, "failed": 0, "kind": "Latest frontend-owner checkpoint; browser integration still pending"}
   ],
+  "validation": {
+    "codeql": "Initial committed snapshot: 0 alerts",
+    "automated_review": "Unavailable: review binary not installed; independent read-only reviewer used",
+    "ci": "Run 38470838504 action_required; no jobs ran. Owner approval required.",
+    "public_access": "Web fetch failed DNS lookup; browser MCP transport unavailable"
+  },
   "tiers": {
     "Free": "Blocked",
     "Premium": "Blocked",
@@ -41,6 +58,7 @@
     "Hosting configuration, deployed revisions and deployment authorization not verified",
     "Production provider access and real integration responses not verified",
     "Approved Stripe product prices and sandbox credentials not verified",
-    "Hosted SQLite backup and ownership evidence unavailable"
+    "Hosted SQLite backup and ownership evidence unavailable",
+    "GitHub Actions requires approval before the new regression workflow can run"
   ]
 }

@@ -60,6 +60,20 @@ class TestDefaults:
         assert fa.get_quota("saved_property_limit") == 2
         fa.st.session_state.clear()
 
+    def test_admin_role_does_not_override_authenticated_entitlements(self):
+        _reset()
+        fa.st.session_state.update(auth_token="token", nestai_role=fa.ROLE_ADMIN,
+                                  account_entitlements={"plan": "free", "capabilities": {"can_export": False}})
+        assert fa.capability("can_export") is False
+        fa.st.session_state.clear()
+
+    def test_public_defaults_come_from_shared_typed_configuration(self):
+        for plan in (fa.PLAN_FREE, fa.PLAN_PREMIUM, fa.PLAN_PREMIUM_PLUS):
+            configured = fa.limits_for(plan.lower())
+            capabilities = fa.get_plan_capabilities(plan)
+            assert capabilities["monthly_analyses_limit"] == configured["analyses"]
+            assert capabilities["saved_property_limit"] == configured["properties"]
+
     def test_default_plan_is_free(self):
         _reset()
         assert fa.get_plan() == fa.PLAN_FREE
@@ -161,7 +175,7 @@ class TestRequireCapability:
         prompt = fa.require_capability("can_use_google_apis")
         assert prompt is not None
         assert isinstance(prompt, fa.FeatureUpgradeRequired)
-        assert not bool(prompt)   # falsy
+        assert bool(prompt)
 
     def test_upgrade_prompt_message_mentions_plan(self):
         prompt = fa.require_capability("can_use_ai_chat")
@@ -226,8 +240,18 @@ class TestBetaOverrides:
         _reset()
         fa.set_plan(fa.PLAN_BETA)
 
-    def test_beta_has_premium_capabilities_by_default(self):
+    def test_beta_preview_uses_shared_defaults(self):
+        assert fa.capability("can_use_google_apis") == fa.features_for("beta").get("enrichment", False)
+
+    def test_authoritative_beta_grant_is_preserved(self):
+        fa.st.session_state.update(auth_token="token", account_entitlements={
+            "plan": "beta", "capabilities": {"can_use_google_apis": True},
+            "quotas": {"monthly_analyses_limit": 75, "saved_property_limit": 12},
+        })
         assert fa.capability("can_use_google_apis") is True
+        assert fa.get_quota("monthly_analyses_limit") == 75
+        assert fa.get_quota("saved_property_limit") == 12
+        fa.st.session_state.clear()
 
     def test_beta_override_can_restrict_capability(self):
         fa.set_beta_overrides({"can_use_ai_reports": False})

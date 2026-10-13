@@ -38,22 +38,33 @@ def healthy(page):
     expect(page.get_by_text("Account services are temporarily unavailable.", exact=True)).to_have_count(0)
 
 
+def idle(page):
+    expect(page.locator('[data-testid="stApp"]')).to_have_attribute("data-test-script-state", "notRunning")
+
+
 def properties(runtime, user):
     response = requests.get(runtime["api"] + "/properties", headers=user["headers"], timeout=10)
     assert response.status_code == 200, response.text
     return response.json()["properties"]
 
 
+def select_value(page, label, value):
+    idle(page)
+    select = page.get_by_role("combobox", name=label, exact=True)
+    if select.input_value() != value:
+        select.press("ArrowDown")
+        page.get_by_role("option").filter(has_text=value).click()
+    expect(select).to_have_value(value)
+
+
 def save_example(page, fixture_name, kind="Apartment"):
-    select = page.get_by_role("combobox", name="Listing type", exact=True)
-    if select.input_value() != kind:
-        select.click()
-        page.get_by_role("option", name=kind, exact=True).click()
+    select_value(page, "Listing type", kind)
     text = (ROOT / "legacy/streamlit/data" / fixture_name).read_text()
     page.get_by_role("textbox", name="Paste listing text", exact=True).fill(text)
     page.get_by_role("button", name="Parse listing", exact=True).click()
     page.get_by_role("button", name="Save parsed property", exact=True).click()
     expect(page.get_by_role("button", name="Save parsed property", exact=True)).to_have_count(0)
+    idle(page)
     healthy(page)
 
 
@@ -73,11 +84,16 @@ def test_signup_and_all_navigation(page, runtime):
         page.get_by_role("tab", name=name, exact=True).click()
         expect(page.get_by_role("tab", name=name, exact=True)).to_have_attribute("aria-selected", "true")
         healthy(page)
+    page.get_by_role("tab", name="Account", exact=True).click()
+    page.get_by_role("textbox", name="Display name", exact=True).fill("Signup Browser Updated")
+    page.get_by_role("button", name="Save profile", exact=True).click()
+    expect(page.get_by_text("Profile saved.", exact=True)).to_be_visible()
     page.get_by_role("button", name="Log out", exact=True).click()
     expect(page.get_by_role("button", name="Log out", exact=True)).to_have_count(0)
     sign_in(page, runtime, {"email": email, "password": "BrowserRegression-9274!"})
     navigate(page, "Profile")
     expect(page.get_by_text(email, exact=True)).to_be_visible()
+    expect(page.get_by_role("textbox", name="Display name", exact=True)).to_have_value("Signup Browser Updated")
 
 
 def test_apartment_save_dedup_persists_and_free_has_no_native_downloads(page, runtime, account):
@@ -115,9 +131,10 @@ def test_paid_csv_download_contains_actual_saved_units(page, runtime, account):
     sign_in(page, runtime, user)
     save_example(page, "app_listing_1.txt")
     save_example(page, "app_listing_2.txt")
+    select_value(page, "CSV export scope", "Apartment units")
     page.get_by_role("button", name="Prepare CSV export", exact=True).click()
     with page.expect_download() as download_info:
-        page.get_by_role("button", name=re.compile("Download.*CSV|Export.*CSV", re.I)).click()
+        page.get_by_role("button", name="Download comparison CSV", exact=True).click()
     download = download_info.value
     assert download.failure() is None
     assert download.suggested_filename.endswith(".csv")
@@ -138,6 +155,14 @@ def test_paid_csv_download_contains_actual_saved_units(page, runtime, account):
     assert len(report["properties"]) == 2
     page.get_by_role("button", name="View advanced analytics", exact=True).click()
     expect(page.get_by_text("sensitivity", exact=False).first).to_be_visible()
+    page.get_by_role("textbox", name="Natural-language request", exact=True).fill("under $1")
+    page.get_by_role("button", name="Apply request and numeric filters", exact=True).click()
+    expect(page.get_by_text("No saved listings match these filters.", exact=True)).to_be_visible()
+    page.get_by_role("textbox", name="Natural-language request", exact=True).fill("")
+    page.get_by_role("spinbutton", name="Maximum rent ($/month)", exact=True).fill("1")
+    page.get_by_role("button", name="Apply request and numeric filters", exact=True).click()
+    expect(page.get_by_text("No saved listings match these filters.", exact=True)).to_be_visible()
+    assert sum(len(item["units"]) for item in properties(runtime, user)) == 42
     healthy(page)
 
 

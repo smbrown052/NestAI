@@ -318,13 +318,17 @@ def forgot_password(
                 f"{base_url}/?screen=Reset%20Password&reset_token={raw_token}"
             )
 
-            send_password_reset_email(
-                to_email=user.email,
-                reset_link=production_reset_link,
-            )
+            try:
+                send_password_reset_email(
+                    to_email=user.email,
+                    reset_link=production_reset_link,
+                )
+            except Exception:
+                # Never expose provider errors or reveal whether the account exists.
+                pass
 
     return ForgotPasswordResponse(
-        message="If an account exists for that email, a password reset link has been sent.",
+        message="If an account exists for that email, a password reset request has been processed.",
         reset_link=reset_link,
     )
 

@@ -11,6 +11,7 @@ DEFAULT_PRIORITIES = {"price": 4.0, "space": 2.0, "commute": 1.0, "walkability":
 
 def normalize_row(row: dict[str, Any]) -> dict[str, Any]:
     result = dict(row)
+    result["price_kind"] = row.get("price_kind") or ("purchase" if row.get("property_type") == "HOME_FOR_SALE" else "rent")
     aliases = {
         "price_num": ("monthly_rent", "rent_price", "unit_price"),
         "sqft_num": ("square_feet", "unit_sqft"),
@@ -21,15 +22,17 @@ def normalize_row(row: dict[str, Any]) -> dict[str, Any]:
     for name, alternatives in aliases.items():
         if result.get(name) is None:
             result[name] = next((row[k] for k in alternatives if row.get(k) is not None), None)
+    if result["price_kind"] == "purchase" and result.get("price_num") is None:
+        result["price_num"] = row.get("sale_price")
     for name in ("price_num", "sqft_num", "beds_num", "baths_num", "floor"):
         result[name] = number(result.get(name))
     result["unit"] = str(result["unit"]) if result.get("unit") is not None else ""
     result["property"] = str(result.get("property") or "Unknown property")
     result["pet_status"] = pet_policy(result.get("pets_policy"))
-    known_fees = [number(result.get(f"extra_{k}")) for k in ("parking", "utilities", "pet_fee", "renters_insurance")]
+    known_fees = [number(result.get(f"extra_{k}")) for k in ("parking", "utilities", "pet_fee", "renters_insurance", "other")]
     result["monthly_total"] = (
         result["price_num"] + sum(f or 0 for f in known_fees)
-        if result["price_num"] is not None else None
+        if result["price_num"] is not None and result["price_kind"] == "rent" else None
     )
     result["fees_complete"] = all(f is not None for f in known_fees)
     return result
@@ -38,6 +41,12 @@ def normalize_row(row: dict[str, Any]) -> dict[str, Any]:
 def comparison(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
     """Deltas are B minus A: positive rent delta means A is cheaper."""
     a, b = normalize_row(a), normalize_row(b)
+    if a["price_kind"] != b["price_kind"]:
+        return {"a": {"property": a["property"], "unit": a["unit"]},
+                "b": {"property": b["property"], "unit": b["unit"]},
+                "deltas": {"price": None, "space": None, "total_cost": None, "commute": None},
+                "advantages": [], "compromises": [], "unknowns": ["Purchase prices and monthly rents are not comparable."],
+                "compromise_summary": "Choose the same listing type to compare costs."}
     deltas = {}
     for label, field in (("price", "price_num"), ("space", "sqft_num"), ("total_cost", "monthly_total")):
         x, y = number(a.get(field)), number(b.get(field))
@@ -46,12 +55,13 @@ def comparison(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
     deltas["commute"] = None if x is None or y is None else y - x
     advantages, compromises, unknowns = [], [], []
     price, space, commute = deltas["price"], deltas["space"], deltas["commute"]
+    interval = "/mo" if a["price_kind"] == "rent" else ""
     if price is None:
         unknowns.append("Rent comparison unavailable")
     elif price > 0:
-        advantages.append(f"${price:,.0f}/mo less expensive")
+        advantages.append(f"${price:,.0f}{interval} less expensive")
     elif price < 0:
-        compromises.append(f"${-price:,.0f}/mo more expensive")
+        compromises.append(f"${-price:,.0f}{interval} more expensive")
     if space is None:
         unknowns.append("Space comparison unavailable")
     elif space < 0:
@@ -87,7 +97,6 @@ def rank_rows(rows: list[dict[str, Any]], priorities: dict[str, float] | None = 
     requirements = constraints if isinstance(constraints, Constraints) else Constraints.from_dict(constraints)
     options = filter_rows([normalize_row(r) for r in rows], requirements)
     profile = profile or {}
-    prices = [r["price_num"] for r in options if r["price_num"] is not None and r["price_num"] > 0]
     areas = [r["sqft_num"] for r in options if r["sqft_num"] is not None and r["sqft_num"] > 0]
 
     def scale(value, population, inverse=False):
@@ -98,6 +107,7 @@ def rank_rows(rows: list[dict[str, Any]], priorities: dict[str, float] | None = 
         return 100 * (1 - fraction if inverse else fraction)
 
     for row in options:
+        prices = [r["price_num"] for r in options if r["price_kind"] == row["price_kind"] and r["price_num"] is not None and r["price_num"] > 0]
         components = {
             "price": scale(row["price_num"], prices, True),
             "space": scale(row["sqft_num"], areas),
@@ -111,7 +121,7 @@ def rank_rows(rows: list[dict[str, Any]], priorities: dict[str, float] | None = 
         pet_preference = profile.get("pets", "No preference")
         if pet_preference in {"Yes", "No"} and row["pet_status"] != "unknown":
             components["pets"] = 100.0 if row["pet_status"] == pet_preference.lower() else 0.0
-        budget = number(profile.get("max_budget"))
+        budget = number(profile.get("max_budget")) if row["price_kind"] == "rent" else None
         if budget and row["price_num"] is not None and row["price_num"] > budget:
             components["price"] = max(0.0, (components["price"] or 0) - 50 * (row["price_num"] / budget - 1))
         total_weight = sum(weights.values())
@@ -129,8 +139,8 @@ def rank_rows(rows: list[dict[str, Any]], priorities: dict[str, float] | None = 
                 row["unmet_preferences"].append("Pet policy unknown")
             elif row["pet_status"] != pet_preference.lower():
                 row["unmet_preferences"].append("Pet preference mismatch")
-        peers = [r["price_num"] for r in options if r["beds_num"] == row["beds_num"] and r["price_num"] is not None]
-        row["peer_group"] = f"Eligible saved options with {row['beds_num']:g} bedrooms" if row["beds_num"] is not None else "Bedroom count unknown"
+        peers = [r["price_num"] for r in options if r["price_kind"] == row["price_kind"] and r["beds_num"] == row["beds_num"] and r["price_num"] is not None]
+        row["peer_group"] = f"Eligible saved {row['price_kind']} options with {row['beds_num']:g} bedrooms" if row["beds_num"] is not None else "Bedroom count unknown"
         row["peer_count"] = len(peers) if row["beds_num"] is not None else 0
         row["peer_average"] = sum(peers) / len(peers) if len(peers) > 1 and row["beds_num"] is not None else None
     options.sort(key=lambda r: (-r["score"], str(r.get("property_id", r["property"])), r["unit"]))

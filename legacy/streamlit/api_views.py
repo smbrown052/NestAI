@@ -8,7 +8,7 @@ import math
 import pandas as pd
 import streamlit as st
 
-from feature_access import capability
+from feature_access import capability, capabilities_from_features
 from plan_ui import render_pricing_cards, render_upgrade_prompt
 
 
@@ -47,23 +47,7 @@ def hydrate_account(client):
         return False
     features = entitlements.get("features", {})
     if features and "capabilities" not in entitlements:
-        mapping = {
-            "can_compare_multiple_properties": "basic_comparison",
-            "can_use_ai_chat": "advisor",
-            "can_use_natural_language_filtering": "advisor",
-            "can_use_lifestyle_score": "advisor",
-            "can_use_ai_explanations": "advisor",
-            "can_use_google_apis": "enrichment",
-            "can_use_neighborhood_enrichment": "enrichment",
-            "can_use_walk_score_api": "enrichment",
-            "can_use_commute_analysis": "commute",
-            "can_use_ai_negotiation": "negotiation",
-            "can_generate_ai_reports": "reports",
-            "can_export": "exports",
-            "can_restore_archived_property": "exports",
-        }
-        entitlements["capabilities"] = {key: features.get(source) is True for key, source in mapping.items()}
-        entitlements["capabilities"].update(can_analyze_property=True, can_save_property=True, can_use_basic_filters=True)
+        entitlements["capabilities"] = capabilities_from_features(features)
     limits = entitlements.get("limits", entitlements.get("quotas", {}))
     if "analyses" in limits:
         entitlements["quotas"] = {**limits, "monthly_analyses_limit": limits["analyses"], "saved_property_limit": limits["properties"]}
@@ -79,7 +63,7 @@ def hydrate_account(client):
 def display_frame(frame):
     # st.dataframe has a built-in CSV download. A static table has no download UI.
     if capability("can_export"):
-        st.dataframe(frame, use_container_width=True, hide_index=True)
+        st.dataframe(frame, width="stretch", hide_index=True)
     else:
         st.table(frame)
 
@@ -130,6 +114,8 @@ def render_preferences(client):
         max_budget = st.number_input("Max monthly budget ($)", min_value=0, value=int(prefs.get("max_budget") or 0), step=50)
         beds = st.selectbox("Preferred bedrooms", [None, 0, 1, 2, 3, 4], index=[None, 0, 1, 2, 3, 4].index(prefs.get("preferred_beds")) if prefs.get("preferred_beds") in [None, 0, 1, 2, 3, 4] else 0, format_func=lambda v: "Any" if v is None else "Studio" if v == 0 else number_label(v, "bed"))
         sqft = st.number_input("Min square footage", min_value=0, value=int(prefs.get("min_sqft") or 0), step=25)
+        pet_options = ["No preference", "Yes", "No"]
+        pets = st.selectbox("Pet-friendly preference", pet_options, index=pet_options.index(prefs.get("pets", "No preference")) if prefs.get("pets", "No preference") in pet_options else 0)
         commute = st.number_input("Max commute (minutes)", min_value=0, value=int(prefs.get("commute_tolerance") or 30))
         destination = st.text_input("Commute destination", value=prefs.get("commute_destination", ""))
         mode = st.selectbox("Commute mode", ["driving", "transit", "walking", "bicycling"], index=["driving", "transit", "walking", "bicycling"].index(prefs.get("commute_mode", "driving")) if prefs.get("commute_mode", "driving") in ["driving", "transit", "walking", "bicycling"] else 0)
@@ -137,7 +123,7 @@ def render_preferences(client):
     if submit:
         updated = {**prefs, "max_budget": max_budget or None, "preferred_beds": beds,
                    "min_sqft": sqft or None, "commute_tolerance": commute,
-                   "commute_destination": destination, "commute_mode": mode}
+                   "commute_destination": destination, "commute_mode": mode, "pets": pets}
         if api_call(client, "PUT", "/profile", {"preferences": updated}) is not None:
             st.session_state["user_profile"] = updated
             st.success("Preferences saved to your account.")
@@ -160,6 +146,9 @@ def render_profile(client, auth):
         entitlements = st.session_state.get("account_entitlements", {})
         st.write("Plan:", entitlements.get("plan", "free").replace("_", " ").title())
         display_frame(pd.DataFrame([entitlements.get("quotas", {})]))
+        if entitlements.get("legacy_credits") is not None:
+            st.write("Preserved legacy credits:", entitlements["legacy_credits"])
+            st.caption("Legacy credits are separate from monthly allowances and are not converted by the frontend.")
         st.caption("Account records persist after sign-in. This browser session is not permanent authentication.")
     with subscription:
         status = api_call(client, "GET", "/billing/status", quiet=True)
@@ -218,7 +207,7 @@ def render_property_controls(client, properties):
         st.caption("Monthly recurring fees apply only to this property.")
         fields = {}
         for key, label in [("parking", "Parking"), ("utilities", "Utilities"), ("pet_fee", "Pet fee"), ("renters_insurance", "Renters insurance"), ("other", "Other monthly fees")]:
-            fields[key] = st.number_input(f"{label} ($/month)", min_value=0.0, value=float(fees.get(key) or 0), step=5.0)
+            fields[key] = st.number_input(f"{label} ($/month)", min_value=0.0, value=float(fees.get(key) or 0), step=5.0, key=f"property_fee_{selected}_{key}")
         save = st.form_submit_button("Save property fees")
     if save and api_call(client, "PATCH", f"/properties/{selected}", {"fees": fields}) is not None:
         st.rerun()
@@ -249,27 +238,28 @@ def render_comparison(client, properties):
     st.caption("Apartments and houses share one saved-property allowance.")
     filters = st.session_state.setdefault("account_filters", {})
     with st.form("comparison_filters"):
-        budget = st.number_input("Maximum monthly cost ($)", min_value=0, value=int(filters.get("max_budget") or 0))
+        budget = st.number_input("Maximum rent ($/month)", min_value=0, value=int(filters.get("max_budget") or 0))
         beds = st.number_input("Minimum bedrooms", min_value=0, value=int(filters.get("min_beds") or 0))
+        baths = st.number_input("Minimum bathrooms", min_value=0.0, value=float(filters.get("min_baths") or 0), step=0.5)
         sqft = st.number_input("Minimum square feet", min_value=0, value=int(filters.get("min_sqft") or 0))
         request = st.text_input("Natural-language request", value=filters.get("request", ""), disabled=not capability("can_use_natural_language_filtering"))
         priorities = {}
         if capability("can_use_lifestyle_score"):
             st.caption("Priority weights (0 ignores a priority; the backend normalizes the total).")
-            for priority in ["budget", "commute", "safety", "nightlife", "gym"]:
+            for priority in ["price", "space", "commute", "walkability", "pets"]:
                 priorities[priority] = st.slider(priority.title(), 0.0, 5.0, float(filters.get("priorities", {}).get(priority, 1.0)), 0.5)
         apply = st.form_submit_button("Apply request and numeric filters")
     if apply:
-        st.session_state["account_filters"] = {"max_budget": budget or None, "min_beds": beds, "min_sqft": sqft, "request": request, "priorities": priorities}
+        st.session_state["account_filters"] = {"max_budget": budget or None, "min_beds": beds, "min_baths": baths, "min_sqft": sqft, "request": request, "priorities": priorities}
         filters = st.session_state["account_filters"]
     if st.button("Reset filters"):
         st.session_state["account_filters"] = {}
         st.rerun()
     if filters:
         st.caption(f"Applied filters: {filters}")
-    constraints = {key: value for key, value in filters.items() if key in {"min_beds", "min_sqft"} and value}
+    constraints = {key: value for key, value in filters.items() if key in {"min_beds", "min_baths", "min_sqft"} and value}
     if filters.get("max_budget"):
-        constraints["max_price"] = filters["max_budget"]
+        constraints["rent_lte"] = filters["max_budget"]
     if filters.get("request"):
         parsed_request = api_call(client, "POST", "/requests", {"request": filters["request"]})
         if parsed_request is None:
@@ -294,10 +284,27 @@ def render_comparison(client, properties):
         return
     st.caption(f"Applied constraints: {constraints or 'None'}")
     frame = pd.DataFrame(rows)
-    for key, noun in [("beds_num", "bed"), ("bathrooms", "bath"), ("baths", "bath")]:
+    for key, noun in [("beds_num", "bed"), ("baths_num", "bath"), ("bathrooms", "bath"), ("baths", "bath")]:
         if key in frame:
             frame[key] = frame[key].apply(lambda value: number_label(value, noun))
-    display_frame(frame)
+    columns = [key for key in ["rank", "property", "unit", "price_kind", "price_num", "sqft_num", "beds_num",
+                               "baths_num", "monthly_total", "commute_minutes", "score", "confidence"] if key in frame]
+    display_frame(frame[columns] if columns else frame)
+    selected_row = st.selectbox(
+        "Listing details", list(range(len(rows))),
+        format_func=lambda index: f"{rows[index].get('property') or rows[index].get('address') or rows[index].get('property_id')} · {rows[index].get('unit') or rows[index].get('unit_id') or 'Home'}",
+    )
+    detail = rows[selected_row]
+    with st.expander("Decision details", expanded=False):
+        st.write("Confidence:", detail.get("confidence", "Unknown"))
+        st.write("Peer group:", detail.get("peer_group", "Unknown"))
+        st.write("Comparable listings:", detail.get("peer_count", 0))
+        if detail.get("comparison"):
+            st.caption("Next-ranked alternative relative to this listing")
+            st.write(detail["comparison"].get("compromise_summary", "Comparison unavailable"))
+            st.write(detail["comparison"])
+        if capability("can_use_ai_explanations") and detail.get("components"):
+            st.write("Score components:", detail["components"])
     if capability("can_export"):
         scope = st.selectbox("CSV export scope", ["properties", "units"], format_func=lambda value: "All property types" if value == "properties" else "Apartment units")
         if st.button("Prepare CSV export"):
@@ -314,7 +321,9 @@ def render_comparison(client, properties):
         report = st.session_state["account_report"]
         st.code(report["content"], language="json")
         if capability("can_export"):
-            st.download_button("Download report", report["content"], report["filename"], report["media_type"])
+            download = api_call(client, "GET", f"/reports/{report['report_id']}/download", raw=True)
+            if download is not None:
+                st.download_button("Download report", download, report["filename"], report["media_type"])
     entitlements = st.session_state.get("account_entitlements", {})
     if entitlements.get("plan") == "premium_plus" and st.button("View advanced analytics"):
         analytics = api_call(client, "POST", "/analytics", {"property_ids": ids, "constraints": constraints, "priorities": priorities, "idempotency_key": str(uuid.uuid4())})
@@ -335,7 +344,6 @@ def render_account_view(client, auth, screen):
             st.rerun()
         return
     if st.session_state.get("show_feedback_form"):
-        from feedback import submit_feedback, send_feedback_email
         with st.form("account_feedback"):
             category = st.selectbox("Feedback category", ["bug", "feature_request", "improvement"])
             title = st.text_input("Feedback title")
@@ -343,14 +351,10 @@ def render_account_view(client, auth, screen):
             submitted = st.form_submit_button("Submit feedback")
         if submitted and title.strip():
             payload = {"category": category, "title": title, "description": description,
-                       "user_plan": st.session_state["account_entitlements"].get("plan", "free"),
-                       "platform": "web", "beta_tester": bool((auth.user() or {}).get("beta_access"))}
-            try:
-                reference = submit_feedback(payload)
-                send_feedback_email(payload, reference)
-                st.success(f"Feedback saved. Reference: {reference}")
-            except Exception:
-                st.error("Could not submit feedback. Please try again.")
+                       "platform": "web", "route_or_screen": screen}
+            result = api_call(client, "POST", "/feedback", payload)
+            if result is not None:
+                st.success(f"Feedback saved. Reference: {result.get('public_reference', '')}")
         if st.button("Close feedback"):
             st.session_state["show_feedback_form"] = False
             st.rerun()
@@ -361,6 +365,10 @@ def render_account_view(client, auth, screen):
     render_add_listing(client, screen)
     properties = st.session_state.get("account_properties", [])
     active = [item for item in properties if not item.get("is_archived", False)]
+    counts = st.columns(3)
+    counts[0].metric("Saved properties", len(active))
+    counts[1].metric("Apartment units", sum(len(item.get("units", [])) for item in active if item.get("kind") == "apartment"))
+    counts[2].metric("Houses", sum(item.get("kind") in {"home", "rental_home"} for item in active))
     render_comparison(client, active)
     render_property_controls(client, active)
     archived = [item for item in properties if item.get("is_archived", False)]

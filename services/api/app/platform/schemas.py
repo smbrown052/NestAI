@@ -25,9 +25,43 @@ class Profile(StrictModel):
     preferences: dict
 
 
+class ProfilePatch(StrictModel):
+    display_name: str = Field(max_length=120)
+
+
+class Fees(StrictModel):
+    parking: float | None = Field(default=None, ge=0)
+    utilities: float | None = Field(default=None, ge=0)
+    pet_fee: float | None = Field(default=None, ge=0)
+    renters_insurance: float | None = Field(default=None, ge=0)
+    other: float | None = Field(default=None, ge=0)
+
+
+class PropertyPatch(StrictModel):
+    fees: Fees
+
+
+class Empty(StrictModel):
+    pass
+
+
+class NaturalRequest(StrictModel):
+    request: str = Field(max_length=4000)
+
+
+class Feedback(Idempotent):
+    category: Literal["bug", "feature", "feedback", "general"] = "feedback"
+    title: str = Field(min_length=1, max_length=300)
+    description: str = Field(min_length=1, max_length=20_000)
+    actual_behavior: str | None = Field(default=None, max_length=10_000)
+    expected_behavior: str | None = Field(default=None, max_length=10_000)
+    route_or_screen: str | None = Field(default=None, max_length=128)
+    user_contact_allowed: bool = False
+
+
 class Ranking(StrictModel):
     property_ids: list[str] = Field(default_factory=list, max_length=200)
-    constraints: dict[str, float | bool] = Field(default_factory=dict)
+    constraints: dict = Field(default_factory=dict)
     priorities: dict[str, float] = Field(default_factory=dict)
 
 
@@ -37,10 +71,12 @@ class PaidRequest(Idempotent):
     destination: str = Field(default="", max_length=500)
     mode: Literal["driving", "walking", "bicycling", "transit"] = "transit"
     priorities: dict[str, float] = Field(default_factory=dict)
-    constraints: dict[str, float | bool] = Field(default_factory=dict)
+    constraints: dict = Field(default_factory=dict)
 
 
 class Export(StrictModel):
     property_ids: list[str] = Field(default_factory=list, max_length=200)
     format: Literal["csv", "json"] = "csv"
     scope: Literal["properties", "units"] = "properties"
+    constraints: dict = Field(default_factory=dict)
+    priorities: dict[str, float] = Field(default_factory=dict)

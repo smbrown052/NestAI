@@ -118,7 +118,7 @@ def parse_constraints(request: str) -> Constraints:
     consume(r"(?:not(?: on)?|exclude|excluding)\s*(?:the\s*)?(first|\d+(?:st|nd|rd|th)?)\s*floor",
             lambda m: values.update(exclude_floors=(*values.get("exclude_floors", ()),
                                                     1 if m.group(1) == "first" else int(re.sub(r"\D", "", m.group(1))))))
-    consume(r"(?:within|at most|under)\s*" + number + r"\s*(?:min(?:utes?)?)\s*(?:walk(?:ing)?(?:\s*(?:of|to|from))?\s*)(?:subway|public transit|transit|metro)",
+    consume(r"(?:within|at most|under)\s*" + number + r"\s*(?:min(?:utes?)?)\s*(?:walk(?:ing)?(?:\s*(?:of|to|from))?\s*)(?:subway(?:/public transit)?|public transit|transit|metro)",
             lambda m: numeric("max_transit_walk_minutes", m))
     consume(r"(?:must (?:allow|accept) pets|pet[- ]friendly|pets (?:required|allowed)|allow pets)",
             lambda m: values.update(pet_friendly=True))
@@ -128,6 +128,47 @@ def parse_constraints(request: str) -> Constraints:
     if remaining or not values:
         raise ConstraintError("Unsupported or ambiguous request. Use rent, square footage, bedrooms, bathrooms, floor exclusions, pet-friendly, or walking time to transit.")
     return Constraints.from_dict(values)
+
+
+def parse_decision_request(request: str) -> tuple[Constraints, dict[str, float]]:
+    """Separate explicit soft priorities from strictly validated hard constraints."""
+    if not isinstance(request, str) or len(request) > 4000:
+        raise ConstraintError("Enter a request of at most 4,000 characters.")
+    aliases = {
+        "price": "price", "cost": "price", "budget": "price", "affordability": "price",
+        "space": "space", "size": "space", "square footage": "space",
+        "commute": "commute", "walkability": "walkability", "pets": "pets",
+    }
+    axis = "(" + "|".join(map(re.escape, aliases)) + ")"
+    specified: dict[str, float] = {}
+
+    def consume(match):
+        first = aliases[match.group(1)]
+        second = aliases[match.group(2)] if match.group(2) else None
+        if first == second:
+            raise ConstraintError("A priority cannot outweigh itself.")
+        for key, weight in [(first, 3.0)] + ([(second, 1.0)] if second else []):
+            if key in specified and specified[key] != weight:
+                raise ConstraintError("Conflicting priority instructions.")
+            specified[key] = weight
+        return " "
+
+    remaining = re.sub(
+        r"\bprioriti[sz]e\s+" + axis + r"(?:\s+over\s+" + axis + r")?\b",
+        consume, request.lower(),
+    )
+    remaining = re.sub(
+        r"\b" + axis + r"\s+(?:is\s+)?more important than\s+" + axis + r"\b",
+        consume, remaining,
+    )
+    if specified and not re.sub(r"\b(?:and|please)\b|[\s,.;]+", "", remaining):
+        constraints = Constraints()
+    else:
+        constraints = parse_constraints(remaining)
+    if not specified:
+        return constraints, {}
+    from shared.decision import DEFAULT_PRIORITIES
+    return constraints, {key: specified.get(key, 1.0) for key in DEFAULT_PRIORITIES}
 
 
 def number(value: Any) -> float | None:
@@ -142,7 +183,7 @@ def number(value: Any) -> float | None:
 
 def pet_policy(value: Any) -> str:
     text = str(value or "").strip().lower()
-    if re.search(r"\b(no pets|pets (?:not allowed|prohibited)|no dogs|no cats)\b", text):
+    if re.search(r"\b(no pets|pets (?:not allowed|prohibited)|no dogs|no cats|pets?[- ]friendly:\s*no)\b", text):
         return "no"
     if re.search(r"\b(?:pets? friendly|pet-friendly|pets? (?:allowed|welcome)|cats?,? dogs? ok|yes)\b", text):
         return "yes"
@@ -150,6 +191,8 @@ def pet_policy(value: Any) -> str:
 
 
 def eligible(row: dict[str, Any], constraints: Constraints) -> bool:
+    if (constraints.rent_lt is not None or constraints.rent_lte is not None) and row.get("price_kind") == "purchase":
+        return False
     for key, field, compare in (
         ("rent_lt", "price_num", lambda a, b: a < b),
         ("rent_lte", "price_num", lambda a, b: a <= b),

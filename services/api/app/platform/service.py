@@ -12,7 +12,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from app.auth.plans import current_plan
 from app.db.models.user import User
-from app.db.models.account import AccountProperty, AccountUnit, MonthlyUsage, RequestReceipt
+from app.db.models.account import AccountProperty, AccountUnit, AccountPreference, MonthlyUsage, RequestReceipt
 from shared.entitlements import limits_for, features_for
 from shared.adapters import rank
 
@@ -91,6 +91,8 @@ def properties(db, user, ids=None):
 def serialize(db, row):
     return {"id": row.id, "external_id": row.external_id, "kind": row.kind,
             "parsed": row.parsed,
+            "fees": row.parsed.get("fees", {}),
+            "is_archived": bool(row.parsed.get("is_archived", False)),
             "units": [{"id": unit.id, **{k: v for k, v in unit.parsed.items() if k != "id"}}
                       for unit in db.query(AccountUnit).filter_by(property_id=row.id).order_by(AccountUnit.id)],
             "created_at": row.created_at.isoformat(), "updated_at": row.updated_at.isoformat()}
@@ -113,8 +115,11 @@ def save(db, user, payload):
                               kind=payload.kind, parsed=parsed)
         db.add(row)
         db.flush()
-    row.kind, row.parsed = payload.kind, parsed
+    row.kind, row.parsed = payload.kind, {**row.parsed, **parsed}
     row.updated_at = datetime.now(timezone.utc)
+    if "units" not in parsed:
+        db.flush()
+        return serialize(db, row)
     units = parsed.get("units", [])
     if not isinstance(units, list) or len(units) > 1000:
         raise HTTPException(422, "units must be an array of at most 1000 objects")
@@ -131,9 +136,16 @@ def save(db, user, payload):
             raise HTTPException(422, "Unit ids must be unique nonempty strings (max 128 characters)")
         seen.add(unit_id)
         normalized.append((unit_id, unit))
-    db.query(AccountUnit).filter_by(property_id=row.id).delete()
+    existing = {unit.id: unit for unit in db.query(AccountUnit).filter_by(property_id=row.id)}
+    for unit_id, unit in existing.items():
+        if unit_id not in seen:
+            unit.parsed = {**unit.parsed, "is_archived": True}
     for unit_id, unit in normalized:
-        db.add(AccountUnit(property_id=row.id, id=unit_id, parsed=unit))
+        if unit_id in existing:
+            existing[unit_id].parsed = {**existing[unit_id].parsed, **unit,
+                                        "is_archived": unit.get("is_archived", False)}
+        else:
+            db.add(AccountUnit(property_id=row.id, id=unit_id, parsed=unit))
     db.flush()
     return serialize(db, row)
 
@@ -149,43 +161,56 @@ def numeric(value):
 
 
 def ranking(db, user, ids, constraints, priorities):
-    allowed = {"commute", "safety", "nightlife", "budget", "gym"}
-    if set(priorities) - allowed or any(v < 0 or not math.isfinite(v) for v in priorities.values()):
-        raise HTTPException(422, "Invalid priorities")
-    if priorities and sum(priorities.values()) <= 0:
-        raise HTTPException(422, "Priority weights must have positive total")
-    allowed_constraints = {"max_price", "min_beds", "min_sqft", "max_commute", "has_gym"}
-    if set(constraints) - allowed_constraints or any(not math.isfinite(v) or v < 0 for v in constraints.values()):
-        raise HTTPException(422, "Unsupported constraint")
-    weights = {name: priorities.get(name, 0) for name in sorted(allowed)} if priorities else {}
+    rows = decision_rows(db, user, ids)
+    profile = db.get(AccountPreference, user.id)
+    try:
+        ranked = rank(rows, priorities or None, constraints, profile.preferences if profile else {})
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from None
+    return {"ranked": ranked, "method": "shared_decision",
+            "warnings": ["Unknown inputs are labeled and receive a neutral contribution; scores are decision aids, not verified facts."]}
+
+
+def decision_rows(db, user, ids):
     rows = []
     for prop in properties(db, user, ids):
+        if prop.parsed.get("is_archived"):
+            continue
         data = prop.parsed
         units = db.query(AccountUnit).filter_by(property_id=prop.id).order_by(AccountUnit.id).all()
         for unit in units or [None]:
-            values = {**data, **(unit.parsed if unit else {})}
+            if unit and unit.parsed.get("is_archived"):
+                continue
+            values = {**{key: value for key, value in data.items() if key != "units"},
+                      **(unit.parsed if unit else {})}
+            for key in ("extra_parking", "extra_utilities", "extra_pet_fee", "extra_renters_insurance", "extra_other"):
+                if key in data:
+                    values[key] = data[key]
             if unit:
                 values["price"] = values.get("price", values.get("unit_price"))
                 values["sqft"] = values.get("sqft", values.get("unit_sqft"))
-            row = {**values, "id": prop.id, "property_id": prop.id, "unit_id": unit.id if unit else None,
+            row = {**values, "id": prop.id, "kind": prop.kind, "property_id": prop.id, "unit_id": unit.id if unit else None,
+                   "property": values.get("display_name") or values.get("property_title") or values.get("address"),
+                   "unit": unit.id if unit else "",
                    "price_num": numeric(values.get("price", values.get("rent_price", values.get("monthly_rent", values.get("sale_price"))))),
                    "sqft_num": numeric(values.get("sqft", values.get("square_feet"))),
-                   "beds_num": numeric(values.get("beds", values.get("bedrooms")))}
-            tests = [
-                ("max_price", "price_num", lambda x, y: x <= y),
-                ("min_beds", "beds_num", lambda x, y: x >= y),
-                ("min_sqft", "sqft_num", lambda x, y: x >= y),
-                ("max_commute", "commute_transit_min", lambda x, y: x <= y),
-            ]
-            if any(key in constraints and (numeric(row.get(field)) is None or
-                   not compare(numeric(row.get(field)), constraints[key])) for key, field, compare in tests):
-                continue
-            if constraints.get("has_gym") and not row.get("has_gym"):
-                continue
+                   "beds_num": numeric(values.get("beds_num", values.get("beds", values.get("bedrooms")))),
+                   "baths_num": numeric(values.get("baths_num", values.get("baths", values.get("bathrooms")))),
+                   "commute_minutes": numeric(values.get("commute_minutes", values.get("commute_transit_min")))}
             rows.append(row)
-    ranked = rank(rows, weights)
-    return {"ranked": ranked, "method": "legacy_lifestyle_scorer",
-            "warnings": ["Unknown inputs receive the existing scorer's neutral baseline; scores are decision aids, not verified facts."]}
+    return rows
+
+
+def analytics(db, user, ids, constraints, priorities):
+    from shared.decision import sensitivity
+    baseline = ranking(db, user, ids, constraints, priorities)
+    profile = db.get(AccountPreference, user.id)
+    try:
+        scenarios = sensitivity(decision_rows(db, user, ids), priorities or None,
+                                constraints, profile.preferences if profile else {})
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from None
+    return {"baseline": baseline, "sensitivity": scenarios, "method": "shared_decision_sensitivity"}
 
 
 def safe_cell(value):
@@ -200,26 +225,37 @@ def safe_cell(value):
     return text
 
 
-def csv_export(db, rows, scope):
+def export_rows(ranked, scope):
+    if scope == "units":
+        return [row for row in ranked if row.get("unit_id") is not None]
+    result, seen = [], set()
+    for row in ranked:
+        if row["property_id"] not in seen:
+            result.append(row)
+            seen.add(row["property_id"])
+    return result
+
+
+def csv_export(rows, scope):
     output = io.StringIO(newline="")
-    columns = (["property_id", "unit_id", "beds", "baths", "rent", "square_feet"] if scope == "units"
-               else ["property_id", "kind", "name", "address", "monthly_rent", "sale_price", "bedrooms", "bathrooms", "square_feet"])
+    columns = (["property_id", "unit_id", "beds", "baths", "rent", "square_feet", "score", "monthly_total", "fees_complete"]
+               if scope == "units" else
+               ["property_id", "kind", "name", "address", "monthly_rent", "sale_price", "bedrooms", "bathrooms", "square_feet",
+                "score", "monthly_total", "fees_complete"])
     writer = csv.writer(output)
     writer.writerow(columns)
-    for prop in rows:
-        data = prop.parsed
+    for row in rows:
         if scope == "units":
-            for unit in db.query(AccountUnit).filter_by(property_id=prop.id).order_by(AccountUnit.id):
-                u = unit.parsed
-                # Only genuine finite numeric values populate numeric columns.
-                writer.writerow([safe_cell(prop.id), safe_cell(unit.id),
-                                 *[numeric(value) if numeric(value) is not None else "" for value in (
-                                     u.get("beds", u.get("bedrooms")), u.get("baths", u.get("bathrooms")),
-                                     u.get("price", u.get("unit_price", u.get("rent_price"))),
-                                     u.get("sqft", u.get("unit_sqft", u.get("square_feet")))) ]])
+            writer.writerow([safe_cell(row["property_id"]), safe_cell(row["unit_id"]),
+                             *[numeric(row.get(key)) if numeric(row.get(key)) is not None else ""
+                               for key in ("beds_num", "baths_num", "price_num", "sqft_num", "score", "monthly_total")],
+                             row.get("fees_complete", False)])
         else:
-            writer.writerow([safe_cell(prop.id), safe_cell(prop.kind),
-                             safe_cell(data.get("display_name", data.get("property_title"))), safe_cell(data.get("address")),
-                             *[numeric(data.get(key)) if numeric(data.get(key)) is not None else ""
-                               for key in columns[4:]]])
+            writer.writerow([safe_cell(row["property_id"]), safe_cell(row.get("kind")),
+                             safe_cell(row.get("property")), safe_cell(row.get("address")),
+                             *[numeric(value) if numeric(value) is not None else "" for value in (
+                                 row.get("price_num") if row.get("kind") != "home" else row.get("monthly_rent"),
+                                 row.get("sale_price"), row.get("beds_num"), row.get("baths_num"), row.get("sqft_num"),
+                                 row.get("score"), row.get("monthly_total"))],
+                             row.get("fees_complete", False)])
     return output.getvalue()

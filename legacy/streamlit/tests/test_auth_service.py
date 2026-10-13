@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 import unittest
+from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -37,6 +38,61 @@ class FakeResponse:
 
 
 class StreamlitAuthServiceTests(unittest.TestCase):
+    def test_report_download_rechecks_authenticated_backend_route(self):
+        import api_views
+        ui = Mock()
+        ui.session_state = {"account_entitlements": {"plan": "premium"}}
+        ui.form.return_value = nullcontext()
+        ui.expander.return_value = nullcontext()
+        ui.number_input.side_effect = [0, 0, 0, 0]
+        ui.text_input.return_value = ""
+        ui.form_submit_button.return_value = False
+        ui.button.side_effect = lambda label, **kwargs: label == "Generate decision report"
+        ui.selectbox.side_effect = [0, "properties"]
+        report = {"report_id": "report-one", "content": "{}", "filename": "report.json", "media_type": "application/json"}
+        with patch.object(api_views, "st", ui), patch.object(api_views, "display_frame"), patch.object(api_views, "capability", side_effect=lambda feature: feature in {"can_export", "can_generate_ai_reports"}), patch.object(api_views, "api_call", side_effect=[{"ranked": [{"property_id": "property-one", "price_num": 1500}]}, report, '{"verified": true}']) as call:
+            api_views.render_comparison(Mock(), [{"id": "property-one"}])
+            self.assertEqual(call.call_args.args[1:3], ("GET", "/reports/report-one/download"))
+            self.assertTrue(call.call_args.kwargs["raw"])
+            self.assertEqual(ui.download_button.call_args.args[1], '{"verified": true}')
+
+    def test_numeric_filter_submission_uses_shared_constraint_contract(self):
+        import api_views
+        ui = Mock()
+        ui.session_state = {}
+        ui.form.return_value = nullcontext()
+        ui.number_input.side_effect = [2000, 1, 1.5, 700]
+        ui.text_input.return_value = ""
+        ui.form_submit_button.return_value = True
+        ui.button.return_value = False
+        with patch.object(api_views, "st", ui), patch.object(api_views, "capability", return_value=False), patch.object(api_views, "api_call", return_value={"ranked": []}) as call:
+            api_views.render_comparison(Mock(), [{"id": "property-one"}])
+            self.assertEqual(call.call_args.args[2], "/ranking")
+            self.assertEqual(call.call_args.args[3]["constraints"], {
+                "rent_lte": 2000, "min_beds": 1, "min_baths": 1.5, "min_sqft": 700,
+            })
+            self.assertEqual(call.call_args.args[3]["property_ids"], ["property-one"])
+
+    def test_feedback_uses_backend_persistence_without_email_dispatch(self):
+        import api_views
+        ui = Mock()
+        ui.session_state = {"account_entitlements": {"plan": "free"}, "show_feedback_form": True}
+        ui.form.return_value = nullcontext()
+        ui.selectbox.return_value = "bug"
+        ui.text_input.return_value = "A reproducible issue"
+        ui.text_area.return_value = "Steps to reproduce"
+        ui.form_submit_button.return_value = True
+        ui.button.return_value = False
+        auth = Mock()
+        auth.is_authenticated.return_value = True
+        with patch.object(api_views, "st", ui), patch.object(api_views, "render_profile"), patch.object(api_views, "api_call", return_value={"public_reference": "FEEDBACK-1"}) as call:
+            api_views.render_account_view(Mock(), auth, "Profile")
+            self.assertEqual(call.call_args.args[2], "/feedback")
+            self.assertEqual(call.call_args.args[3], {
+                "category": "bug", "title": "A reproducible issue", "description": "Steps to reproduce",
+                "platform": "web", "route_or_screen": "Profile",
+            })
+
     def test_account_switch_clears_house_widgets_preferences_and_caches(self):
         state = {"auth_user": {"id": 1}, "homes_current_result": {"address": "private"},
                  "apt_prefs": {"pets": "Yes"}, "account_report": "private", "user_profile": {"max_budget": 9000}}

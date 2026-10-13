@@ -1,50 +1,23 @@
-"""
-feature_access.py
-Centralized plan/role/capability service for NestAI.
+"""Frontend entitlement compatibility names derived from shared configuration.
 
-NOTE (local/session-based enforcement):
-    Plan state is stored in Streamlit session_state and is therefore
-    session-scoped, not account-backed.  This is intentional for the
-    current Streamlit-only deployment.  All capability checks are
-    designed behind a clean interface so the backing store can later
-    be replaced by an API-driven identity/quota service without
-    changing call sites.
-
-    Controls in this module are LOCAL and not production-grade until
-    they are backed by a server-side identity layer.
-
-Roles (separate from plans):
-    USER    — default application user
-    ADMIN   — platform operator (not a subscription plan)
-
-Plans:
-    FREE          — limited analyses, local-only features
-    PREMIUM       — paid tier, all core features
-    PREMIUM_PLUS  — paid tier, higher quotas + advanced features
-    BETA          — admin-granted, configurable quotas + expiration
-    OWNER_TEST    — dev/owner only; unlimited everything; never shown on pricing page
-
-Environment flags:
-    NESTAI_OWNER_MODE=true  — enables OWNER_TEST preview (session starts there)
-    NESTAI_DEV_MODE=true    — enables the in-app development plan switcher
-
-Usage::
-
-    from feature_access import capability, require_capability, FeatureUpgradeRequired
-    if capability("can_compare_multiple_properties"):
-        ...  # show comparison UI
-    else:
-        prompt = require_capability("can_compare_multiple_properties")
-        # prompt.message describes the upgrade needed
+Authenticated checks trust only the account API response, including actual
+grants and usage. Preview plan/role state cannot override that response; the
+backend independently authorizes every persisted or provider-backed operation.
 """
 
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Optional
 
 import streamlit as st
+_ROOT = Path(__file__).resolve().parents[2]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+from shared.entitlements import features_for, limits_for
 
 # ── Plan and role constants ───────────────────────────────────────────────────
 
@@ -70,101 +43,39 @@ _CREDITS_TIER_MAP = {
 
 # ── Per-plan capability and quota definitions ─────────────────────────────────
 
-_CAPABILITIES: dict[str, dict[str, Any]] = {
-    PLAN_FREE: {
-        # Analyses
-        "can_analyze_property": True,
-        "monthly_analyses_limit": 5,
-        # Saved properties
-        "can_save_property": True,
-        "saved_property_limit": 2,          # one active saved property
-        "can_restore_archived_property": False,
-        # Comparison
-        "can_compare_multiple_properties": True,
-        # Filtering
-        "can_use_basic_filters": True,
-        "can_use_natural_language_filtering": False,
-        # AI features
-        "can_use_lifestyle_score": False,
-        "can_use_ai_explanations": False,
-        "can_generate_ai_reports": False,
-        # External API features — MUST be false for Free
-        "can_use_google_apis": False,
-        "can_use_commute_analysis": False,
-        "can_use_neighborhood_enrichment": False,
-        # Walk Score (via paid Walk Score API)
-        "can_use_walk_score_api": False,
-        # Chat
-        "can_use_ai_chat": False,
-        # Exports
-        "can_export": False,
-        # Negotiation
-        "can_use_ai_negotiation": False,
-    },
-    PLAN_PREMIUM: {
-        "can_analyze_property": True,
-        "monthly_analyses_limit": 100,
-        "can_save_property": True,
-        "saved_property_limit": 50,
-        "can_restore_archived_property": True,
-        "can_compare_multiple_properties": True,
-        "can_use_basic_filters": True,
-        "can_use_natural_language_filtering": True,
-        "can_use_lifestyle_score": True,
-        "can_use_ai_explanations": True,
-        "can_generate_ai_reports": True,
-        "can_use_google_apis": True,
-        "can_use_commute_analysis": True,
-        "can_use_neighborhood_enrichment": True,
-        "can_use_walk_score_api": True,
-        "can_use_ai_chat": True,
-        "can_export": True,
-        "can_use_ai_negotiation": True,
-    },
-    PLAN_PREMIUM_PLUS: {
-        "can_analyze_property": True,
-        "monthly_analyses_limit": 500,
-        "can_save_property": True,
-        "saved_property_limit": 200,
-        "can_restore_archived_property": True,
-        "can_compare_multiple_properties": True,
-        "can_use_basic_filters": True,
-        "can_use_natural_language_filtering": True,
-        "can_use_lifestyle_score": True,
-        "can_use_ai_explanations": True,
-        "can_generate_ai_reports": True,
-        "can_use_google_apis": True,
-        "can_use_commute_analysis": True,
-        "can_use_neighborhood_enrichment": True,
-        "can_use_walk_score_api": True,
-        "can_use_ai_chat": True,
-        "can_export": True,
-        "can_use_ai_negotiation": True,
-    },
-    PLAN_BETA: {
-        # BETA grants Premium capabilities while active.
-        # Admin-configured quota overrides are applied at runtime
-        # via set_beta_overrides().
-        "can_analyze_property": True,
-        "monthly_analyses_limit": 50,   # admin-overridable
-        "can_save_property": True,
-        "saved_property_limit": 10,     # admin-overridable
-        "can_restore_archived_property": True,
-        "can_compare_multiple_properties": True,
-        "can_use_basic_filters": True,
-        "can_use_natural_language_filtering": True,
-        "can_use_lifestyle_score": True,
-        "can_use_ai_explanations": True,
-        "can_generate_ai_reports": True,
-        "can_use_google_apis": True,
-        "can_use_commute_analysis": True,
-        "can_use_neighborhood_enrichment": True,
-        "can_use_walk_score_api": True,
-        "can_use_ai_chat": True,
-        "can_export": True,
-        "can_use_ai_negotiation": True,
-    },
+CAPABILITY_FEATURES = {
+    "can_compare_multiple_properties": "basic_comparison",
+    "can_restore_archived_property": "exports",
+    "can_use_natural_language_filtering": "natural_language",
+    "can_use_lifestyle_score": "lifestyle",
+    "can_use_ai_explanations": "advisor",
+    "can_generate_ai_reports": "reports",
+    "can_use_google_apis": "enrichment",
+    "can_use_commute_analysis": "commute",
+    "can_use_neighborhood_enrichment": "enrichment",
+    "can_use_walk_score_api": "enrichment",
+    "can_use_ai_chat": "advisor",
+    "can_export": "exports",
+    "can_use_ai_negotiation": "negotiation",
 }
+
+
+def capabilities_from_features(features: dict) -> dict:
+    result = {key: features.get(source, features.get("advisor", False) if source in {"natural_language", "lifestyle"} else False) is True
+              for key, source in CAPABILITY_FEATURES.items()}
+    result.update(can_analyze_property=True, can_save_property=True, can_use_basic_filters=True)
+    return result
+
+
+def _configured_capabilities(plan: str) -> dict:
+    limits = limits_for(plan.lower())
+    return {**capabilities_from_features(features_for(plan.lower())),
+            "monthly_analyses_limit": limits["analyses"],
+            "saved_property_limit": limits["properties"]}
+
+
+_CAPABILITIES = {plan: _configured_capabilities(plan) for plan in
+                 (PLAN_FREE, PLAN_PREMIUM, PLAN_PREMIUM_PLUS, PLAN_BETA)}
 
 # ── Plan labels ───────────────────────────────────────────────────────────────
 
@@ -241,7 +152,7 @@ class FeatureUpgradeRequired:
     upgrade_action: str = "upgrade"   # action identifier for the UI
 
     def __bool__(self) -> bool:
-        return False   # so `if require_capability(...)` evaluates falsy
+        return True
 
 
 # ── Session-state helpers ─────────────────────────────────────────────────────
@@ -306,8 +217,7 @@ def normalize_plan_value(plan: str | None, *, beta_access: bool = False) -> str:
 def get_effective_plan(backend_plan: str | None = None, *, beta_access: bool = False) -> str:
     """Return the plan the UI should render for this session.
 
-    - Production mode (no dev/owner flag): backend plan is authoritative
-    - Dev/owner mode: session preview plan is authoritative
+    Backend entitlements take precedence over display previews in every mode.
     """
     _init()
     if st.session_state.get("account_entitlements"):
@@ -328,7 +238,7 @@ def is_admin() -> bool:
 
 
 def set_plan(plan: str) -> None:
-    """Change the current session plan.  Only safe to call after auth/payment confirmation.
+    """Set a display preview; this never changes authenticated entitlements.
 
     OWNER_TEST can only be set when NESTAI_DEV_MODE or NESTAI_OWNER_MODE is active.
     """
@@ -352,7 +262,7 @@ def is_owner_test() -> bool:
 def capability(feature: str) -> bool:
     """Return True if the current user's plan includes *feature*.
 
-    Always returns True for admin users and for OWNER_TEST.
+    Authenticated admin and owner-preview roles cannot bypass backend grants.
     """
     _init()
     entitlements = st.session_state.get("account_entitlements")
@@ -447,6 +357,8 @@ def consume_monthly_analysis() -> bool:
     Returns False if none remain.
     """
     _init()
+    if st.session_state.get("auth_token"):
+        return False
     remaining = monthly_analyses_remaining()
     if remaining is None:
         return True   # unlimited — no deduction needed

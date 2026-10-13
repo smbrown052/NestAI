@@ -20,6 +20,8 @@ if str(_ROOT) not in sys.path:
 
 import pytest
 import types
+import ast
+import pandas as pd
 
 
 # ── Streamlit mock ────────────────────────────────────────────────────────────
@@ -88,6 +90,37 @@ _state = fa.st.session_state
 
 def _reset():
     _state.clear()
+
+def test_decision_brief_compares_alternative_to_winner():
+    """Exercise the actual renderer without executing the Streamlit entrypoint."""
+    tree = ast.parse((_ROOT / "app.py").read_text())
+    function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "render_decision_brief")
+    cards = {}
+    fake_st = types.SimpleNamespace(
+        session_state=types.SimpleNamespace(user_profile={}),
+        markdown=lambda *args, **kwargs: None,
+        caption=lambda *args, **kwargs: None,
+        columns=lambda count: [_NullCtx() for _ in range(count)],
+    )
+    def card(label, value, **kwargs):
+        cards[label] = value
+        return ""
+    namespace = {"pd": pd, "RegretAnalyzer": object, "TradeoffAnalyzer": object,
+                 "st": fake_st, "explain_match": lambda *args: [],
+                 "compute_match_score": lambda *args: 0, "metric_card_html": card}
+    exec(compile(ast.Module(body=[function], type_ignores=[]), "decision-brief", "exec"), namespace)
+    rows = pd.DataFrame([{"property": "Winner", "unit": "01", "price_num": 1500},
+                         {"property": "Alternative", "unit": "02", "price_num": 2000}])
+    calls = []
+    def metrics(first, second):
+        calls.append((first["property"], second["property"]))
+        return {"comparison": {"compromise_summary": "No cost compromise" if second["price_num"] < first["price_num"] else "More expensive"}}
+    tradeoff = types.SimpleNamespace(ranked_df=rows, explain_why_winner=lambda: "• Lower known cost",
+                                    get_difference_metrics=metrics)
+    regret = types.SimpleNamespace(analyze_apartment=lambda index: {})
+    namespace["render_decision_brief"](rows, rows, {}, regret, tradeoff, "free")
+    assert calls == [("Alternative", "Winner")]
+    assert cards["Key Compromise"] == "No cost compromise"
 
 
 # ── OWNER_TEST constant ───────────────────────────────────────────────────────
@@ -247,7 +280,7 @@ class TestFreePlanRestrictions:
     def test_free_require_capability_returns_prompt(self):
         prompt = fa.require_capability("can_use_ai_chat")
         assert isinstance(prompt, fa.FeatureUpgradeRequired)
-        assert not bool(prompt)
+        assert bool(prompt)
 
     def test_free_upgrade_prompt_mentions_plans(self):
         prompt = fa.require_capability("can_use_ai_chat")

@@ -13,8 +13,11 @@ from shared.constraints import parse_constraints, eligible
 def clean_money(value):
     if not isinstance(value, str):
         return None
-    match = re.search(r"\$?([\d,]+)", value)
-    return int(match.group(1).replace(",", "")) if match else None
+    match = re.search(r"\$?([\d,]+(?:\.\d{1,2})?)", value)
+    if not match:
+        return None
+    parsed = float(match.group(1).replace(",", ""))
+    return int(parsed) if parsed.is_integer() else parsed
 
 
 def parse_number(value):
@@ -49,15 +52,12 @@ def parse_floor_from_unit(unit):
 def parse_has_den(floorplan_name, nearby_text=""):
     combined = f"{floorplan_name or ''} {nearby_text or ''}".lower()
 
-    if "den" in combined:
+    if re.search(r"\b(?:no|without)\s+(?:a\s+)?den\b", combined):
+        return False
+    if re.search(r"\bden\b", combined):
         return True
 
-    if isinstance(floorplan_name, str):
-        name = floorplan_name.upper()
-        if "D" in name and re.search(r"[A-Z]*D", name):
-            return True
-
-    return False
+    return None
 
 def extract_amenities_from_text(text):
     """

@@ -11,8 +11,22 @@ GET /properties -> {"properties":[{id,external_id,kind,parsed,units,created_at,u
 POST /analyses {text,kind,idempotency_key} -> {kind,parsed}
 POST /properties {kind,parsed,idempotency_key,external_id?} -> saved property
 DELETE /properties/{id} -> {deleted:id}
+PATCH /properties/{id} {fees:{parking?,utilities?,pet_fee?,renters_insurance?,other?}}
+-> saved property. Fees are finite nonnegative monthly amounts or null (unknown).
+POST /properties/{id}/archive {} /restore {} -> saved property (is_archived:true/false).
+Archived properties still count toward the saved-property cap, but do not rank/export.
+These operations retain data and are account-owned/account-locked.
 kind: apartment | home | rental_home. Parsing does not automatically save.
+Apartment parsing delegates to the authoritative legacy text_parser (including
+its 128 KB text limit), without a separate apartment parsing engine.
+Normalized parser unit IDs and fractional bathrooms are retained without coercion.
+Empty apartment unit extraction or a house without a matching type, address and
+positive price returns 422 and rolls back analysis quotas/idempotency records.
 For a stable update, reuse external_id but supply a fresh idempotency_key.
+Upserts merge prior facts; omitting units preserves them. Supplying a replacement
+unit list archives missing unit records instead of deleting them, and reappearing
+unit IDs restore them. Archived units remain visible in saved snapshots but are
+excluded from ranking/export results. DELETE is the explicit property remove action.
 When external_id is omitted, a content hash is used. Unit objects need unique
 nonempty STRING id, unit_number, unit_label, or unit; numeric IDs are rejected.
 All saved records/units are account-owned; no legacy SQLite/session claim occurs.
@@ -20,6 +34,16 @@ Property count is shared across kinds and counts current saved properties.
 
 GET /profile -> {preferences:object}
 PUT /profile {preferences:object} -> {preferences:object}
+PATCH /profile {display_name:string} -> {display_name:string|null}; trim/persist account name.
+POST /requests {request:string} -> {constraints,priorities:{},summary,method}
+uses shared deterministic natural-language constraints without an AI/provider call.
+Unsupported/ambiguous instructions return 422; it does not invent priorities.
+POST /feedback {idempotency_key,category?:bug|feature|feedback|general,title,
+                description,actual_behavior?,expected_behavior?,route_or_screen?,
+                user_contact_allowed?:false}
+-> {id,public_reference,status}. Persists to existing feedback_reports table used
+by GET /admin/feedback, without new parallel feedback storage or automatic email.
+Account ownership and immutable idempotency receipt prevent duplicate submissions.
 GET /entitlements -> {plan,period,timezone:"UTC",limits,usage,features,
                       legacy_credits,legacy_credits_policy}
 Free: 5 analyses/month, 2 saved properties, basic comparison.
@@ -38,12 +62,16 @@ SQLite is supported only for local/testing; production concurrency needs Postgre
 Comparison and paid tools
 -------------------------
 POST /ranking {property_ids?:string[],constraints?:object,priorities?:object}
--> {ranked:[{property_id,unit_id,lifestyle_score,lifestyle_*_score,...}],
+-> {ranked:[{property_id,unit_id,property,unit,score,rank,components,confidence,
+            comparison,price_num,sqft_num,beds_num,baths_num,...}],
     method,warnings}. Empty property_ids selects this account's properties.
-Priorities: commute,safety,nightlife,budget,gym (finite nonnegative weights).
-Constraints: max_price,min_beds,min_sqft,max_commute,has_gym. Missing inputs do
+Priorities: price,space,commute,walkability,pets (finite nonnegative weights).
+Constraints: rent_lt,rent_lte,min_sqft,min_beds,min_baths,exclude_floors:[integers],
+pet_friendly:bool,max_transit_walk_minutes,available_now:bool. Missing inputs do
 not satisfy a requested constraint; otherwise existing neutral scorer rules apply.
-Scores reuse the legacy lifestyle scorer, not a new scoring implementation.
+Scores/filtering/comparisons reuse shared.decision and shared.constraints, also used
+by the frontend. Stored profile preferences feed the same authoritative decision.
+Comparison deltas are B minus A; positive rent delta means A is cheaper.
 
 POST /advisor, /negotiation, /enrichment, /commute, /analytics, /reports:
 {property_ids:string[],idempotency_key:string,question?:string,
@@ -58,14 +86,23 @@ Enrichment returns location candidates, not invented neighborhood statistics.
 Successful live enrichment/commute results are saved with the account property;
 transit duration feeds the existing ranking adapter. Mock results are not promoted
 into confirmed property facts.
-Analytics -> {baseline,sensitivity:[{priority,factor,ranked}],method}
-Sensitivity varies each requested/default priority by 0.5x and 1.5x.
+Analytics -> {baseline,sensitivity:[{priority,priorities,winner}],method}
+Sensitivity follows the shared decision function, increasing each priority to
+twice its original weight plus one and reporting the scenario winner.
 Reports -> {report_id,filename,media_type:"application/json",content,download_url}
+Premium reports include normalized comparison scores/components and account facts.
+Plus reports additionally embed shared sensitivity analytics and cost/space/peer
+analysis from the same locked account snapshot.
 GET /reports/{report_id}/download -> deterministic JSON attachment, same account only.
 Reports are reproducible decision records, not generated/verified appraisals.
-POST /exports {property_ids?:string[],format?:csv|json,scope?:properties|units}
+POST /exports {property_ids?:string[],format?:csv|json,scope?:properties|units,
+               constraints?:shared canonical dict,priorities?:shared weights}
 -> attachment bytes (not a JSON envelope). Formula prefixes in text cells are
 escaped. Unit IDs remain strings; rent/size/beds/baths are finite numeric columns.
+Exports call the same shared ranking/filtering with account profile preferences
+and preserve ranked order. Unit scope exports only eligible units; property scope
+deduplicates eligible ranked properties by their first ranked option. JSON exports
+contain normalized ranked records, not unfiltered property/unit snapshots.
 
 Provider configuration
 ----------------------
@@ -74,6 +111,9 @@ Credentials are read only on the backend. All remote destinations are fixed.
 NESTAI_PROVIDER_MODE defaults to live. Explicit mock is development/test-only;
 mock outputs are labeled and contain no claims of live locations/travel times.
 Missing credentials -> 503, upstream failure -> 502, missing facts -> 422.
+NESTAI_DISABLE_EMAIL=true explicitly suppresses backend password-reset delivery;
+production reset requests retain generic non-enumerating acknowledgements and never
+expose provider details or claim verified email delivery. Dev links remain test-only.
 
 Billing
 -------
@@ -111,8 +151,10 @@ Deployment and validation
 Set DATABASE_URL to PostgreSQL; run alembic upgrade head from services/api.
 New migration 0007_account_services follows ae05715be4e2 and is additive.
 Start uvicorn main:app from services/api; repository shared adapters must be shipped
-alongside legacy/streamlit/parser and lifestyle_scoring.py.
+alongside legacy/streamlit/parser and shared.decision/shared.constraints.
 Run PYTHONPATH=services/api python -m pytest services/api/tests.
-Set TEST_POSTGRES_URL to an explicit disposable PostgreSQL test database for
-migration/row-lock tests; otherwise PostgreSQL tests are honestly skipped.
+Set NESTAI_TEST_DATABASE_URL to an explicit PostgreSQL test database for
+migration/row-lock tests (legacy TEST_POSTGRES_URL alias is also accepted).
+Each test uses a unique owned schema and cleans only that schema; otherwise
+PostgreSQL tests are honestly skipped.
 Automated Stripe/provider tests use mocks and do not claim live/sandbox verification.

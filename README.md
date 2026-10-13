@@ -143,8 +143,11 @@ not prove the deployed revision.
 
 Install both components' requirements and `requirements-dev.txt`, then install
 the test browser with `python -m playwright install chromium`. Supply an
-**isolated** PostgreSQL `NESTAI_TEST_DATABASE_URL` through secure test
-configuration; never point regression tests at a production database.
+**isolated** PostgreSQL `NESTAI_TEST_DATABASE_URL` and set `TEST_POSTGRES_URL`
+to that same test URL for PostgreSQL quota/migration coverage. Set
+`NESTAI_BROWSER_DATABASE_URL` to a separate database named `nestai_browser`;
+its fixture creates that database using the configured local test PostgreSQL
+role. Never point regression tests at a production database.
 
 ```bash
 make -C /home/runner/work/NestAI/NestAI regression

@@ -1,0 +1,4 @@
+.api-*.log
+.ui-*.log
+.playwright-*/
+.validation-output.log

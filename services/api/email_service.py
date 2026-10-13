@@ -2,7 +2,9 @@ import os
 import resend
 
 
-def send_password_reset_email(to_email: str, reset_link: str) -> None:
+def send_password_reset_email(to_email: str, reset_link: str) -> bool:
+    if os.getenv("NESTAI_DISABLE_EMAIL", "").lower() in {"true", "1", "yes"}:
+        return False
     api_key = os.environ.get("RESEND_API_KEY")
 
     if not api_key:
@@ -28,3 +30,4 @@ def send_password_reset_email(to_email: str, reset_link: str) -> None:
             """,
         }
     )
+    return True

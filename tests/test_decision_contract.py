@@ -7,9 +7,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "legacy" / "streamlit"))
 
-from shared.constraints import ConstraintError, Constraints, parse_constraints, filter_rows, eligible
+from shared.constraints import ConstraintError, Constraints, parse_constraints, filter_rows, eligible, parse_decision_request
 from shared.decision import comparison, rank_rows, sensitivity
-from text_parser import parse_apartment_text, parse_number, extract_amenities_from_text
+from text_parser import parse_apartment_text, parse_number, extract_amenities_from_text, clean_money, parse_has_den
 from parser.home_listing import parse_home_listing_text
 from ranking import compute_match_score
 from tradeoff_assistant import TradeoffAnalyzer
@@ -177,5 +177,59 @@ def test_transit_minutes_are_not_consumed_as_rent():
     constraints = parse_constraints("under 10 min walk to transit")
     assert constraints.max_transit_walk_minutes == 10
     assert constraints.rent_lt is None
+    assert parse_constraints("1 bed not on the first floor within 10 min walk of subway/public transit").max_transit_walk_minutes == 10
     with pytest.raises(ConstraintError):
         parse_constraints("under 700 square feet")
+
+
+def test_purchase_prices_are_known_but_not_monthly_rent():
+    homes = [{"property": "A", "property_type": "HOME_FOR_SALE", "monthly_rent": None, "sale_price": 400000},
+             {"property": "B", "property_type": "HOME_FOR_SALE", "monthly_rent": None, "sale_price": 450000}]
+    ranked = rank_rows(homes)
+    assert ranked[0]["price_num"] == 400000
+    assert ranked[0]["monthly_total"] is None
+    assert "$50,000 less expensive" in ranked[0]["comparison"]["advantages"]
+    assert not any("/mo" in item for item in ranked[0]["comparison"]["advantages"])
+    assert rank_rows(homes, constraints={"rent_lte": 500000}) == []
+    mixed = comparison(homes[0], {"property": "Renter", "monthly_rent": 2000})
+    assert mixed["deltas"]["price"] is None
+
+
+def test_fractional_rent_is_not_truncated_at_filter_boundary():
+    assert clean_money("$2,499.99") == 2499.99
+    constraints = parse_constraints("under $2,500 per month")
+    assert filter_rows([{"price_num": clean_money("$2,500.01")}], constraints) == []
+
+
+def test_floorplan_letters_do_not_establish_den_facts():
+    assert parse_has_den("D1") is None
+    assert parse_has_den("One bedroom with den") is True
+    assert parse_has_den("One bedroom", "No den") is False
+
+
+def test_natural_priority_and_hard_constraints_share_one_request():
+    constraints, weights = parse_decision_request(
+        "Only show units under $2,500 per month with at least 700 square feet and prioritize price over commute"
+    )
+    assert constraints.rent_lt == 2500 and constraints.min_sqft == 700
+    assert weights["price"] == 3 and weights["commute"] == 1
+    assert set(weights) == {"price", "space", "commute", "walkability", "pets"}
+    constraints, weights = parse_decision_request("Commute is more important than budget, please")
+    assert constraints == Constraints() and weights["commute"] > weights["price"]
+
+
+@pytest.mark.parametrize("utterance", [
+    "prioritize price over price",
+    "prioritize price over commute and prioritize commute over price",
+    "prioritize price and only show safe neighborhoods",
+    "prioritize price and under 20 minutes driving",
+])
+def test_priorities_never_swallow_unknown_or_conflicting_requirements(utterance):
+    with pytest.raises(ConstraintError):
+        parse_decision_request(utterance)
+
+
+def test_other_monthly_fees_are_included_in_known_costs():
+    result = comparison({"price_num": 2000, "extra_other": 150},
+                        {"price_num": 2000, "extra_other": 30})
+    assert result["deltas"]["total_cost"] == -120

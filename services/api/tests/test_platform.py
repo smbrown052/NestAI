@@ -30,15 +30,21 @@ from app.platform import providers
 from main import app
 from shared.entitlements import limits_for
 
+APARTMENT_TEXT = (
+    "Building\n123 Main St, Arlington, VA 22201\nPricing & Floor Plans\n"
+    "A1\n$2,000\n2 Bed\n1.5 Bath\n900 Sq Ft\n"
+    "Unit\n0012\nprice\n$2,000\nsquare feet\n900\navailabilityNow"
+)
+
 
 @pytest.fixture(params=["sqlite", "postgres"])
 def api(request, monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "test")
     monkeypatch.setenv("NESTAI_PROVIDER_MODE", "mock")
     if request.param == "postgres":
-        url = os.getenv("TEST_POSTGRES_URL")
+        url = os.getenv("NESTAI_TEST_DATABASE_URL") or os.getenv("TEST_POSTGRES_URL")
         if not url:
-            pytest.skip("TEST_POSTGRES_URL not configured; no PostgreSQL claim")
+            pytest.skip("NESTAI_TEST_DATABASE_URL not configured; no PostgreSQL claim")
         admin = create_engine(url)
         schema = "test_" + uuid4().hex
         with admin.begin() as conn:
@@ -100,7 +106,7 @@ def test_approved_entitlements(api):
 
 def test_analysis_idempotency_and_monthly_quota(api):
     client, factory, headers, ids, _ = api
-    payload = {"kind": "apartment", "text": "Test Building\nUnit 0012 price $2,000 square feet 900 availability Now", "idempotency_key": "analysis"}
+    payload = {"kind": "apartment", "text": APARTMENT_TEXT, "idempotency_key": "analysis"}
     result = client.post("/analyses", headers=headers[0], json=payload)
     assert result.status_code == 200, result.text
     assert result.json()["parsed"]["units"][0]["id"] == "0012"
@@ -121,6 +127,32 @@ def test_home_parser_adapter(api):
     assert "warnings" in response.json()["parsed"]
 
 
+@pytest.mark.parametrize("kind", ["apartment", "home", "rental_home"])
+def test_invalid_analysis_does_not_consume_quota(api, kind):
+    client, factory, headers, ids, _ = api
+    response = client.post("/analyses", headers=headers[0], json={
+        "kind": kind, "text": "not a valid listing", "idempotency_key": "invalid"})
+    assert response.status_code == 422
+    with factory() as db:
+        assert not db.query(MonthlyUsage).filter_by(user_id=ids[0], metric="analyses").first()
+
+
+def test_apartment_parser_preserves_authoritative_numeric_fields(api):
+    client, _, headers, _, _ = api
+    response = client.post("/analyses", headers=headers[0], json={
+        "kind": "apartment", "idempotency_key": "floorplan", "text":
+        "Building\n123 Main St, Arlington, VA 22201\nPricing & Floor Plans\nA1\n$2,000\n2 Bed\n1.5 Bath\n900 Sq Ft\nUnit\n0012\nprice\n$2,000\nsquare feet\n900\navailabilityNow"})
+    assert response.status_code == 200, response.text
+    parsed = response.json()["parsed"]
+    assert parsed["units"][0]["id"] == "0012" and parsed["units"][0]["baths_num"] == 1.5
+    saved = client.post("/properties", headers=headers[0], json={
+        "kind": "apartment", "parsed": parsed, "idempotency_key": "save-floorplan"})
+    assert saved.status_code == 200, saved.text
+    result = client.post("/ranking", headers=headers[0], json={
+        "constraints": {"min_baths": 1.5, "min_beds": 2}}).json()
+    assert result["ranked"][0]["baths_num"] == 1.5 and result["ranked"][0]["beds_num"] == 2
+
+
 def test_upsert_quotas_unit_ids_and_account_isolation(api):
     client, factory, headers, ids, _ = api
     first = save(api, units=[{"id": "0012", "price": "$2,000", "sqft": "900", "beds": 2, "baths": 1.5}])
@@ -130,7 +162,8 @@ def test_upsert_quotas_unit_ids_and_account_isolation(api):
         "external_id": "save", "idempotency_key": "updated"})
     assert update.status_code == 200
     assert update.json()["id"] == first["id"]
-    assert update.json()["units"][0]["id"] == "PH-A"
+    updated_units = {unit["id"]: unit for unit in update.json()["units"]}
+    assert updated_units["0012"]["is_archived"] is True and updated_units["PH-A"]["id"] == "PH-A"
     assert client.post("/properties", headers=headers[0], json={
         "kind": "home", "parsed": {}, "external_id": "third", "idempotency_key": "third"}).status_code == 429
     assert client.get("/properties", headers=headers[1]).json() == {"properties": []}
@@ -149,11 +182,59 @@ def test_unit_ids_cannot_be_coerced(api):
     assert client.get("/properties", headers=headers[0]).json()["properties"] == []
 
 
+def test_partial_save_preserves_units_and_prior_facts(api):
+    client, _, headers, _, _ = api
+    prop = save(api, address="Main St", units=[{"id": "0012", "price": 2000}])
+    response = client.post("/properties", headers=headers[0], json={
+        "kind": "apartment", "external_id": prop["external_id"],
+        "parsed": {"extra_parking": 100}, "idempotency_key": "fees"})
+    assert response.status_code == 200
+    assert response.json()["parsed"]["address"] == "Main St"
+    assert response.json()["units"][0]["id"] == "0012"
+
+
 def test_profile_isolation(api):
     client, _, headers, _, _ = api
     assert client.put("/profile", headers=headers[0], json={"preferences": {"budget": 2500}}).status_code == 200
     assert client.get("/profile", headers=headers[0]).json() == {"preferences": {"budget": 2500}}
     assert client.get("/profile", headers=headers[1]).json() == {"preferences": {}}
+
+
+def test_profile_name_patch_and_natural_requests(api):
+    client, factory, headers, ids, _ = api
+    response = client.patch("/profile", headers=headers[0], json={"display_name": "  Updated Name  "})
+    assert response.status_code == 200 and response.json()["display_name"] == "Updated Name"
+    with factory() as db:
+        assert db.get(User, ids[0]).display_name == "Updated Name"
+        assert db.get(User, ids[1]).display_name is None
+    assert client.patch("/profile", headers=headers[0], json={"display_name": "X", "is_admin": True}).status_code == 422
+    response = client.post("/requests", headers=headers[0], json={"request": "under $2500 and at least 2 beds"})
+    assert response.status_code == 200, response.text
+    assert response.json()["constraints"]["rent_lt"] == 2500 and response.json()["constraints"]["min_beds"] == 2
+    assert response.json()["priorities"] == {}
+    assert client.post("/requests", headers=headers[0], json={"request": "invent unsafe neighborhood rankings"}).status_code == 422
+
+
+def test_property_fee_patch_archive_restore_and_quota_preservation(api):
+    client, _, headers, _, _ = api
+    prop = save(api, monthly_rent=2000, square_feet=1000)
+    response = client.patch("/properties/" + prop["id"], headers=headers[0], json={
+        "fees": {"parking": 100, "utilities": 50, "pet_fee": 10, "renters_insurance": 20, "other": 0}})
+    assert response.status_code == 200
+    assert response.json()["fees"]["parking"] == 100
+    ranked = client.post("/ranking", headers=headers[0], json={}).json()["ranked"]
+    assert ranked[0]["monthly_total"] == 2180
+    assert ranked[0]["fees_complete"] is True
+    assert client.patch("/properties/" + prop["id"], headers=headers[0], json={"fees": {"parking": -1}}).status_code == 422
+    assert client.patch("/properties/" + prop["id"], headers=headers[1], json={"fees": {"parking": 1}}).status_code == 404
+    response = client.post("/properties/" + prop["id"] + "/archive", headers=headers[0], json={})
+    assert response.status_code == 200 and response.json()["is_archived"] is True
+    assert client.get("/entitlements", headers=headers[0]).json()["usage"]["properties"] == 1
+    assert client.post("/ranking", headers=headers[0], json={}).json()["ranked"] == []
+    assert client.post("/properties/" + prop["id"] + "/restore", headers=headers[1], json={}).status_code == 404
+    response = client.post("/properties/" + prop["id"] + "/restore", headers=headers[0], json={})
+    assert response.status_code == 200 and response.json()["is_archived"] is False
+    assert client.post("/ranking", headers=headers[0], json={}).json()["ranked"][0]["monthly_total"] == 2180
 
 
 @pytest.mark.parametrize("path", ["advisor", "enrichment", "commute", "negotiation", "analytics", "reports"])
@@ -200,7 +281,7 @@ def test_month_rollover_does_not_reset_legacy_credits(api):
         db.add(MonthlyUsage(user_id=ids[0], period="2000-01", metric="analyses", count=999))
         db.commit()
     response = client.post("/analyses", headers=headers[0], json={
-        "kind": "apartment", "text": "Building", "idempotency_key": "new-month"})
+        "kind": "apartment", "text": APARTMENT_TEXT, "idempotency_key": "new-month"})
     assert response.status_code == 200
     assert client.get("/entitlements", headers=headers[0]).json()["usage"]["analyses"] == 1
     with factory() as db:
@@ -219,6 +300,7 @@ def test_live_commute_and_enrichment_mocked_transport_persist_verified_fields(ap
         result = client.post("/commute", headers=headers[0], json=payload)
     assert result.status_code == 200 and result.json()["mock"] is False
     assert client.get("/properties", headers=headers[0]).json()["properties"][0]["parsed"]["commute_transit_min"] == 10
+    assert client.post("/ranking", headers=headers[0], json={}).json()["ranked"][0]["commute_minutes"] == 10
     with patch.object(providers, "request_json", return_value={"places": [{"id": "test-place"}]}):
         result = client.post("/enrichment", headers=headers[0], json={**payload, "idempotency_key": "places"})
     assert result.status_code == 200
@@ -269,13 +351,48 @@ def test_csv_numeric_columns_and_formula_injection(api):
     assert client.post("/exports", headers=headers[1], json={"property_ids": [prop["id"]]}).status_code == 403
 
 
+def test_exports_share_ui_filtered_ranked_set(api):
+    paid(api)
+    client, _, headers, _, _ = api
+    prop = save(api, units=[
+        {"id": "0012", "price": 2000, "sqft": 900, "beds_num": 2, "baths_num": 1.5},
+        {"id": "0013", "price": 3500, "sqft": 1000, "beds_num": 2, "baths_num": 2},
+    ])
+    query = {"property_ids": [prop["id"]], "constraints": {"rent_lte": 2500}, "priorities": {"price": 1}}
+    ui = client.post("/ranking", headers=headers[0], json=query).json()["ranked"]
+    export = client.post("/exports", headers=headers[0], json={**query, "scope": "units"})
+    exported = list(csv.DictReader(io.StringIO(export.text)))
+    assert [row["unit_id"] for row in exported] == [row["unit_id"] for row in ui] == ["0012"]
+    json_export = client.post("/exports", headers=headers[0], json={**query, "scope": "units", "format": "json"}).json()
+    assert json_export == ui
+    assert all("units" not in row for row in json_export)
+
+
+def test_premium_and_plus_reports_use_consistent_snapshot_levels(api):
+    paid(api)
+    client, _, headers, _, _ = api
+    prop = save(api, monthly_rent=2000, square_feet=1000, bedrooms=2)
+    payload = {"property_ids": [prop["id"]], "idempotency_key": "premium-report"}
+    premium = client.post("/reports", headers=headers[0], json=payload).json()
+    premium_snapshot = json.loads(premium["content"])
+    assert premium_snapshot["report_level"] == "premium" and "analytics" not in premium_snapshot
+    paid(api, "premium_plus")
+    plus = client.post("/reports", headers=headers[0], json={**payload, "idempotency_key": "plus-report"}).json()
+    snapshot = json.loads(plus["content"])
+    assert snapshot["report_level"] == "plus" and snapshot["analytics"]["sensitivity"]
+    assert snapshot["analytics"]["baseline"] == snapshot["comparison"]
+    assert "components" in snapshot["comparison"]["ranked"][0]
+    assert "monthly_total" in snapshot["comparison"]["ranked"][0]
+
+
 def test_ranking_reports_download_and_plus_sensitivity(api):
     paid(api, "premium_plus")
     client, _, headers, _, _ = api
     prop = save(api, address="Main St", monthly_rent=2000, square_feet=1000, bedrooms=2)
-    payload = {"property_ids": [prop["id"]], "idempotency_key": "report", "priorities": {"budget": 1}}
-    ranking = client.post("/ranking", headers=headers[0], json={"priorities": {"budget": 1}}).json()
-    assert ranking["ranked"][0]["lifestyle_score"] == 100
+    payload = {"property_ids": [prop["id"]], "idempotency_key": "report", "priorities": {"price": 1}}
+    ranking = client.post("/ranking", headers=headers[0], json={"priorities": {"price": 1}}).json()
+    assert ranking["ranked"][0]["score"] == 50
+    assert ranking["ranked"][0]["components"]["price"]["known"] is True
     report = client.post("/reports", headers=headers[0], json=payload)
     assert report.status_code == 200, report.text
     assert client.post("/reports", headers=headers[0], json=payload).json() == report.json()
@@ -283,7 +400,25 @@ def test_ranking_reports_download_and_plus_sensitivity(api):
     assert download.status_code == 200 and download.text == report.json()["content"]
     assert client.get(report.json()["download_url"], headers=headers[1]).status_code == 403
     response = client.post("/analytics", headers=headers[0], json={**payload, "idempotency_key": "sensitivity"})
-    assert response.status_code == 200 and len(response.json()["sensitivity"]) == 2
+    assert response.status_code == 200 and len(response.json()["sensitivity"]) == 1
+
+
+def test_shared_constraints_fractional_baths_and_transit_provenance(api):
+    client, _, headers, _, _ = api
+    save(api, units=[
+        {"id": "0012", "unit_price": "$2,000", "unit_sqft": "900", "beds": 2, "baths": 1.5,
+         "metro_min": 8, "metro_travel_mode": "walk", "pets_policy": "Pets allowed"},
+        {"id": "0013", "unit_price": "$2,000", "unit_sqft": "900", "beds": 2, "baths": 1,
+         "metro_min": 5, "metro_travel_mode": "drive", "pets_policy": "unknown"},
+    ])
+    response = client.post("/ranking", headers=headers[0], json={
+        "constraints": {"rent_lte": 2000, "min_baths": 1.5, "max_transit_walk_minutes": 10,
+                        "pet_friendly": True}, "priorities": {"price": 1, "space": 1}})
+    assert response.status_code == 200, response.text
+    ranked = response.json()["ranked"]
+    assert len(ranked) == 1 and ranked[0]["unit"] == "0012" and ranked[0]["baths_num"] == 1.5
+    assert response.json()["method"] == "shared_decision"
+    assert client.post("/ranking", headers=headers[0], json={"constraints": {"unsupported": 1}}).status_code == 422
 
 
 def test_legacy_credits_and_referrals_unchanged(api):
@@ -293,7 +428,7 @@ def test_legacy_credits_and_referrals_unchanged(api):
         db.add(CreditTransaction(user_id=ids[0], transaction_type="grant", delta=87, balance_after=87, reason="legacy grant"))
         db.add(Referral(referrer_user_id=ids[0], referred_email="legacy@example.com", status="converted", reward_cents=500))
         db.commit()
-    client.post("/analyses", headers=headers[0], json={"kind": "apartment", "text": "Building", "idempotency_key": "credit"})
+    client.post("/analyses", headers=headers[0], json={"kind": "apartment", "text": APARTMENT_TEXT, "idempotency_key": "credit"})
     with factory() as db:
         assert db.query(CreditBalance).one().credits_remaining == 87
         assert db.query(CreditTransaction).one().delta == 87
@@ -431,7 +566,7 @@ def test_postgres_concurrent_quota_and_idempotency(api, monkeypatch):
         pytest.skip("Row-lock concurrency validated only on PostgreSQL")
     monkeypatch.setenv("NESTAI_QUOTA_FREE_ANALYSES", "1")
     def run(key):
-        return client.post("/analyses", headers=headers[0], json={"kind": "apartment", "text": "Building", "idempotency_key": key}).status_code
+        return client.post("/analyses", headers=headers[0], json={"kind": "apartment", "text": APARTMENT_TEXT, "idempotency_key": key}).status_code
     with ThreadPoolExecutor(max_workers=2) as executor:
         results = list(executor.map(run, ["one", "two"]))
     assert sorted(results) == [200, 429]
@@ -443,9 +578,9 @@ def test_postgres_concurrent_quota_and_idempotency(api, monkeypatch):
 
 
 def test_additive_migration_preserves_unowned_and_credits(monkeypatch):
-    url = os.getenv("TEST_POSTGRES_URL")
+    url = os.getenv("NESTAI_TEST_DATABASE_URL") or os.getenv("TEST_POSTGRES_URL")
     if not url:
-        pytest.skip("TEST_POSTGRES_URL not configured")
+        pytest.skip("NESTAI_TEST_DATABASE_URL not configured")
     from alembic import command
     from alembic.config import Config
     admin = create_engine(url)

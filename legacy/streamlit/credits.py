@@ -1,16 +1,7 @@
-"""
-credits.py
-NestAI V2 credit and tier system.
+"""Compatibility displays for shared monthly quotas and account-backed usage.
 
-Tiers
------
-free      — 5 apartment analyses (building enrichments), no AI/commute/walk score
-premium   — 100 analyses, all features
-extra     — add-on pack of 50 analyses for $9.99
-
-An "analysis" is a building-level enrichment (Level 2 enrichment).
-Parsing and Level 1 comparison are always free.
-AI chat / Decision Reports do NOT consume credits once the building is already enriched.
+Legacy balances remain independent and are never converted or granted here.
+Authenticated analyses and provider calls are charged only by API operations.
 """
 
 from __future__ import annotations
@@ -18,57 +9,23 @@ from __future__ import annotations
 import os
 
 import streamlit as st
+from feature_access import get_plan_capabilities
 
 # ── Tier definitions ──────────────────────────────────────────────────────────
 
-TIERS: dict[str, dict] = {
-    "free": {
-        "label": "Free",
-        "analyses": 5,
-        "ai_chat": False,
-        "walk_score": False,
-        "commute": False,
-        "neighborhood": False,
-        "decision_reports": False,
-        "exports": False,
-        "negotiation": False,
-    },
-    "beta": {
-        "label": "Beta",
-        "analyses": 100,
-        "ai_chat": True,
-        "walk_score": True,
-        "commute": True,
-        "neighborhood": True,
-        "decision_reports": True,
-        "exports": True,
-        "negotiation": True,
-    },
-    "premium": {
-        "label": "Premium",
-        "analyses": 100,
-        "ai_chat": True,
-        "walk_score": True,
-        "commute": True,
-        "neighborhood": True,
-        "decision_reports": True,
-        "exports": True,
-        "negotiation": True,
-    },
-    "premium_plus": {
-        "label": "Premium Plus",
-        "analyses": 500,
-        "ai_chat": True,
-        "walk_score": True,
-        "commute": True,
-        "neighborhood": True,
-        "decision_reports": True,
-        "exports": True,
-        "negotiation": True,
-        "priority_support": True,
-        "advanced_reports": True,
-    },
+_FEATURES = {
+    "ai_chat": "can_use_ai_chat", "walk_score": "can_use_walk_score_api",
+    "commute": "can_use_commute_analysis", "neighborhood": "can_use_neighborhood_enrichment",
+    "decision_reports": "can_generate_ai_reports", "exports": "can_export",
+    "negotiation": "can_use_ai_negotiation",
 }
+
+TIERS = {}
+for _tier in ("free", "beta", "premium", "premium_plus"):
+    _caps = get_plan_capabilities(_tier.upper())
+    TIERS[_tier] = {"label": _tier.replace("_", " ").title(),
+                    "analyses": _caps["monthly_analyses_limit"],
+                    **{feature: _caps[capability] for feature, capability in _FEATURES.items()}}
 
 _EXTRA_PACK_SIZE = 50
 
@@ -198,7 +155,7 @@ def add_extra_credits(n: int = _EXTRA_PACK_SIZE) -> None:
 
 
 def upgrade_to_premium() -> None:
-    """Simulate upgrading to Premium (called after payment confirmation)."""
+    """Reject local plan activation; verified billing owns subscriptions."""
     _init()
     raise RuntimeError("Subscriptions can only be activated by verified billing.")
 

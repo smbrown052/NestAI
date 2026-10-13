@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import secrets
+import shutil
 import socket
 import subprocess
 import sys
@@ -26,6 +27,7 @@ def pytest_runtest_makereport(item, call):
     report = outcome.get_result()
     if report.when == "call" and report.failed and "page" in item.funcargs:
         report.sections.append(("Streamlit browser text", item.funcargs["page"].locator("body").inner_text()[:6000]))
+        report.sections.append(("Browser failed requests", "\n".join(getattr(item, "browser_failures", []))))
 
 
 def _port():
@@ -148,17 +150,35 @@ def account(runtime):
 def browser():
     from playwright.sync_api import sync_playwright
 
-    with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=True)
-        yield browser
-        browser.close()
+    scratch = Path(__file__).parent / (".playwright-" + uuid4().hex)
+    scratch.mkdir()
+    previous_temp = os.environ.get("TMPDIR")
+    os.environ["TMPDIR"] = str(scratch)
+    try:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True, downloads_path=str(scratch))
+            yield browser
+            browser.close()
+    finally:
+        if previous_temp is None:
+            os.environ.pop("TMPDIR", None)
+        else:
+            os.environ["TMPDIR"] = previous_temp
+        shutil.rmtree(scratch)
 
 
 @pytest.fixture(params=[{"width": 1440, "height": 1000}, {"width": 390, "height": 844}],
                 ids=["desktop", "mobile"])
 def page(browser, request):
+    from playwright.sync_api import expect
+
+    expect.set_options(timeout=15000)
     context = browser.new_context(viewport=request.param, accept_downloads=True)
     page = context.new_page()
+    request.node.browser_failures = []
+    page.on("requestfailed", lambda failed: request.node.browser_failures.append(
+        failed.url + " " + str(failed.failure)
+    ))
     page.set_default_timeout(30000)
     yield page
     context.close()

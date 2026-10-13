@@ -414,13 +414,10 @@ def render_decision_brief(top3: pd.DataFrame, ranked_df: pd.DataFrame, weights: 
         why_wins_summary = " · ".join(why_wins_lines[:2]) if why_wins_lines else " · ".join(best_reasons)
 
         # Key compromise: what the winner gives up
-        diffs = tradeoff.get_difference_metrics(tradeoff.ranked_df.iloc[0], tradeoff.ranked_df.iloc[1])
-        compromise_parts = []
-        if diffs["price_diff"] > 0:
-            compromise_parts.append(f"${diffs['price_diff']:,.0f}/mo more expensive")
-        for item in diffs.get("lost_amenities", [])[:2]:
-            compromise_parts.append(f"no {item}")
-        main_compromise = "; ".join(compromise_parts) if compromise_parts else "Minor tradeoffs only"
+        # Shared comparisons describe B relative to A, so put the winner second.
+        winner_metrics = tradeoff.get_difference_metrics(tradeoff.ranked_df.iloc[1], tradeoff.ranked_df.iloc[0])
+        winner_comparison = winner_metrics.get("comparison") or {}
+        main_compromise = winner_comparison.get("compromise_summary") or "Comparison facts are unavailable."
 
         alternative_label = f"{alternative.get('property', 'Unknown')} · Unit {alternative.get('unit', 'N/A')}"
     elif alternative is not None:
@@ -626,7 +623,8 @@ with st.sidebar:
 
         st.caption(user_preview.get("display_name") or user_preview.get("email"))
         st.caption(f"Tier: {plan_display_name(plan_slug)}")
-        st.caption(f"Saved units: {len(st.session_state.comparison_df)}")
+        saved_properties = st.session_state.get("account_properties", [])
+        st.caption(f"Saved properties: {sum(not item.get('is_archived', False) for item in saved_properties)}")
 
         if plan_slug == "free":
             st.info("Want AI to make your search even easier? Upgrade to Premium.")
@@ -859,25 +857,24 @@ if active_screen == "Create Account":
     if selected_account_type == "beta":
         st.info("Beta access is invite-only. A valid invite code is required.")
     elif selected_account_type == "premium":
-        st.info("Premium starts with a free trial and requires explicit checkout consent.")
+        st.info("Premium requires secure checkout. Eligible accounts may choose a trial.")
     elif selected_account_type == "premium_plus":
-        st.info("Premium Plus starts with a free trial and requires explicit checkout consent.")
+        st.info("Premium Plus requires secure checkout. Eligible accounts may choose a trial.")
 
     with st.form("register_form"):
         register_name = st.text_input("Display name", key="register_name")
         register_email = st.text_input("Email", key="register_email")
         register_password = st.text_input("Password", type="password", key="register_password")
-        referral_code = None
         beta_invite_code = None
         trial_consent = False
         payment_method_confirmed = False
         if selected_account_type == "beta":
             beta_invite_code = st.text_input("Beta invite code", type="password", key="beta_invite_code")
         if selected_account_type in {"premium", "premium_plus"}:
-            st.caption("Free trial ends in 7 days. Then monthly billing starts unless you cancel before the end date.")
+            st.caption("Registration does not activate paid features or start a trial. Review trial eligibility at checkout.")
             st.caption("Review the actual provider terms and price at secure checkout.")
             trial_consent = st.checkbox(
-                "I explicitly agree to automatic conversion after trial ends using my payment method on file.",
+                "I consent to recurring billing after an eligible trial, with payment details supplied at secure checkout.",
                 key="trial_consent_checkbox",
             )
             payment_method_confirmed = st.checkbox(
@@ -1368,8 +1365,8 @@ if st.session_state.last_result:
     walk_score = (
         result.get("units", [{}])[0].get("walk_score") if result.get("units") else None
     )
-    safety_score = (
-        result.get("units", [{}])[0].get("safety_score") if result.get("units") else None
+    renter_rating = (
+        result.get("units", [{}])[0].get("renter_rating") if result.get("units") else None
     )
     m5.metric(
         "Walk Score",
@@ -1378,8 +1375,8 @@ if st.session_state.last_result:
 
     if result.get("address"):
         st.caption(result.get("address"))
-    if safety_score is not None:
-        st.caption(f"Safety Score: {safety_score} / 100 (derived from renter rating)")
+    if renter_rating is not None:
+        st.caption(f"Renter rating: {renter_rating} / 5 (not a safety assessment)")
 
     if result.get("nearby_places"):
         with st.expander("View nearby building-level places"):
@@ -1479,7 +1476,7 @@ if auth.is_authenticated() and not st.session_state.comparison_df.empty:
 
     # Keep fixed internal weights for LifestyleScorer (sliders replaced by dropdowns)
     commute_priority = 3
-    safety_priority = 3
+    renter_rating_priority = 0
     nightlife_priority = 2
     budget_priority = 4
     gym_priority = 2
@@ -1674,7 +1671,7 @@ if auth.is_authenticated() and not st.session_state.comparison_df.empty:
 
     weights = get_priority_weights_from_sliders(
         commute_priority,
-        safety_priority,
+        renter_rating_priority,
         nightlife_priority,
         budget_priority,
         gym_priority,
@@ -1709,11 +1706,6 @@ if auth.is_authenticated() and not st.session_state.comparison_df.empty:
         else:
             ranked_df["walk_score_score"] = 0
 
-        if "safety_score" in ranked_df.columns:
-            ranked_df["safety_score_rank"] = ranked_df["safety_score"].fillna(0).rank(ascending=True)
-        else:
-            ranked_df["safety_score_rank"] = 0
-
         # Boost score when commute data is available
         if "commute_transit_min" in ranked_df.columns:
             ranked_df["commute_score"] = ranked_df["commute_transit_min"].fillna(99).rank(ascending=False)
@@ -1731,7 +1723,6 @@ if auth.is_authenticated() and not st.session_state.comparison_df.empty:
             + ranked_df["commute_score"] * commute_weight
             + ranked_df["floor_score"] * 0.10
             + ranked_df["walk_score_score"] * 0.10
-            + ranked_df["safety_score_rank"] * 0.05
         )
 
         # ── Compute unified NestAI Score (0–100) ───────────────────────────
@@ -1803,7 +1794,6 @@ if auth.is_authenticated() and not st.session_state.comparison_df.empty:
                 )
                 component_scores = {
                     "commute": row.get("lifestyle_commute_score", 0),
-                    "safety": row.get("lifestyle_safety_score", 0),
                     "nightlife": row.get("lifestyle_nightlife_score", 0),
                     "budget": row.get("lifestyle_budget_score", 0),
                     "gym": row.get("lifestyle_gym_score", 0),
@@ -1957,7 +1947,7 @@ if auth.is_authenticated() and not st.session_state.comparison_df.empty:
             "commute_driving_min", "commute_transit_min",
             "nearest_hospital", "hospital_travel_mode", "hospital_min",
             "official_walk_score", "transit_score", "bike_score",
-            "walk_score", "safety_score",
+            "walk_score", "renter_rating",
             "nearby_groceries", "restaurants_count", "nearby_gyms", "nearby_parks",
             "lifestyle_summary",
         ]
@@ -1969,7 +1959,6 @@ if auth.is_authenticated() and not st.session_state.comparison_df.empty:
             "nestai_score",
             "lifestyle_score",
             "lifestyle_commute_score",
-            "lifestyle_safety_score",
             "lifestyle_nightlife_score",
             "lifestyle_budget_score",
             "lifestyle_gym_score",
