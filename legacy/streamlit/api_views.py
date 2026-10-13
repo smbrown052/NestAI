@@ -85,9 +85,17 @@ def clear_comparison_downloads():
 def reset_comparison_filters():
     st.session_state["account_filters"] = {}
     clear_comparison_downloads()
-    for key in list(st.session_state):
-        if key.startswith("account_filter_"):
-            st.session_state.pop(key, None)
+    # Deleting widget keys lets Streamlit rehydrate stale values from the browser.
+    st.session_state.update({
+        "account_filter_budget": 0,
+        "account_filter_beds": 0,
+        "account_filter_baths": 0.0,
+        "account_filter_sqft": 0,
+        "account_filter_request": "",
+        "account_filter_manual_priorities": False,
+        **{f"account_filter_priority_{priority}": 1.0
+           for priority in ["price", "space", "commute", "walkability", "pets"]},
+    })
 
 
 def display_frame(frame):

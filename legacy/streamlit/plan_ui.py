@@ -377,6 +377,12 @@ def _render_plan_card(
 ) -> None:
     """Render a single plan card."""
     plan_id = card["id"]
+    user = st.session_state.get("auth_user") or {}
+    existing_subscription = bool(
+        st.session_state.get("auth_token")
+        and user.get("active_plan") in {"premium", "premium_plus"}
+        and user.get("subscription_status") in {"active", "trialing"}
+    )
     visual_plan = PLAN_PREMIUM_PLUS if plan_id == PLAN_OWNER_TEST else plan_id
     classes = ["nestai-tier-card", tier_class(visual_plan)]
     if card.get("highlight") or highlighted:
@@ -408,12 +414,12 @@ def _render_plan_card(
         ),
         unsafe_allow_html=True,
     )
-    if plan_id == PLAN_PREMIUM:
+    if plan_id == PLAN_PREMIUM and not existing_subscription:
         st.success(
             "🎉 7-day free trial • Then $12/month • Cancel anytime before the trial ends."
         )
 
-    elif plan_id == PLAN_PREMIUM_PLUS:
+    elif plan_id == PLAN_PREMIUM_PLUS and not existing_subscription:
         st.success(
             "🎉 7-day free trial • Then $25/month • Cancel anytime before the trial ends."
         )
@@ -465,28 +471,38 @@ def _render_plan_card(
             st.session_state.main_nav = "Create Account"
             st.rerun()
     elif plan_id in {PLAN_PREMIUM, PLAN_PREMIUM_PLUS}:
-        consent = st.checkbox("I consent to trial and recurring billing terms shown at checkout.", key=f"consent_{plan_id}")
-        payment = st.checkbox("I will supply a payment method at secure checkout.", key=f"payment_{plan_id}")
-        if st.button("Continue to secure checkout", use_container_width=True, key=f"plan_cta_{plan_id}", type="primary"):
+        consent = payment = False
+        if existing_subscription:
+            st.caption("Review the plan change and any prorated charges in your secure billing portal. Access changes only after provider confirmation.")
+        else:
+            consent = st.checkbox("I consent to trial and recurring billing terms shown at checkout.", key=f"consent_{plan_id}")
+            payment = st.checkbox("I will supply a payment method at secure checkout.", key=f"payment_{plan_id}")
+        label = "Change subscription securely" if existing_subscription else "Continue to secure checkout"
+        if st.button(label, use_container_width=True, key=f"plan_cta_{plan_id}", type="primary"):
             if not st.session_state.get("auth_token"):
                 st.session_state.signup_account_type = plan_id.lower()
                 st.session_state.main_nav = "Create Account"
                 st.rerun()
-            elif not consent or not payment:
+            elif not existing_subscription and (not consent or not payment):
                 st.warning("Please review and accept the billing terms before continuing.")
             else:
                 key_name = f"checkout_intent_{plan_id}"
-                intent_key = st.session_state.setdefault(key_name, str(uuid.uuid4()))
-                response = api_client.create_checkout_session(plan_id.lower(), trial_consent=consent, payment_method_confirmed=payment, idempotency_key=intent_key)
+                if existing_subscription:
+                    response = api_client.request("POST", "/billing/portal", json={"plan": plan_id.lower()})
+                else:
+                    intent_key = st.session_state.setdefault(key_name, str(uuid.uuid4()))
+                    response = api_client.create_checkout_session(plan_id.lower(), trial_consent=consent, payment_method_confirmed=payment, idempotency_key=intent_key)
                 if response.status_code == 200:
                     payload = response.json()
                     st.session_state.pop(key_name, None)
-                    st.session_state[f"checkout_url_{plan_id}"] = payload.get("checkout_url")
+                    st.session_state[f"checkout_url_{plan_id}"] = payload.get("portal_url") if existing_subscription else payload.get("checkout_url")
                     provider_price = payload.get("price", {})
                     if provider_price.get("amount_cents") is not None:
                         st.caption(f"Configured checkout price: {provider_price['amount_cents'] / 100:g} {provider_price.get('currency', '').upper()}. Review the provider's terms; advertised prices above are unchanged.")
                 else:
-                    st.error("Checkout is unavailable. Your current access and balance are unchanged.")
+                    st.session_state.pop(f"checkout_url_{plan_id}", None)
+                    action = "Subscription management" if existing_subscription else "Checkout"
+                    st.error(f"{action} is unavailable. Your current access and balance are unchanged.")
         if st.session_state.get(f"checkout_url_{plan_id}"):
             st.link_button("Continue to Stripe →", st.session_state[f"checkout_url_{plan_id}"], use_container_width=True)
 

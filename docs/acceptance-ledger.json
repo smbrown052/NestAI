@@ -1,7 +1,7 @@
 {
   "baseline_revision": "c7a197f0e16e697a150b7286fd29afb1d56c181d",
   "deployment_verified": false,
-  "latest_checkpoint_revision": "095bb9a24cad7b022f467098a6842f1daece5670",
+  "latest_checkpoint_revision": "510124e40a87f09027ec131f5fbb6753501a71c3",
   "resume_checkpoint": {
     "revision": "541ac7a5096f9523639b658436efd4efcc1081cb",
     "working_tree_at_start": "Clean",
@@ -34,7 +34,7 @@
     },
     "priority_and_artifact_integration": {
       "status": "Backend regressions passed; final browser validation pending",
-      "evidence": "/requests now returns shared parsed priorities; listings exports preserve ranked apartment units and houses including null unit IDs. Report raw snapshots exclude nonmatching units. Backend owner reports 130 full-suite passes and 16 subsequent affected export tests passed. Stable account-scoped widget keys fix consecutive natural-language/form edits; final mixed-listing browser evidence still pending.",
+      "evidence": "/requests now returns shared parsed priorities; listings exports preserve ranked apartment units and houses including null unit IDs. Report raw snapshots exclude nonmatching units and preserve ranked property/unit order. Backend owner reports 130 full-suite passes, 16 affected export tests and 20 subsequent report/export/advice tests passed including all 42 Avalon/Cortland units. Stable account-scoped widget keys fix consecutive natural-language/form edits; final mixed-listing browser evidence still pending.",
       "browser_infrastructure": "Paid CSV/report desktop journey passed. A mobile rerun failed before inputs with Chromium net::ERR_NETWORK_CHANGED on Streamlit JS chunks; preserve this as unavailable browser evidence, not a product pass."
     }
   },
@@ -44,25 +44,25 @@
   },
   "issues": [
     {"id": "profile", "cause": "Required API client omitted from pricing renderer caller", "status": "Pending", "regression": "Real account tab rendering under all tiers"},
-    {"id": "startup", "cause": "Billing reads mandatory optional credentials at module import", "status": "Pending", "regression": "Import and authenticate without Stripe configuration"},
-    {"id": "persistence", "cause": "Apartments are session DataFrames; houses have random-session SQLite ownership", "status": "Pending", "regression": "PostgreSQL upsert, fresh session, restart, rollback and cross-account tests"},
+    {"id": "startup", "cause": "Billing reads mandatory optional credentials at module import", "status": "Passed locally; deployment Blocked", "regression": "API suite and migrated FastAPI/Streamlit runtime startup without Stripe/provider credentials"},
+    {"id": "persistence", "cause": "Apartments are session DataFrames; houses have random-session SQLite ownership", "status": "Passed locally; deployment and historical recovery Blocked", "regression": "PostgreSQL upsert, fresh session, rollback and cross-account tests; desktop/mobile re-login restored 42 visible saved units"},
     {"id": "legacy-recovery", "cause": "No verified account mapping exists for house session identifiers", "status": "Blocked", "regression": "Preserve original records; no automatic ownership claims"},
-    {"id": "quota", "cause": "Competing session-only limits; enrichment rather than parsing charged", "status": "Pending", "regression": "UTC boundaries, concurrent quota enforcement, mixed-property counts"},
+    {"id": "quota", "cause": "Competing session-only limits; enrichment rather than parsing charged", "status": "Passed locally; deployment Blocked", "regression": "UTC boundaries, PostgreSQL concurrent quota/idempotency and mixed-property active save/restore caps"},
     {"id": "comparison", "cause": "Alternative-minus-winner delta interpreted in the opposite direction", "status": "Passed", "regression": "tests/test_decision_contract.py: real fixtures $37, $20 and $145/25 sq ft"},
     {"id": "constraints", "cause": "Active text filter ignored rent and area", "status": "Passed", "regression": "tests/test_decision_contract.py: strict numeric boundaries, invalid output, unknown facts, hard pets"},
-    {"id": "providers", "cause": "Frontend credentials and no durable backend access/usage service", "status": "Pending", "regression": "Mock failure cases separately from actual configured calls"},
-    {"id": "billing", "cause": "Mock signup billing and registered Stripe checkout routes disagree", "status": "Pending", "regression": "Sandbox signature/lifecycle/idempotency and frontend endpoint alignment"},
-    {"id": "plus", "cause": "Decorative explanatory panel instead of additional analytics", "status": "Pending", "regression": "Backend gates, sensitivity, chart points and detailed report download"},
-    {"id": "exports", "cause": "CSV public download unverified; native table download can bypass paid gate", "status": "Pending", "regression": "Actual browser downloads and sanitized content"},
-    {"id": "feedback", "cause": "Frontend SQLite feedback disconnected from PostgreSQL admin view", "status": "Pending", "regression": "Persistence, validation and suppressed external notifications"},
+    {"id": "providers", "cause": "Frontend credentials and no durable backend access/usage service", "status": "Mocked protocol tests passed; actual providers Blocked", "regression": "Mock failure cases separately from opt-in actual authenticated advisor, enrichment, commute and negotiation calls"},
+    {"id": "billing", "cause": "Mock signup billing and registered Stripe checkout routes disagree", "status": "Local protocol regressions passed; real Stripe sandbox Blocked", "regression": "Signature/lifecycle/idempotency, configured-price portal changes and frontend endpoint alignment"},
+    {"id": "plus", "cause": "Decorative explanatory panel instead of additional analytics", "status": "API regressions passed; final browser pending; deployed Blocked", "regression": "Backend gates, sensitivity, chart points and detailed report download"},
+    {"id": "exports", "cause": "CSV public download unverified; native table download can bypass paid gate", "status": "API regressions and desktop download passed; final mixed-listing browser pending; deployed Blocked", "regression": "Actual browser downloads, ranked mixed-property identities/order and sanitized content"},
+    {"id": "feedback", "cause": "Frontend SQLite feedback disconnected from PostgreSQL admin view", "status": "Local API integration passed; deployment Blocked", "regression": "Persistence, validation and suppressed external notifications"},
     {"id": "parsed-units", "classification": "Bug", "cause": "Parsed/saved session states diverged; units confused with properties", "fix": "Active parser plus separate property and unit identities", "status": "Parser passed; UI pending", "regression": "tests/test_decision_contract.py; tests/browser/test_journeys.py::test_apartment_save_dedup_persists_and_free_has_no_native_downloads"},
-    {"id": "preferences", "classification": "Persistence bug; scoring decision", "cause": "Ephemeral preferences; soft weighting mistaken for exclusion", "fix": "Account profile persistence; explicit hard pet filter separate from soft scoring", "status": "Pending", "regression": "services/api/tests/test_platform.py::test_profile_isolation; tests/browser/test_api_integration.py::test_numeric_and_natural_constraints_share_results_hard_pets_and_soft_mismatch"},
+    {"id": "preferences", "classification": "Persistence bug; scoring decision", "cause": "Ephemeral preferences; soft weighting mistaken for exclusion", "fix": "Account profile persistence; explicit hard pet filter separate from soft scoring", "status": "Local API integration and reload restoration passed; deployed Blocked", "regression": "services/api/tests/test_platform.py::test_profile_isolation; tests/browser/test_api_integration.py::test_numeric_and_natural_constraints_share_results_hard_pets_and_soft_mismatch"},
     {"id": "renter-rating", "classification": "Misleading metric bug", "cause": "Reviews labeled as safety", "fix": "Accurate renter-rating metric; remove unsupported safety inference", "status": "Passed", "regression": "tests/test_decision_contract.py"},
     {"id": "paid-features", "classification": "Incomplete features", "cause": "No authoritative end-to-end advisor, commute, negotiation or priority workflow", "fix": "Grounded backend providers with stored provenance, separate quotas and user-reviewed drafts", "status": "Live blocked", "regression": "services/api/tests/test_platform.py::test_paid_services_mock_and_shared_ai_quota; test_live_commute_and_enrichment_mocked_transport_persist_verified_fields; tests/live/test_providers.py"},
     {"id": "navigation", "classification": "UX bug", "cause": "Mixed old/new account components and misleading Home routing", "fix": "Home overview, unified account sections, accurate bed/bath labels", "status": "Pending", "regression": "tests/browser/test_journeys.py::test_signup_and_all_navigation"},
     {"id": "referrals", "classification": "Approved scope removal", "cause": "Unsupported MVP promises in UI", "fix": "Remove navigation/support promises without deleting records", "status": "Pending", "regression": "services/api/tests/test_platform.py::test_legacy_credits_and_referrals_unchanged; browser navigation"},
-    {"id": "balances-grants", "classification": "Preservation safeguard", "cause": "Multiple legacy entitlement/credit models", "fix": "Retain monetary balances and trusted grants separately; no fabricated ownership", "status": "Pending", "regression": "services/api/tests/test_platform.py::test_month_rollover_does_not_reset_legacy_credits; test_additive_migration_preserves_unowned_and_credits"},
-    {"id": "free-journeys", "classification": "Test correction", "cause": "Shared fixtures exhaust Free limits across independent journeys", "fix": "Separate apartment and house accounts plus explicit mixed-property boundary test", "status": "Pending", "regression": "tests/browser/test_journeys.py::test_free_house_account_and_shared_limit; test_free_mixed_account_uses_one_shared_property_allowance"},
+    {"id": "balances-grants", "classification": "Preservation safeguard", "cause": "Multiple legacy entitlement/credit models", "fix": "Retain monetary balances and trusted grants separately; no fabricated ownership", "status": "Local API regressions passed; hosted historical data access Blocked", "regression": "services/api/tests/test_platform.py::test_month_rollover_does_not_reset_legacy_credits; test_additive_migration_preserves_unowned_and_credits"},
+    {"id": "free-journeys", "classification": "Test correction", "cause": "Shared fixtures exhaust Free limits across independent journeys", "fix": "Separate apartment and house accounts plus explicit mixed-property boundary test", "status": "Implemented; final browser pending; deployed Blocked", "regression": "tests/browser/test_journeys.py::test_free_house_account_and_shared_limit; test_free_mixed_account_uses_one_shared_property_allowance"},
     {"id": "purchase-prices", "classification": "Integration bug", "cause": "Null monthly rent masked known sale price; purchase amounts mislabeled monthly", "fix": "Explicit rent/purchase semantics, comparable peer groups and rent-only constraints", "status": "Passed", "regression": "tests/test_decision_contract.py"}
   ],
   "product_decisions": {
@@ -83,12 +83,14 @@
     {"command": "Backend-owner full API suite on isolated PostgreSQL", "passed": 130, "failed": 0, "skipped": 3, "kind": "Resume backend suite; SQLite skips intentional and PostgreSQL concurrency variants passed. Subsequent listings export/report-order edits require final regression."},
     {"command": "Backend-owner affected listings export tests", "passed": 16, "failed": 0, "kind": "SQLite/PostgreSQL mixed apartment/house listings export identity and ordering"},
     {"command": "Frontend-owner auth/UI suite", "passed": 36, "failed": 0, "kind": "Hydration cleanup, priority precedence, numeric intersections and stable consecutive filter edits"},
-    {"command": "Parent password compatibility and auth-flow tests", "passed": 12, "failed": 0, "kind": "Native bcrypt compatibility with historical UTF-8 truncation; new Argon2 unchanged"}
+    {"command": "Parent password compatibility and auth-flow tests", "passed": 12, "failed": 0, "kind": "Native bcrypt compatibility with historical UTF-8 truncation; new Argon2 unchanged"},
+    {"command": "Backend-owner report/export/advice regressions", "passed": 20, "failed": 0, "skipped": 0, "kind": "SQLite/PostgreSQL filtered raw snapshots preserve ranked order; grounded advisor supports actual 42-unit samples"},
+    {"command": "make regression", "status": "Browser stage running", "unit_passed": 390, "api_passed": 134, "api_skipped": 3, "log": "/tmp/nestai-regression-final.log", "kind": "Final validation owner uses /tmp/nestai-venv and isolated nestai_final_regression PostgreSQL database. All API stages including PostgreSQL concurrency passed; do not infer full regression success until browser results are recorded"}
   ],
   "validation": {
     "codeql": "Initial committed snapshot: 0 alerts",
-    "automated_review": "Unavailable: review binary not installed; independent read-only reviewer used",
-    "ci": "Pushed resume checkpoint run 38479320655 action_required; GitHub get_job_logs confirms 0 total jobs. Owner approval required. Previous run 38476028615 also had zero jobs; logs download returned 404 because no jobs ran.",
+    "automated_review": "Unavailable: review binary not installed; independent read-only reviewer confirmed original integration findings and report-order finding resolved, with no remaining high-confidence bugs in latest widget/reset and API changes. This does not replace the blocked latest security scan.",
+    "ci": "Pushed code checkpoint 510124e40a87f09027ec131f5fbb6753501a71c3 run 38480460310 action_required; GitHub get_job_logs confirms 0 total jobs. Owner approval required. Prior runs 38479320655 and 38476028615 also had zero jobs.",
     "final_validation": "Resumed parallel_validation explicitly refused execution: validation time limit reached, with instruction not to retry. Latest code/security scan is Blocked, not passed. Independent final read-only review requested; prior session also recorded circuit-breaker timeouts.",
     "public_access": "Resume public navigation failed: browser MCP Transport closed. Previous session log URL returns HTTP 404. Hosting entrypoints and deployed revisions remain unverified."
   },
@@ -106,8 +108,8 @@
     "Latest parallel_validation could not execute because session validation time limit was reached; run final review/security validation in an authorized fresh session before release",
     "FastAPI live providers: OPENAI_API_KEY, GOOGLE_MAPS_API_KEY and optional WALKSCORE_API_KEY missing",
     "Stripe sandbox: configure STRIPE_SECRET_KEY (test only), STRIPE_PREMIUM_PRICE_ID, STRIPE_PREMIUM_PLUS_PRICE_ID, STRIPE_WEBHOOK_SECRET and enable approved portal plan changes; deliver sandbox subscription.updated events to registered /billing/webhook",
-    "Live acceptance: configure HTTPS NESTAI_LIVE_API_BASE_URL and dedicated NESTAI_LIVE_FREE/PREMIUM/PLUS_EMAIL and _PASSWORD securely; seed apartment samples; explicitly authorize NESTAI_RUN_LIVE_TESTS=1 and NESTAI_LIVE_ALLOW_ACCOUNT_OPERATIONS=1",
-    "Owner must approve GitHub Actions regression run for the latest pushed revision (checkpoint run 38479320655 action_required, zero jobs), then required regression must run",
+    "Live acceptance: configure HTTPS NESTAI_LIVE_API_BASE_URL and dedicated NESTAI_LIVE_FREE_EMAIL, NESTAI_LIVE_FREE_PASSWORD, NESTAI_LIVE_PREMIUM_EMAIL, NESTAI_LIVE_PREMIUM_PASSWORD, NESTAI_LIVE_PLUS_EMAIL, NESTAI_LIVE_PLUS_PASSWORD securely; seed apartment samples; explicitly authorize NESTAI_RUN_LIVE_TESTS=1 and NESTAI_LIVE_ALLOW_ACCOUNT_OPERATIONS=1",
+    "Owner must approve GitHub Actions regression run for the latest pushed revision (code checkpoint run 38480460310 action_required, zero jobs), then required regression must run",
     "Owner must provide hosting-console access/deployment authorization and verify Streamlit legacy/streamlit/app.py, FastAPI main:app, and deployed commit identifiers before public tier journeys"
   ]
 }

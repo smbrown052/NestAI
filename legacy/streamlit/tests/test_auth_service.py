@@ -214,11 +214,19 @@ class StreamlitAuthServiceTests(unittest.TestCase):
             "account_filters": {"max_budget": 2000}, "account_filter_budget": 2000,
             "account_filter_request": "under $2000", "account_export": "old",
             "account_report": {"content": "{}"}, "account_properties": [{"id": "one"}],
+            "account_filter_manual_priorities": True, "account_filter_priority_price": 5.0,
         }
         with patch.object(api_views, "st", ui):
             api_views.reset_comparison_filters()
         self.assertEqual(ui.session_state["account_filters"], {})
-        self.assertFalse(any(key.startswith("account_filter_") for key in ui.session_state))
+        self.assertEqual(ui.session_state["account_filter_budget"], 0)
+        self.assertEqual(ui.session_state["account_filter_beds"], 0)
+        self.assertEqual(ui.session_state["account_filter_baths"], 0.0)
+        self.assertEqual(ui.session_state["account_filter_sqft"], 0)
+        self.assertEqual(ui.session_state["account_filter_request"], "")
+        self.assertFalse(ui.session_state["account_filter_manual_priorities"])
+        for priority in ["price", "space", "commute", "walkability", "pets"]:
+            self.assertEqual(ui.session_state[f"account_filter_priority_{priority}"], 1.0)
         self.assertNotIn("account_export", ui.session_state)
         self.assertNotIn("account_report", ui.session_state)
         self.assertEqual(ui.session_state["account_properties"], [{"id": "one"}])

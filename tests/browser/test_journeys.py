@@ -8,6 +8,7 @@ import re
 from uuid import uuid4
 
 import requests
+import pytest
 from playwright.sync_api import expect
 from sqlalchemy import create_engine, text
 
@@ -105,6 +106,24 @@ def test_signup_and_all_navigation(page, runtime):
     navigate(page, "Profile")
     expect(page.get_by_text(email, exact=True)).to_be_visible()
     expect(page.get_by_role("textbox", name="Display name", exact=True)).to_have_value("Signup Browser Updated")
+
+
+@pytest.mark.parametrize("plan", ["premium", "premium_plus"])
+def test_paid_plan_switch_without_provider_configuration_fails_closed(page, runtime, account, plan):
+    user = account(plan)
+    sign_in(page, runtime, user)
+    navigate(page, "Profile")
+    page.get_by_role("tab", name="Subscription & Pricing", exact=True).click()
+    page.get_by_role("button", name="Change subscription securely", exact=True).click()
+    expect(page.get_by_text(
+        "Subscription management is unavailable. Your current access and balance are unchanged.",
+        exact=True,
+    )).to_be_visible()
+    expect(page.get_by_role("button", name="Continue to Stripe →", exact=True)).to_have_count(0)
+    response = requests.get(runtime["api"] + "/entitlements", headers=user["headers"], timeout=10)
+    assert response.status_code == 200, response.text
+    assert response.json()["plan"] == plan
+    healthy(page)
 
 
 def test_apartment_save_dedup_persists_and_free_has_no_native_downloads(page, runtime, account):

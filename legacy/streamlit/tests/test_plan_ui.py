@@ -22,6 +22,7 @@ import pytest
 import types
 import ast
 import pandas as pd
+from unittest.mock import Mock
 
 
 # ── Streamlit mock ────────────────────────────────────────────────────────────
@@ -90,6 +91,49 @@ _state = fa.st.session_state
 
 def _reset():
     _state.clear()
+
+
+@pytest.mark.parametrize("current,target", [
+    ("premium", PLAN_PREMIUM_PLUS), ("premium_plus", PLAN_PREMIUM),
+])
+def test_existing_paid_subscription_changes_use_portal_not_checkout(monkeypatch, current, target):
+    import plan_ui
+    ui = Mock()
+    ui.session_state = _MockState(auth_token="test-token", auth_user={
+        "active_plan": current, "subscription_status": "active",
+    })
+    ui.button.return_value = True
+    ui.checkbox.return_value = True
+    ui.expander.return_value = _NullCtx()
+    client = Mock()
+    client.request.return_value.status_code = 200
+    client.request.return_value.json.return_value = {"portal_url": "https://billing.stripe.com/test"}
+    monkeypatch.setattr(plan_ui, "st", ui)
+    card = next(card for card in PRICING_PLANS if card["id"] == target)
+    plan_ui._render_plan_card(card, is_current=False, api_client=client)
+    client.request.assert_called_once_with("POST", "/billing/portal", json={"plan": target.lower()})
+    client.create_checkout_session.assert_not_called()
+    ui.checkbox.assert_not_called()
+    assert ui.link_button.call_args.args[1] == "https://billing.stripe.com/test"
+    assert ui.session_state["auth_user"]["active_plan"] == current
+
+
+def test_plan_preview_does_not_turn_free_checkout_into_paid_subscription_update(monkeypatch):
+    import plan_ui
+    ui = Mock()
+    ui.session_state = _MockState(auth_token="test-token", nestai_plan=PLAN_PREMIUM_PLUS,
+                                 auth_user={"active_plan": "free", "subscription_status": "inactive"})
+    ui.button.return_value = True
+    ui.checkbox.return_value = True
+    ui.expander.return_value = _NullCtx()
+    client = Mock()
+    client.create_checkout_session.return_value.status_code = 503
+    monkeypatch.setattr(plan_ui, "st", ui)
+    card = next(card for card in PRICING_PLANS if card["id"] == PLAN_PREMIUM)
+    plan_ui._render_plan_card(card, is_current=False, api_client=client)
+    client.create_checkout_session.assert_called_once()
+    client.request.assert_not_called()
+    assert ui.session_state["auth_user"]["active_plan"] == "free"
 
 def test_decision_brief_compares_alternative_to_winner():
     """Exercise the actual renderer without executing the Streamlit entrypoint."""
