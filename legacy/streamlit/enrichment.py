@@ -404,7 +404,24 @@ def get_commute_cached(building_id: str, origin_address: str, destination: str) 
         store_commute(building_id, destination, mode, minutes)
     return live
 
+def get_commute_cached(building_id: str, origin_address: str, destination: str) -> dict:
+    """
+    Return commute times for all modes, using cache when available.
+    Key: building_id × destination × mode. TTL: 7 days.
+    """
+    if not destination:
+        return {}
 
+    # Try cache first
+    cached = get_all_commutes(building_id, destination)
+    if cached:
+        return cached
+
+    # Fall back to live API
+    live = get_commute_times(origin_address, destination)
+    for mode, minutes in live.items():
+        store_commute(building_id, destination, mode, minutes)
+    return live
 def get_commute_times(origin_address: str, destination: str) -> dict:
     """
     Fetch commute times from origin to destination via Google Distance Matrix API.
