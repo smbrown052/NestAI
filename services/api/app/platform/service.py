@@ -332,6 +332,8 @@ def safe_cell(value):
 
 
 def export_rows(ranked, scope):
+    if scope == "listings":
+        return ranked
     if scope == "units":
         return [row for row in ranked if row.get("unit_id") is not None]
     result, seen = [], set()
@@ -360,14 +362,24 @@ def ranked_snapshots(selected, ranked):
 
 def csv_export(rows, scope):
     output = io.StringIO(newline="")
-    columns = (["property_id", "unit_id", "beds", "baths", "rent", "square_feet", "score", "monthly_total", "fees_complete"]
-               if scope == "units" else
-               ["property_id", "kind", "name", "address", "monthly_rent", "sale_price", "bedrooms", "bathrooms", "square_feet",
-                "score", "monthly_total", "fees_complete"])
+    if scope == "listings":
+        columns = ["rank", "property_id", "unit_id", "kind", "name", "price_kind", "price", "beds", "baths",
+                   "square_feet", "score", "monthly_total", "fees_complete"]
+    elif scope == "units":
+        columns = ["property_id", "unit_id", "beds", "baths", "rent", "square_feet", "score", "monthly_total", "fees_complete"]
+    else:
+        columns = ["property_id", "kind", "name", "address", "monthly_rent", "sale_price", "bedrooms", "bathrooms",
+                   "square_feet", "score", "monthly_total", "fees_complete"]
     writer = csv.writer(output)
     writer.writerow(columns)
     for row in rows:
-        if scope == "units":
+        if scope == "listings":
+            writer.writerow([row.get("rank"), safe_cell(row["property_id"]), safe_cell(row.get("unit_id")),
+                             safe_cell(row.get("kind")), safe_cell(row.get("property")), safe_cell(row.get("price_kind")),
+                             *[numeric(row.get(key)) if numeric(row.get(key)) is not None else ""
+                               for key in ("price_num", "beds_num", "baths_num", "sqft_num", "score", "monthly_total")],
+                             row.get("fees_complete", False)])
+        elif scope == "units":
             writer.writerow([safe_cell(row["property_id"]), safe_cell(row["unit_id"]),
                              *[numeric(row.get(key)) if numeric(row.get(key)) is not None else ""
                                for key in ("beds_num", "baths_num", "price_num", "sqft_num", "score", "monthly_total")],

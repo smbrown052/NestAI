@@ -201,6 +201,27 @@ class StreamlitAuthServiceTests(unittest.TestCase):
                 "rent_lte": 2000, "min_beds": 1, "min_baths": 1.5, "min_sqft": 700,
             })
             self.assertEqual(call.call_args.args[3]["property_ids"], ["property-one"])
+            self.assertEqual(ui.text_input.call_args.kwargs["key"], "account_filter_request")
+            self.assertEqual(
+                [widget.kwargs["key"] for widget in ui.number_input.call_args_list],
+                ["account_filter_budget", "account_filter_beds", "account_filter_baths", "account_filter_sqft"],
+            )
+
+    def test_reset_clears_stable_filter_widgets_and_downloads_not_saved_data(self):
+        import api_views
+        ui = Mock()
+        ui.session_state = {
+            "account_filters": {"max_budget": 2000}, "account_filter_budget": 2000,
+            "account_filter_request": "under $2000", "account_export": "old",
+            "account_report": {"content": "{}"}, "account_properties": [{"id": "one"}],
+        }
+        with patch.object(api_views, "st", ui):
+            api_views.reset_comparison_filters()
+        self.assertEqual(ui.session_state["account_filters"], {})
+        self.assertFalse(any(key.startswith("account_filter_") for key in ui.session_state))
+        self.assertNotIn("account_export", ui.session_state)
+        self.assertNotIn("account_report", ui.session_state)
+        self.assertEqual(ui.session_state["account_properties"], [{"id": "one"}])
 
     def test_feedback_uses_backend_persistence_without_email_dispatch(self):
         import api_views

@@ -140,7 +140,7 @@ Plus reports additionally embed shared sensitivity analytics and cost/space/peer
 analysis from the same locked account snapshot.
 GET /reports/{report_id}/download -> deterministic JSON attachment, same account only.
 Reports are reproducible decision records, not generated/verified appraisals.
-POST /exports {property_ids?:string[],format?:csv|json,scope?:properties|units,
+POST /exports {property_ids?:string[],format?:csv|json,scope?:properties|units|listings,
                constraints?:shared canonical dict,priorities?:shared weights}
 -> attachment bytes (not a JSON envelope). Formula prefixes in text cells are
 escaped. Unit IDs remain strings; rent/size/beds/baths are finite numeric columns.
@@ -148,6 +148,8 @@ Exports call the same shared ranking/filtering with account profile preferences
 and preserve ranked order. Unit scope exports only eligible units; property scope
 deduplicates eligible ranked properties by their first ranked option. JSON exports
 contain normalized ranked records, not unfiltered property/unit snapshots.
+Listings scope preserves every ranked apartment unit and house in rank order,
+with property_id/unit_id identities, price_kind (rent/purchase), price and score.
 
 Provider configuration
 ----------------------

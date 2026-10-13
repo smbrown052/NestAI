@@ -1,7 +1,7 @@
 {
   "baseline_revision": "c7a197f0e16e697a150b7286fd29afb1d56c181d",
   "deployment_verified": false,
-  "latest_checkpoint_revision": "541ac7a5096f9523639b658436efd4efcc1081cb",
+  "latest_checkpoint_revision": "aa8a8f67873f1985b398c427aadd814c8286cf35",
   "resume_checkpoint": {
     "revision": "541ac7a5096f9523639b658436efd4efcc1081cb",
     "working_tree_at_start": "Clean",
@@ -11,6 +11,33 @@
     "next_step": "Finish regression fixes for archive/restore, Stripe portal price changes and frontend reauthentication/selection; run full make regression against isolated PostgreSQL and update this ledger with final results."
   },
   "public_acceptance": "Blocked",
+  "resume_checks": {
+    "authentication": {
+      "status": "Passed locally; deployed Blocked",
+      "policy": "Reload requires explicit sign-in; no URL/localStorage bearer persistence introduced.",
+      "evidence": "Actual desktop and mobile reload/sign-in browser journeys restored 42 saved unit table rows and saved preferences; account hydration failure clears sensitive stale state.",
+      "legacy_password_fix": "Passlib self-test was incompatible with bcrypt 5. Existing native bcrypt now verifies historical 72-byte hashes; new Argon2 hashing unchanged. 12 password/auth-flow tests passed."
+    },
+    "active_property_limits": {
+      "status": "Passed locally; deployed Blocked",
+      "evidence": "Archived rows do not consume active slots; implicit upsert restores and explicit restores apply the paid restore gate and active-property cap under account lock. Concurrent mixed save/restore tests passed on PostgreSQL.",
+      "tier_benefits": "Free restore gate preserved; no new tier benefit silently granted."
+    },
+    "stripe_portal": {
+      "status": "Mocked sandbox-protocol regressions passed; actual Stripe sandbox Blocked",
+      "evidence": "Configured subscription item price, not stale checkout plan metadata, determines verified webhook entitlement. Targeted portal updates validate account customer/subscription and configured price. No redirect or browser state activates payment.",
+      "required_action": "Configure approved sandbox products/keys and portal subscription-update capability, then deliver real sandbox events to /billing/webhook and verify /entitlements after upgrade/downgrade."
+    },
+    "backend_skips": {
+      "status": "Not an acceptance blocker when PostgreSQL counterparts pass",
+      "explanation": "Original single skip was the SQLite parameter of row-lock concurrency. Additional concurrency cases now produce three intentional SQLite-only skips: webhook account lock, save/restore active cap, quota/idempotency. SQLite cannot verify PostgreSQL SELECT FOR UPDATE. PostgreSQL variants must run; missing PostgreSQL configuration would block acceptance."
+    },
+    "priority_and_artifact_integration": {
+      "status": "Pending final endpoint wiring/browser validation",
+      "evidence": "Reviewer confirmed /requests still needed shared priority parser and default listings export scope needed backend support. Report raw snapshots now filtered to eligible properties/units in 14 SQLite/PostgreSQL report/export tests.",
+      "browser_infrastructure": "Paid CSV/report desktop journey passed. A mobile rerun failed before inputs with Chromium net::ERR_NETWORK_CHANGED on Streamlit JS chunks; preserve this as unavailable browser evidence, not a product pass."
+    }
+  },
   "baseline": {
     "frontend": {"passed": 322, "failed": 9, "evidence": "Existing suite: undefined forgot-password test harness and conflicting Streamlit test mocks"},
     "api": {"passed": 0, "failed": 2, "evidence": "Existing suite import blocked by undeclared PyJWT dependency"}
@@ -57,7 +84,7 @@
   "validation": {
     "codeql": "Initial committed snapshot: 0 alerts",
     "automated_review": "Unavailable: review binary not installed; independent read-only reviewer used",
-    "ci": "Checkpoint run 38476028615 action_required; GitHub job/log APIs confirm 0 total jobs. Owner approval required. Logs download returns 404 because no jobs ran.",
+    "ci": "Pushed resume checkpoint run 38479320655 action_required; GitHub get_job_logs confirms 0 total jobs. Owner approval required. Previous run 38476028615 also had zero jobs; logs download returned 404 because no jobs ran.",
     "final_validation": "parallel_validation circuit breaker after consecutive timeouts; cannot claim final scan passed",
     "public_access": "Resume public navigation failed: browser MCP Transport closed. Previous session log URL returns HTTP 404. Hosting entrypoints and deployed revisions remain unverified."
   },
@@ -76,7 +103,7 @@
     "FastAPI live providers: OPENAI_API_KEY, GOOGLE_MAPS_API_KEY and optional WALKSCORE_API_KEY missing",
     "Stripe sandbox: configure STRIPE_SECRET_KEY (test only), STRIPE_PREMIUM_PRICE_ID, STRIPE_PREMIUM_PLUS_PRICE_ID, STRIPE_WEBHOOK_SECRET and enable approved portal plan changes; deliver sandbox subscription.updated events to registered /billing/webhook",
     "Live acceptance: configure HTTPS NESTAI_LIVE_API_BASE_URL and dedicated NESTAI_LIVE_FREE/PREMIUM/PLUS_EMAIL and _PASSWORD securely; seed apartment samples; explicitly authorize NESTAI_RUN_LIVE_TESTS=1 and NESTAI_LIVE_ALLOW_ACCOUNT_OPERATIONS=1",
-    "Owner must approve GitHub Actions checkpoint run 38476028615 (action_required, zero jobs), then required regression must run",
+    "Owner must approve GitHub Actions regression run for the latest pushed revision (checkpoint run 38479320655 action_required, zero jobs), then required regression must run",
     "Owner must provide hosting-console access/deployment authorization and verify Streamlit legacy/streamlit/app.py, FastAPI main:app, and deployed commit identifiers before public tier journeys"
   ]
 }

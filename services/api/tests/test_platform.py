@@ -629,6 +629,40 @@ def test_exports_share_ui_filtered_ranked_set(api):
     assert all("units" not in row for row in json_export)
 
 
+def test_listing_exports_preserve_every_mixed_ranked_option(api):
+    paid(api)
+    client, _, headers, _, _ = api
+    prop = save(api, units=[
+        {"id": "0012", "price": 2000, "sqft": 900},
+        {"id": "0013", "price": 2300, "sqft": 1000},
+        {"id": "excluded", "price": 3500, "sqft": 500},
+    ])
+    home = client.post("/properties", headers=headers[0], json={
+        "kind": "home", "external_id": "purchase", "idempotency_key": "purchase",
+        "parsed": {"property_type": "HOME_FOR_SALE", "address": "Purchase Home",
+                   "sale_price": 450000, "square_feet": 2000}}).json()
+    rental = client.post("/properties", headers=headers[0], json={
+        "kind": "rental_home", "external_id": "rental", "idempotency_key": "rental",
+        "parsed": {"address": "Rental Home", "monthly_rent": 2100, "square_feet": 1000}}).json()
+    query = {"property_ids": [prop["id"], home["id"], rental["id"]],
+             "constraints": {"min_sqft": 800}, "priorities": {"price": 1}}
+    ranked = client.post("/ranking", headers=headers[0], json=query).json()["ranked"]
+    assert len(ranked) == 4
+    response = client.post("/exports", headers=headers[0], json={**query, "scope": "listings"})
+    assert response.status_code == 200, response.text
+    rows = list(csv.DictReader(io.StringIO(response.text)))
+    assert [(row["property_id"], row["unit_id"] or None) for row in rows] == [
+        (row["property_id"], row["unit_id"]) for row in ranked]
+    assert [float(row["score"]) for row in rows] == [row["score"] for row in ranked]
+    purchase = next(row for row in rows if row["property_id"] == home["id"])
+    assert purchase["price_kind"] == "purchase" and float(purchase["price"]) == 450000
+    assert purchase["monthly_total"] == ""
+    assert next(row for row in rows if row["property_id"] == rental["id"])["price_kind"] == "rent"
+    exported_json = client.post("/exports", headers=headers[0], json={
+        **query, "scope": "listings", "format": "json"}).json()
+    assert exported_json == ranked
+
+
 @pytest.mark.parametrize("plan", ["premium", "premium_plus"])
 def test_report_snapshots_only_include_ranked_properties_and_units(api, plan):
     paid(api, plan)
@@ -653,6 +687,31 @@ def test_report_snapshots_only_include_ranked_properties_and_units(api, plan):
     saved = client.get("/properties", headers=headers[0]).json()["properties"]
     assert len(saved) == 3
     assert len(next(row for row in saved if row["id"] == prop["id"])["units"]) == 3
+
+
+def test_report_property_and_unit_snapshots_follow_filtered_rank_order(api):
+    paid(api)
+    client, _, headers, _, _ = api
+    first = save(api, "first-created", units=[
+        {"id": "A-expensive", "price": 2600, "sqft": 1000},
+        {"id": "Z-cheaper", "price": 2500, "sqft": 1000},
+        {"id": "excluded", "price": 4000, "sqft": 1000},
+    ])
+    second = save(api, "second-created", units=[
+        {"id": "A-expensive", "price": 1800, "sqft": 1000},
+        {"id": "Z-cheaper", "price": 1700, "sqft": 1000},
+    ])
+    payload = {"property_ids": [first["id"], second["id"]], "constraints": {"rent_lte": 3000},
+               "priorities": {"price": 1}, "idempotency_key": "ordered-report"}
+    response = client.post("/reports", headers=headers[0], json=payload)
+    assert response.status_code == 200, response.text
+    snapshot = json.loads(response.json()["content"])
+    ranked = snapshot["comparison"]["ranked"]
+    assert [row["id"] for row in snapshot["properties"]] == list(dict.fromkeys(row["property_id"] for row in ranked))
+    for record in snapshot["properties"]:
+        expected = [row["unit_id"] for row in ranked if row["property_id"] == record["id"]]
+        assert [unit["id"] for unit in record["units"]] == expected
+        assert [unit["id"] for unit in record["parsed"]["units"]] == expected
 
 
 def test_premium_and_plus_reports_use_consistent_snapshot_levels(api):

@@ -82,6 +82,14 @@ def clear_comparison_downloads():
         st.session_state.pop(key, None)
 
 
+def reset_comparison_filters():
+    st.session_state["account_filters"] = {}
+    clear_comparison_downloads()
+    for key in list(st.session_state):
+        if key.startswith("account_filter_"):
+            st.session_state.pop(key, None)
+
+
 def display_frame(frame):
     # st.dataframe has a built-in CSV download. A static table has no download UI.
     if capability("can_export"):
@@ -262,29 +270,28 @@ def render_comparison(client, properties):
     st.caption("Apartments and houses share one saved-property allowance.")
     filters = st.session_state.setdefault("account_filters", {})
     with st.form("comparison_filters"):
-        budget = st.number_input("Maximum rent ($/month)", min_value=0, value=int(filters.get("max_budget") or 0))
-        beds = st.number_input("Minimum bedrooms", min_value=0, value=int(filters.get("min_beds") or 0))
-        baths = st.number_input("Minimum bathrooms", min_value=0.0, value=float(filters.get("min_baths") or 0), step=0.5)
-        sqft = st.number_input("Minimum square feet", min_value=0, value=int(filters.get("min_sqft") or 0))
-        request = st.text_input("Natural-language request", value=filters.get("request", ""), disabled=not capability("can_use_natural_language_filtering"))
+        budget = st.number_input("Maximum rent ($/month)", min_value=0, value=int(filters.get("max_budget") or 0), key="account_filter_budget")
+        beds = st.number_input("Minimum bedrooms", min_value=0, value=int(filters.get("min_beds") or 0), key="account_filter_beds")
+        baths = st.number_input("Minimum bathrooms", min_value=0.0, value=float(filters.get("min_baths") or 0), step=0.5, key="account_filter_baths")
+        sqft = st.number_input("Minimum square feet", min_value=0, value=int(filters.get("min_sqft") or 0), key="account_filter_sqft")
+        request = st.text_input("Natural-language request", value=filters.get("request", ""), disabled=not capability("can_use_natural_language_filtering"), key="account_filter_request")
         priorities = {}
         manual_priorities = False
         if capability("can_use_lifestyle_score"):
             manual_priorities = st.checkbox(
                 "Use manual priority weights instead of request priorities",
                 value=bool(filters.get("manual_priorities", False)),
+                key="account_filter_manual_priorities",
             )
             st.caption("Priority weights (0 ignores a priority; the backend normalizes the total).")
             for priority in ["price", "space", "commute", "walkability", "pets"]:
-                priorities[priority] = st.slider(priority.title(), 0.0, 5.0, float(filters.get("priorities", {}).get(priority, 1.0)), 0.5)
+                priorities[priority] = st.slider(priority.title(), 0.0, 5.0, float(filters.get("priorities", {}).get(priority, 1.0)), 0.5, key=f"account_filter_priority_{priority}")
         apply = st.form_submit_button("Apply request and numeric filters")
     if apply:
         clear_comparison_downloads()
         st.session_state["account_filters"] = {"max_budget": budget or None, "min_beds": beds, "min_baths": baths, "min_sqft": sqft, "request": request.strip(), "priorities": priorities, "manual_priorities": manual_priorities}
         filters = st.session_state["account_filters"]
-    if st.button("Reset filters"):
-        clear_comparison_downloads()
-        st.session_state["account_filters"] = {}
+    if st.button("Reset filters", on_click=reset_comparison_filters):
         st.rerun()
     if filters:
         st.caption(f"Applied filters: {filters}")

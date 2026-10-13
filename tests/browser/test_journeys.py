@@ -162,12 +162,14 @@ def test_natural_priorities_and_filtered_downloads_match_visible_comparison(page
     space_options = page.get_by_role("combobox", name="Listing details", exact=True).input_value()
     page.get_by_role("textbox", name="Natural-language request", exact=True).fill("prioritize price over space")
     page.get_by_role("button", name="Apply request and numeric filters", exact=True).click()
+    expect(page.get_by_text(re.compile(r"^Applied priorities:.*'price': 3\.0.*'space': 1\.0"))).to_be_visible()
     idle(page)
     assert page.get_by_role("combobox", name="Listing details", exact=True).input_value() != space_options
     save_example(page, "home_example_1.txt", kind="Rental house")
     page.get_by_role("spinbutton", name="Maximum rent ($/month)", exact=True).fill("2800")
     page.get_by_role("spinbutton", name="Minimum square feet", exact=True).fill("800")
     page.get_by_role("button", name="Apply request and numeric filters", exact=True).click()
+    expect(page.get_by_text(re.compile(r"^Applied constraints:.*'rent_lte': 2800.*'min_sqft': 800"))).to_be_visible()
     saved = properties(runtime, user)
     parsed_request = requests.post(runtime["api"] + "/requests", headers=user["headers"],
                                    json={"request": "prioritize price over space"}, timeout=10)
@@ -197,6 +199,10 @@ def test_natural_priorities_and_filtered_downloads_match_visible_comparison(page
     page.get_by_role("button", name="Apply request and numeric filters", exact=True).click()
     expect(page.get_by_role("button", name="Download comparison CSV", exact=True)).to_have_count(0)
     expect(page.get_by_role("button", name="Download report", exact=True)).to_have_count(0)
+    page.get_by_role("button", name="Reset filters", exact=True).click()
+    expect(page.get_by_role("spinbutton", name="Maximum rent ($/month)", exact=True)).to_have_value("0")
+    expect(page.get_by_role("textbox", name="Natural-language request", exact=True)).to_have_value("")
+    expect(page.get_by_text("Applied constraints: None", exact=True)).to_be_visible()
     healthy(page)
 
 

@@ -81,6 +81,6 @@ class PaidRequest(Idempotent):
 class Export(StrictModel):
     property_ids: list[str] = Field(default_factory=list, max_length=200)
     format: Literal["csv", "json"] = "csv"
-    scope: Literal["properties", "units"] = "properties"
+    scope: Literal["properties", "units", "listings"] = "properties"
     constraints: dict = Field(default_factory=dict)
     priorities: dict[str, float] = Field(default_factory=dict)
