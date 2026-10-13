@@ -5,6 +5,13 @@ Showcase the incremental value of upgrading to a better apartment.
 
 import pandas as pd
 from typing import Dict, List, Tuple
+from pathlib import Path
+import sys
+
+_ROOT = Path(__file__).resolve().parents[2]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+from shared.decision import comparison
 
 from availability import availability_label, parse_availability_date
 
@@ -41,23 +48,15 @@ class TradeoffAnalyzer:
         """
         differences = {}
         
-        # Price difference
-        price1 = self._to_number(apt1.get("price_num", 0))
-        price2 = self._to_number(apt2.get("price_num", 0))
-        price_diff = price2 - price1
-        differences["price_diff"] = price_diff
-        
-        # Sqft difference
-        sqft1 = self._to_number(apt1.get("sqft_num", 0))
-        sqft2 = self._to_number(apt2.get("sqft_num", 0))
-        sqft_diff = sqft2 - sqft1
-        differences["sqft_diff"] = sqft_diff
+        verified = comparison(apt1.to_dict(), apt2.to_dict())
+        differences["price_diff"] = verified["deltas"]["price"]
+        differences["sqft_diff"] = verified["deltas"]["space"]
+        differences["comparison"] = verified
         
         # Commute difference
-        commute1 = self._to_number(apt1.get("metro_min", 0))
-        commute2 = self._to_number(apt2.get("metro_min", 0))
-        commute_diff = commute1 - commute2  # Negative = better
-        differences["commute_diff"] = commute_diff
+        commute1 = self._to_number(apt1.get("commute_minutes"), None)
+        commute2 = self._to_number(apt2.get("commute_minutes"), None)
+        differences["commute_diff"] = None if commute1 is None or commute2 is None else commute1 - commute2
         
         # Amenity differences
         differences["apt1_amenities"] = self._extract_amenities(apt1)
@@ -83,9 +82,9 @@ class TradeoffAnalyzer:
         """Extract amenity list from apartment row."""
         amenities = []
         
-        if row.get("has_gym"):
-            amenities.append("in-unit gym")
-        if row.get("has_fitness"):
+        if row.get("has_gym") is True:
+            amenities.append("building gym")
+        if row.get("has_fitness") is True:
             amenities.append("fitness center")
         if row.get("has_laundry"):
             amenities.append("in-unit laundry")
@@ -112,7 +111,7 @@ class TradeoffAnalyzer:
         - garage parking"
         """
         
-        if apt1_rank >= len(self.ranked_df) or apt2_rank >= len(self.ranked_df):
+        if min(apt1_rank, apt2_rank) < 0 or apt1_rank >= len(self.ranked_df) or apt2_rank >= len(self.ranked_df):
             return "Invalid apartment ranks."
         
         apt1 = self.ranked_df.iloc[apt1_rank]
@@ -130,7 +129,9 @@ class TradeoffAnalyzer:
         
         price_diff = diffs["price_diff"]
         
-        if price_diff > 0:
+        if price_diff is None:
+            explanation += "**Rent comparison unavailable.**\n\n"
+        elif price_diff > 0:
             explanation += f"💰 **{label2} costs ${abs(price_diff):,.0f}/month more and gives you:**\n\n"
         elif price_diff < 0:
             explanation += f"💰 **{label2} costs ${abs(price_diff):,.0f}/month less, but you trade off:**\n\n"
@@ -141,16 +142,16 @@ class TradeoffAnalyzer:
         
         # Space gain
         sqft_diff = diffs["sqft_diff"]
-        if sqft_diff > 0:
+        if sqft_diff is not None and sqft_diff > 0:
             gains.append(f"📐 {abs(sqft_diff):.0f} sq ft more space")
-        elif sqft_diff < 0:
+        elif sqft_diff is not None and sqft_diff < 0:
             gains.append(f"📐 {abs(sqft_diff):.0f} sq ft less space")
         
         # Commute improvement
         commute_diff = diffs["commute_diff"]
-        if commute_diff > 0:
+        if commute_diff is not None and commute_diff > 0:
             gains.append(f"🚇 {abs(commute_diff):.0f} minutes less commuting")
-        elif commute_diff < 0:
+        elif commute_diff is not None and commute_diff < 0:
             gains.append(f"🚇 {abs(commute_diff):.0f} minutes more commuting")
 
         availability_1 = parse_availability_date(diffs["availability_1"])
@@ -197,26 +198,8 @@ class TradeoffAnalyzer:
             f"**Why {winner_label} (Rank #1) beat {runner_label} (Rank #2):**\n\n"
         )
 
-        price_w = self._to_number(winner.get("price_num", 0))
-        price_r = self._to_number(runner_up.get("price_num", 0))
-        price_advantage = price_r - price_w  # positive = winner is cheaper
-
-        sqft_w = self._to_number(winner.get("sqft_num", 0))
-        sqft_r = self._to_number(runner_up.get("sqft_num", 0))
-        sqft_advantage = sqft_w - sqft_r  # positive = winner has more space
-
-        commute_w = self._to_number(winner.get("metro_min") or winner.get("commute_transit_min"), 999)
-        commute_r = self._to_number(runner_up.get("metro_min") or runner_up.get("commute_transit_min"), 999)
-        commute_advantage = commute_r - commute_w  # positive = winner has shorter commute
-
-        advantages = []
-
-        if price_advantage > 0:
-            advantages.append(f"💰 ${price_advantage:,.0f}/mo less expensive")
-        if sqft_advantage > 50:
-            advantages.append(f"📐 {sqft_advantage:.0f} sq ft more space")
-        if 0 < commute_advantage < 999:
-            advantages.append(f"🚇 {commute_advantage:.0f} min shorter commute")
+        verified = comparison(winner.to_dict(), runner_up.to_dict())
+        advantages = list(verified["advantages"])
 
         winner_available = availability_label(winner.get("available_date") or winner.get("availability"))
         runner_available = availability_label(runner_up.get("available_date") or runner_up.get("availability"))
@@ -235,19 +218,17 @@ class TradeoffAnalyzer:
             advantages.append(f"✨ Has {amenity}")
 
         if not advantages:
-            advantages = ["A better overall balance of price, commute, space, and listing details"]
+            advantages = ["No individual factual advantage identified; ordering follows your priorities and the stable tie-breaker"]
 
         for adv in advantages:
             explanation += f"• {adv}\n"
 
         # Compromise: what winner gives up
-        given_up = [a for a in runner_amenities if a not in winner_amenities]
-        if given_up or price_advantage < 0:
-            explanation += "\n**Key compromise:**\n"
-            if price_advantage < 0:
-                explanation += f"• Costs ${abs(price_advantage):,.0f}/mo more\n"
-            for item in given_up[:2]:
-                explanation += f"• No {item} (runner-up has it)\n"
+        explanation += "\n**Key compromise:**\n"
+        for item in verified["compromises"] or [verified["compromise_summary"]]:
+            explanation += f"• {item}\n"
+        for item in verified["unknowns"]:
+            explanation += f"• {item}\n"
 
         return explanation
 

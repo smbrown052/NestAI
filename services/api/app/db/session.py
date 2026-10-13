@@ -12,6 +12,7 @@ import os
 from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 load_dotenv()
 
@@ -23,6 +24,8 @@ engine_kwargs = {
 }
 if DATABASE_URL.startswith("sqlite"):
     engine_kwargs["connect_args"] = {"check_same_thread": False}
+    if DATABASE_URL in {"sqlite://", "sqlite:///:memory:"}:
+        engine_kwargs["poolclass"] = StaticPool
 
 engine = create_engine(DATABASE_URL, **engine_kwargs)
 

@@ -13,3 +13,5 @@ argon2-cffi>=23.1.0
 resend
 stripe
 psycopg[binary]
+pandas>=2.2
+requests>=2.32.4

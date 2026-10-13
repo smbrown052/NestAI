@@ -4,7 +4,6 @@ import json
 import importlib
 import os
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 
@@ -20,9 +19,7 @@ API_ROOT = ROOT / "services" / "api"
 class AuthApiTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls._tempdir = tempfile.TemporaryDirectory()
-        db_path = Path(cls._tempdir.name) / "test.db"
-        os.environ["DATABASE_URL"] = f"sqlite:///{db_path}"
+        os.environ.setdefault("DATABASE_URL", "sqlite://")
         os.environ["JWT_SECRET_KEY"] = "test-secret-key"
         os.environ["SECRET_KEY"] = "test-secret-key"
         os.environ["BILLING_WEBHOOK_SECRET"] = "test-billing-secret"
@@ -31,36 +28,13 @@ class AuthApiTests(unittest.TestCase):
         if str(API_ROOT) not in sys.path:
             sys.path.insert(0, str(API_ROOT))
 
-        for module_name in [
-            "app.db.session",
-            "app.db.base",
-            "app.db.models",
-            "app.db.models.user",
-            "app.db.models.beta_access",
-            "app.db.models.referral",
-            "app.db.models.billing",
-            "app.db.models.credits",
-            "app.db.models.feedback",
-            "app.db.models.ai_feedback",
-            "app.db.models.building",
-            "app.db.models.comparison",
-            "app.db.models.home_details",
-            "app.db.models.property",
-            "app.db.models.unit",
-            "app.db.models.usage_event",
-            "app.auth.security",
-            "app.auth.plans",
-            "app.auth.dependencies",
-            "app.auth.router",
-            "app.auth.schemas",
-            "app.billing.service",
-            "app.billing.router",
-            "app.admin.router",
-            "main",
-        ]:
-            sys.modules.pop(module_name, None)
-
-        cls.session_module = importlib.import_module("app.db.session")
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from sqlalchemy.pool import StaticPool
+        from types import SimpleNamespace
+        from app.db.session import get_db
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        cls.session_module = SimpleNamespace(engine=engine, SessionLocal=sessionmaker(bind=engine))
         cls.base_module = importlib.import_module("app.db.base")
         # Import all models so every table is registered with Base.metadata
         importlib.import_module("app.db.models")
@@ -68,6 +42,10 @@ class AuthApiTests(unittest.TestCase):
         cls.beta_access_module = importlib.import_module("app.db.models.beta_access")
         cls.billing_service = importlib.import_module("app.billing.service")
         cls.main_module = importlib.import_module("main")
+        def test_db():
+            with cls.session_module.SessionLocal() as db:
+                yield db
+        cls.main_module.app.dependency_overrides[get_db] = test_db
         cls.base_module.Base.metadata.create_all(bind=cls.session_module.engine)
         cls.client = TestClient(cls.main_module.app)
 
@@ -92,7 +70,8 @@ class AuthApiTests(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls) -> None:
-        cls._tempdir.cleanup()
+        cls.main_module.app.dependency_overrides.clear()
+        cls.session_module.engine.dispose()
 
     def _unique_email(self) -> str:
         return f"user-{self.id()}@example.com"
@@ -132,7 +111,7 @@ class AuthApiTests(unittest.TestCase):
         self.assertIn("/auth/register", paths)
         self.assertIn("/auth/login", paths)
         self.assertIn("/auth/me", paths)
-        self.assertIn("/billing/create-checkout-session", paths)
+        self.assertIn("/billing/checkout", paths)
         self.assertIn("/billing/webhook", paths)
         self.assertIn("/billing/status", paths)
         self.assertNotIn("/auth/auth/register", paths)
@@ -222,7 +201,8 @@ class AuthApiTests(unittest.TestCase):
         premium_token = premium_payload["access_token"]
         self.assertEqual(premium_payload["user"]["requested_plan"], "premium")
         self.assertEqual(premium_payload["user"]["subscription_status"], "pending_payment")
-        self.assertTrue(premium_payload["checkout_session_id"])
+        self.assertTrue(premium_payload["checkout_required"])
+        self.assertNotIn("checkout_session_id", premium_payload)
         self.assertEqual(premium_payload["payment_required_message"], "Payment required to activate Premium")
 
         billing_status = self.client.get(
@@ -233,31 +213,13 @@ class AuthApiTests(unittest.TestCase):
         self.assertEqual(billing_status.json()["requested_plan"], "premium")
         self.assertEqual(billing_status.json()["subscription_status"], "pending_payment")
 
-        webhook_payload = {
-            "event_id": "evt_premium_success",
-            "event_type": "payment_succeeded",
-            "checkout_session_id": premium_payload["checkout_session_id"],
-            "payment_customer_id": "cus_123",
-            "payment_subscription_id": "sub_123",
-        }
-        raw_webhook = json.dumps(webhook_payload).encode("utf-8")
-        webhook_signature = self.billing_service.sign_webhook_payload(raw_webhook)
-        webhook_response = self.client.post(
-            "/billing/webhook",
-            data=raw_webhook,
-            headers={"Content-Type": "application/json", "X-NestAI-Signature": webhook_signature},
-        )
-        self.assertEqual(webhook_response.status_code, 200)
-        self.assertEqual(webhook_response.json()["active_plan"], "premium")
-        self.assertEqual(webhook_response.json()["subscription_status"], "active")
-
         premium_me = self.client.get(
             "/auth/me",
             headers={"Authorization": "Bearer " + premium_token},
         )
         self.assertEqual(premium_me.status_code, 200)
-        self.assertEqual(premium_me.json()["active_plan"], "premium")
-        self.assertEqual(premium_me.json()["subscription_status"], "active")
+        self.assertEqual(premium_me.json()["active_plan"], "free")
+        self.assertEqual(premium_me.json()["subscription_status"], "pending_payment")
 
         plus_response = self._register("plus@example.com", "CorrectHorseBatteryStaple!", "Plus User", "premium_plus")
         self.assertEqual(plus_response.status_code, 201)
@@ -267,28 +229,13 @@ class AuthApiTests(unittest.TestCase):
         self.assertEqual(plus_payload["user"]["active_plan"], "free")
         self.assertEqual(plus_payload["payment_required_message"], "Payment required to activate Premium Plus")
 
-        cancel_payload = {
-            "event_id": "evt_plus_cancel",
-            "event_type": "payment_cancelled",
-            "checkout_session_id": plus_payload["checkout_session_id"],
-        }
-        raw_cancel = json.dumps(cancel_payload).encode("utf-8")
-        cancel_signature = self.billing_service.sign_webhook_payload(raw_cancel)
-        cancel_response = self.client.post(
-            "/billing/webhook",
-            data=raw_cancel,
-            headers={"Content-Type": "application/json", "X-NestAI-Signature": cancel_signature},
-        )
-        self.assertEqual(cancel_response.status_code, 200)
-        self.assertEqual(cancel_response.json()["subscription_status"], "cancelled")
-
         plus_me = self.client.get(
             "/auth/me",
             headers={"Authorization": "Bearer " + plus_token},
         )
         self.assertEqual(plus_me.status_code, 200)
         self.assertEqual(plus_me.json()["active_plan"], "free")
-        self.assertEqual(plus_me.json()["subscription_status"], "cancelled")
+        self.assertEqual(plus_me.json()["subscription_status"], "pending_payment")
 
     def test_beta_invite_deactivate_blocks_future_redemption(self) -> None:
         admin_headers = self._basic_headers("admin@example.com", "AdminPassword123!")
@@ -307,7 +254,7 @@ class AuthApiTests(unittest.TestCase):
         blocked = self._register("locked@example.com", "CorrectHorseBatteryStaple!", "Locked User", "beta", invite_code)
         self.assertEqual(blocked.status_code, 401)
 
-    def test_referral_invite_and_reward_after_payment(self) -> None:
+    def test_referral_invite_preserved_without_mock_payment_reward(self) -> None:
         referrer = self._register("referrer@example.com", "CorrectHorseBatteryStaple!", "Referrer", "free")
         self.assertEqual(referrer.status_code, 201)
         referrer_token = referrer.json()["access_token"]
@@ -330,31 +277,15 @@ class AuthApiTests(unittest.TestCase):
             referral_code=referrer_code,
         )
         self.assertEqual(premium_response.status_code, 201)
-        checkout_session_id = premium_response.json()["checkout_session_id"]
-
-        webhook_payload = {
-            "event_id": "evt_referral_reward_success",
-            "event_type": "payment_succeeded",
-            "checkout_session_id": checkout_session_id,
-            "payment_customer_id": "cus_referral_123",
-            "payment_subscription_id": "sub_referral_123",
-        }
-        raw_webhook = json.dumps(webhook_payload).encode("utf-8")
-        webhook_signature = self.billing_service.sign_webhook_payload(raw_webhook)
-        webhook_response = self.client.post(
-            "/billing/webhook",
-            data=raw_webhook,
-            headers={"Content-Type": "application/json", "X-NestAI-Signature": webhook_signature},
-        )
-        self.assertEqual(webhook_response.status_code, 200)
+        self.assertTrue(premium_response.json()["checkout_required"])
 
         summary_response = self.client.get(
             "/auth/referrals/summary",
             headers={"Authorization": "Bearer " + referrer_token},
         )
         self.assertEqual(summary_response.status_code, 200)
-        self.assertEqual(summary_response.json()["earned_credit_cents"], 500)
-        self.assertTrue(any(r["status"] == "converted" for r in summary_response.json()["referrals"]))
+        self.assertEqual(summary_response.json()["earned_credit_cents"], 0)
+        self.assertTrue(summary_response.json()["referrals"])
 
     def test_premium_signup_requires_trial_consent(self) -> None:
         response = self.client.post(

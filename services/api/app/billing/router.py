@@ -1,68 +1,57 @@
-import os
-import stripe
+"""Authenticated billing endpoints and Stripe-signed webhook."""
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Request, HTTPException
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
-
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
-import stripe
-import os
-
+from app.auth.dependencies import get_current_user
+from app.auth.plans import current_plan
 from app.db.models.user import User
 from app.db.session import get_db
-from app.auth.dependencies import get_current_user
+from app.billing import service
 
 router = APIRouter(prefix="/billing", tags=["billing"])
 
-stripe.api_key = os.environ["STRIPE_SECRET_KEY"]
 
-PRICE_IDS = {
-    "premium": os.environ["STRIPE_PREMIUM_PRICE_ID"],
-    "premium_plus": os.environ["STRIPE_PREMIUM_PLUS_PRICE_ID"],
-}
+class Checkout(BaseModel):
+    plan: str
+    trial_consent: bool = False
+    payment_method_confirmed: bool = False
+    idempotency_key: str = Field(min_length=1, max_length=128)
 
 
 @router.post("/checkout")
-def create_checkout_session(
-    plan: str,
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    if plan not in PRICE_IDS:
-        raise HTTPException(status_code=400, detail="Invalid plan")
-
-    if user.trial_used:
-        raise HTTPException(
-            status_code=400,
-            detail="You have already used your free trial.",
-        )
-
-    base_url = os.environ["NESTAI_STREAMLIT_URL"].rstrip("/")
-
-    session = stripe.checkout.Session.create(
-        mode="subscription",
-        customer_email=user.email,
-        payment_method_collection="always",
-        line_items=[
-            {
-                "price": PRICE_IDS[plan],
-                "quantity": 1,
-            }
-        ],
-        subscription_data={
-            "trial_period_days": 7,
-            "metadata": {
-                "nestai_user_id": str(user.id),
-                "nestai_plan": plan,
-            },
-        },
-        metadata={
-            "nestai_user_id": str(user.id),
-            "nestai_plan": plan,
-        },
-        success_url=f"{base_url}/?checkout=success",
-        cancel_url=f"{base_url}/?checkout=cancelled",
+def checkout(payload: Checkout, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    return service.create_checkout_session(
+        db, user, payload.plan, trial_consent=payload.trial_consent,
+        payment_method_confirmed=payload.payment_method_confirmed,
+        idempotency_key=payload.idempotency_key,
     )
 
-    return {"checkout_url": session.url}
+
+@router.get("/status")
+def status(user: User = Depends(get_current_user)):
+    return {"active_plan": current_plan(user), "requested_plan": user.requested_plan,
+            "subscription_status": user.subscription_status,
+            "trial_used": user.trial_used, "trial_ends_at": user.trial_ends_at,
+            "cancel_at_period_end": user.cancel_at_period_end,
+            "billing_configured": bool(__import__("os").getenv("STRIPE_SECRET_KEY"))}
+
+
+@router.get("/prices")
+def prices(user: User = Depends(get_current_user)):
+    return {plan: {"amount_cents": price.get("unit_amount"), "currency": price.get("currency"),
+                   "recurring": dict(price.get("recurring") or {})}
+            for plan in ("premium", "premium_plus") for price in [service.price_for(plan)]}
+
+
+@router.post("/portal")
+def portal(user: User = Depends(get_current_user)):
+    return service.portal(user)
+
+
+@router.post("/webhook")
+async def webhook(request: Request, db: Session = Depends(get_db)):
+    raw = await request.body()
+    if len(raw) > 2_000_000:
+        raise HTTPException(413, "Webhook body too large")
+    return service.process_webhook(db, raw, request.headers.get("stripe-signature", ""))

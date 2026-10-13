@@ -222,8 +222,8 @@ class TestFreePlanRestrictions:
     def test_free_cannot_use_google_apis(self):
         assert fa.capability("can_use_google_apis") is False
 
-    def test_free_cannot_compare(self):
-        assert fa.capability("can_compare_multiple_properties") is False
+    def test_free_can_compare(self):
+        assert fa.capability("can_compare_multiple_properties") is True
 
     def test_free_analyses_quota_is_5(self):
         assert fa.get_quota("monthly_analyses_limit") == 5
@@ -354,7 +354,7 @@ class TestDevModeEnvVar:
     def test_effective_plan_uses_preview_plan_when_dev_mode_enabled(self):
         os.environ["NESTAI_DEV_MODE"] = "true"
         fa.set_plan(fa.PLAN_FREE)
-        assert fa.get_effective_plan("premium_plus") == fa.PLAN_FREE
+        assert fa.get_effective_plan("premium_plus") == fa.PLAN_PREMIUM_PLUS
 
 
 # ── Pricing cards do not include OWNER_TEST ───────────────────────────────────

@@ -1,0 +1,46 @@
+{
+  "baseline_revision": "c7a197f0e16e697a150b7286fd29afb1d56c181d",
+  "deployment_verified": false,
+  "public_acceptance": "Blocked",
+  "baseline": {
+    "frontend": {"passed": 322, "failed": 9, "evidence": "Existing suite: undefined forgot-password test harness and conflicting Streamlit test mocks"},
+    "api": {"passed": 0, "failed": 2, "evidence": "Existing suite import blocked by undeclared PyJWT dependency"}
+  },
+  "issues": [
+    {"id": "profile", "cause": "Required API client omitted from pricing renderer caller", "status": "Pending", "regression": "Real account tab rendering under all tiers"},
+    {"id": "startup", "cause": "Billing reads mandatory optional credentials at module import", "status": "Pending", "regression": "Import and authenticate without Stripe configuration"},
+    {"id": "persistence", "cause": "Apartments are session DataFrames; houses have random-session SQLite ownership", "status": "Pending", "regression": "PostgreSQL upsert, fresh session, restart, rollback and cross-account tests"},
+    {"id": "legacy-recovery", "cause": "No verified account mapping exists for house session identifiers", "status": "Blocked", "regression": "Preserve original records; no automatic ownership claims"},
+    {"id": "quota", "cause": "Competing session-only limits; enrichment rather than parsing charged", "status": "Pending", "regression": "UTC boundaries, concurrent quota enforcement, mixed-property counts"},
+    {"id": "comparison", "cause": "Alternative-minus-winner delta interpreted in the opposite direction", "status": "Passed", "regression": "tests/test_decision_contract.py: real fixtures $37, $20 and $145/25 sq ft"},
+    {"id": "constraints", "cause": "Active text filter ignored rent and area", "status": "Passed", "regression": "tests/test_decision_contract.py: strict numeric boundaries, invalid output, unknown facts, hard pets"},
+    {"id": "providers", "cause": "Frontend credentials and no durable backend access/usage service", "status": "Pending", "regression": "Mock failure cases separately from actual configured calls"},
+    {"id": "billing", "cause": "Mock signup billing and registered Stripe checkout routes disagree", "status": "Pending", "regression": "Sandbox signature/lifecycle/idempotency and frontend endpoint alignment"},
+    {"id": "plus", "cause": "Decorative explanatory panel instead of additional analytics", "status": "Pending", "regression": "Backend gates, sensitivity, chart points and detailed report download"},
+    {"id": "exports", "cause": "CSV public download unverified; native table download can bypass paid gate", "status": "Pending", "regression": "Actual browser downloads and sanitized content"},
+    {"id": "feedback", "cause": "Frontend SQLite feedback disconnected from PostgreSQL admin view", "status": "Pending", "regression": "Persistence, validation and suppressed external notifications"}
+  ],
+  "product_decisions": {
+    "free_saved_properties": 2,
+    "free_basic_comparison": true,
+    "csv_paid_only": true,
+    "monthly_timezone": "UTC",
+    "referrals": "Removed from MVP UI; records preserved",
+    "legacy_balances": "Preserve without conversion",
+    "price_conflict": "Unresolved: UI $12/$25, mock billing $19/$49, documentation Premium $24.99; no prices changed"
+  },
+  "test_runs": [
+    {"command": "python -m pytest tests/test_decision_contract.py legacy/streamlit/tests/test_ranking_ui_updates.py legacy/streamlit/tests/test_home_parser.py legacy/streamlit/tests/test_house_parser.py -q", "passed": 138, "failed": 0, "kind": "deterministic parser/math"}
+  ],
+  "tiers": {
+    "Free": "Blocked",
+    "Premium": "Blocked",
+    "Premium Plus": "Blocked"
+  },
+  "blockers": [
+    "Hosting configuration, deployed revisions and deployment authorization not verified",
+    "Production provider access and real integration responses not verified",
+    "Approved Stripe product prices and sandbox credentials not verified",
+    "Hosted SQLite backup and ownership evidence unavailable"
+  ]
+}

@@ -4,6 +4,7 @@ Reweights apartment scores based on user priorities across key life domains.
 """
 
 import pandas as pd
+import math
 from typing import Dict, Tuple
 
 
@@ -13,7 +14,7 @@ class LifestyleScorer:
     
     Priorities:
     - Commute: Metro proximity and travel time
-    - Safety: Building amenities and walkability
+    - Renter rating: Listing reviews, not a safety assessment
     - Nightlife: Nearby restaurants, bars, entertainment
     - Budget: Rent and value per sqft
     - Gym: Fitness amenities and nearby gyms
@@ -22,7 +23,7 @@ class LifestyleScorer:
     # Default priority weights (will be overridden by user input)
     DEFAULT_WEIGHTS = {
         "commute": 0.20,
-        "safety": 0.20,
+        "renter_rating": 0.20,
         "nightlife": 0.20,
         "budget": 0.20,
         "gym": 0.20,
@@ -30,9 +31,15 @@ class LifestyleScorer:
     
     def __init__(self, user_weights: Dict[str, float] = None):
         """Initialize scorer with user priority weights."""
-        self.weights = user_weights or self.DEFAULT_WEIGHTS
+        self.weights = dict(user_weights or self.DEFAULT_WEIGHTS)
+        if "safety" in self.weights:
+            self.weights["renter_rating"] = self.weights.pop("safety")
         # Normalize weights to sum to 1.0
+        if any(not isinstance(v, (int, float)) or not math.isfinite(v) or v < 0 for v in self.weights.values()):
+            raise ValueError("Priority weights must be finite, nonnegative and have a positive total.")
         weight_sum = sum(self.weights.values())
+        if weight_sum <= 0:
+            raise ValueError("Priority weights must be finite, nonnegative and have a positive total.")
         self.weights = {k: v / weight_sum for k, v in self.weights.items()}
     
     def compute_commute_score(self, row: pd.Series) -> float:
@@ -59,29 +66,11 @@ class LifestyleScorer:
         else:
             return 30.0
     
-    def compute_safety_score(self, row: pd.Series) -> float:
-        """
-        Score based on walkability and building amenities.
-        - Walk Score >70 = safer, more developed area
-        - Presence of 24h security, concierge = +10
-        """
-        walk_score = row.get("official_walk_score")
-        if pd.isna(walk_score):
-            walk_score = row.get("walk_score")
-        has_security = row.get("has_security", False)
-        has_concierge = row.get("has_concierge", False)
-        
-        score = 50.0  # Baseline
-        
-        if pd.notna(walk_score):
-            score = walk_score
-        
-        if has_security:
-            score += 10
-        if has_concierge:
-            score += 5
-        
-        return min(score, 100.0)
+    def compute_renter_rating_score(self, row: pd.Series) -> float:
+        rating = row.get("renter_rating")
+        if rating is None or pd.isna(rating):
+            return 50.0
+        return max(0.0, min(float(rating), 5.0)) * 20
     
     def compute_nightlife_score(self, row: pd.Series) -> float:
         """
@@ -168,7 +157,7 @@ class LifestyleScorer:
         """
         scores = {
             "commute": self.compute_commute_score(row),
-            "safety": self.compute_safety_score(row),
+            "renter_rating": self.compute_renter_rating_score(row),
             "nightlife": self.compute_nightlife_score(row),
             "budget": self.compute_budget_score(row),
             "gym": self.compute_gym_score(row),
@@ -183,7 +172,7 @@ class LifestyleScorer:
         df = df.copy()
         
         scores = []
-        component_data = {k: [] for k in ["commute", "safety", "nightlife", "budget", "gym"]}
+        component_data = {k: [] for k in ["commute", "renter_rating", "nightlife", "budget", "gym"]}
         
         for _, row in df.iterrows():
             total, components = self.compute_lifestyle_score(row)
@@ -202,7 +191,7 @@ def get_priority_weights_from_sliders(commute: int, safety: int, nightlife: int,
     """Convert slider values (1-5 stars) to normalized weights."""
     raw_weights = {
         "commute": commute,
-        "safety": safety,
+        "renter_rating": safety,
         "nightlife": nightlife,
         "budget": budget,
         "gym": gym,

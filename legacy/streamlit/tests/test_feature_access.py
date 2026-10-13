@@ -41,6 +41,25 @@ def _reset():
 # ── Plan defaults ─────────────────────────────────────────────────────────────
 
 class TestDefaults:
+    def test_authenticated_preview_cannot_grant_paid_access(self):
+        _reset()
+        fa.st.session_state.update(auth_token="token", nestai_plan=fa.PLAN_OWNER_TEST)
+        assert fa.capability("can_export") is False
+        assert fa.get_quota("monthly_analyses_limit") == 0
+        fa.st.session_state.clear()
+
+    def test_authenticated_backend_free_is_authoritative(self):
+        _reset()
+        fa.st.session_state.update(
+            auth_token="token", nestai_plan=fa.PLAN_PREMIUM_PLUS,
+            account_entitlements={"plan": "free", "capabilities": {"can_export": False},
+                                  "quotas": {"saved_property_limit": 2}},
+        )
+        assert fa.get_plan() == fa.PLAN_FREE
+        assert fa.capability("can_export") is False
+        assert fa.get_quota("saved_property_limit") == 2
+        fa.st.session_state.clear()
+
     def test_default_plan_is_free(self):
         _reset()
         assert fa.get_plan() == fa.PLAN_FREE
@@ -75,8 +94,8 @@ class TestFreePlanCapabilities:
     def test_cannot_use_commute_analysis(self):
         assert fa.capability("can_use_commute_analysis") is False
 
-    def test_cannot_compare_multiple_properties(self):
-        assert fa.capability("can_compare_multiple_properties") is False
+    def test_can_compare_two_saved_properties(self):
+        assert fa.capability("can_compare_multiple_properties") is True
 
     def test_cannot_generate_ai_reports(self):
         assert fa.capability("can_generate_ai_reports") is False

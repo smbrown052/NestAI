@@ -62,9 +62,9 @@ def generate_lifestyle_explanation(
     elif factor1_name == "budget":
         price_per_sqft = price / sqft if sqft > 0 else 0
         explanation_parts.append(f"   • {factor1_score:.0f}/100: Excellent value at ${price_per_sqft:.2f}/sqft")
-    elif factor1_name == "safety":
-        walk_score = row.get("official_walk_score", row.get("walk_score"))
-        explanation_parts.append(f"   • {factor1_score:.0f}/100: Highly walkable area (Walk Score {walk_score})")
+    elif factor1_name == "renter_rating":
+        rating = row.get("renter_rating")
+        explanation_parts.append(f"   • Renter rating: {rating}/5" if pd.notna(rating) else "   • Renter rating unknown; neutral scoring fallback")
     elif factor1_name == "nightlife":
         restaurants = row.get("restaurants_count", row.get("nearby_restaurants"))
         bars = row.get("nearby_bars")
@@ -98,8 +98,9 @@ def generate_lifestyle_explanation(
         elif factor2_name == "budget":
             price_per_sqft = price / sqft if sqft > 0 else 0
             explanation_parts.append(f"   • {factor2_score:.0f}/100: ${price_per_sqft:.2f}/sqft")
-        elif factor2_name == "safety":
-            explanation_parts.append(f"   • {factor2_score:.0f}/100: Safe, walkable neighborhood")
+        elif factor2_name == "renter_rating":
+            rating = row.get("renter_rating")
+            explanation_parts.append(f"   • Renter rating: {rating}/5" if pd.notna(rating) else "   • Renter rating unknown; neutral scoring fallback")
         elif factor2_name == "nightlife":
             explanation_parts.append(f"   • {factor2_score:.0f}/100: Great dining and entertainment scene")
         elif factor2_name == "gym":
@@ -117,7 +118,7 @@ def generate_amenities_list(row: pd.Series) -> str:
     if row.get("has_laundry"):
         amenities.append("✓ In-unit Washer/Dryer")
     if row.get("has_gym"):
-        amenities.append("✓ In-unit Gym")
+        amenities.append("✓ Building Gym")
     if row.get("has_fitness"):
         amenities.append("✓ Fitness Center")
     if row.get("has_pool"):
@@ -129,7 +130,7 @@ def generate_amenities_list(row: pd.Series) -> str:
     if row.get("has_patio"):
         amenities.append("✓ Patio")
     if row.get("has_security"):
-        amenities.append("✓ 24hr Security")
+        amenities.append("✓ Security mentioned in listing")
     if row.get("has_concierge"):
         amenities.append("✓ Concierge")
     
@@ -157,7 +158,7 @@ def compare_two_apartments(
     comparison = f"**Unit {unit1} ({score1:.0f}) vs Unit {unit2} ({score2:.0f})**\n\n"
     
     # Find biggest differentiators
-    for factor in ["commute", "budget", "safety", "nightlife", "gym"]:
+    for factor in ["commute", "budget", "renter_rating", "nightlife", "gym"]:
         s1 = scores1.get(factor, 0)
         s2 = scores2.get(factor, 0)
         diff = abs(s1 - s2)

@@ -67,8 +67,6 @@ PREMIUM_PLUS_EXTRA_LABELS: list[str] = [
     "Exclusive report styling and highest-limit indicators",
     "Higher AI, map, and commute limits (500 analyses/month)",
     "Up to 200 saved properties and more report generations",
-    "Early access to new features",
-    "Priority support and priority access to experiments",
 ]
 
 BETA_FEATURE_LABELS: list[str] = [
@@ -108,15 +106,14 @@ PRICING_PLANS: list[dict] = [
         "eyebrow": "Essentials",
         "features": [
             "5 property analyses per month",
-            "1 active saved property",
+            "2 active saved properties across apartments and houses",
             "Apartment and home listing parsing",
             "Basic filters, ranking, and saved preferences",
-            "Intentional feature previews with upgrade guidance",
+            "Basic side-by-side comparison",
         ],
         "not_included": [
             "Commute-aware rankings and neighborhood enrichment",
             "Decision briefs, AI reports, and exports",
-            "Multi-property side-by-side comparison",
             "Advanced AI insights and negotiation tools",
         ],
         "cta_label": "Create Free Account",
@@ -214,29 +211,6 @@ def render_plan_sidebar() -> None:
     """
     plan = get_plan()
 
-    # ── DEV MODE diagnostic banner ────────────────────────────────────────────
-    # Visible only when NESTAI_DEV_MODE=true.  Shows the env flag is active and
-    # which plan values are currently effective so the dev preview is easy to
-    # verify at a glance.  Remove or gate behind is_dev_mode() before release.
-    if is_dev_mode() or is_owner_mode_env():
-        effective = get_effective_plan()
-        preview = get_plan()
-        st.error(
-            f"🛠 **DEV MODE ENABLED**  \n"
-            f"Effective plan: `{effective}`  \n"
-            f"Preview plan:   `{preview}`"
-        )
-
-    # ── Owner Test Mode ───────────────────────────────────────────────────────
-    if is_owner_test():
-        st.success("🔑 **Owner Test Mode — Unlimited**")
-        st.caption("All features and quotas are bypassed.")
-        _render_owner_usage()
-        return
-
-    # ── Account section ───────────────────────────────────────────────────────
-    st.markdown("### 👤 Account")
-
     # Plan badge
     badge_map = {
         PLAN_FREE: "🆓 **Free**",
@@ -246,35 +220,7 @@ def render_plan_sidebar() -> None:
     }
     st.markdown(f"**Current plan:** {badge_map.get(plan, plan)}")
 
-    # Beta access expander — honest session-based invite-code entry
-    with st.expander("🔬 Beta Access", expanded=False):
-        if st.session_state.get("beta_tester"):
-            st.success("✅ Beta features unlocked!")
-        else:
-            st.caption(
-                "Have an invite code? Enter it below to unlock beta features."
-            )
-            beta_code_input = st.text_input(
-                "Invite code",
-                placeholder="e.g. NEST-BETA-2025",
-                type="password",
-                key="beta_code_input",
-                label_visibility="collapsed",
-            )
-            if st.button(
-                "Activate Beta Access",
-                use_container_width=True,
-                key="sidebar_activate_beta_btn",
-            ):
-                from feedback import validate_beta_code
-                if validate_beta_code(beta_code_input):
-                    st.session_state.beta_tester = True
-                    st.success("✅ Beta access activated!")
-                    st.rerun()
-                else:
-                    st.error("Invalid invite code.")
-
-    st.caption("_Session-based access — sign-in coming soon._")
+    st.caption("Account data is restored after sign-in. Browser sessions may require reauthentication.")
     st.divider()
 
     # ── Usage section ─────────────────────────────────────────────────────────
@@ -333,7 +279,7 @@ def render_plan_sidebar() -> None:
 
     # ── Dev plan switcher ─────────────────────────────────────────────────────
     if is_dev_mode() or is_owner_mode_env():
-        _render_dev_plan_switcher()
+        st.caption("Development previews do not change account entitlements.")
 
 
 def _render_owner_usage() -> None:
@@ -517,78 +463,28 @@ def _render_plan_card(
             st.session_state.signup_account_type = "beta"
             st.session_state.main_nav = "Create Account"
             st.rerun()
-    elif plan_id == PLAN_PREMIUM:
-        if st.button(
-            "Start 7-day free trial",
-            use_container_width=True,
-            key=f"plan_cta_{plan_id}",
-            type="primary",
-        ):
-
-            response = api_client.request(
-                "POST",
-                "/billing/checkout?plan=premium",
-            )
-
-            if response.status_code == 200:
-                checkout_url = response.json().get("checkout_url")
-
-                if checkout_url:
-                    st.session_state["premium_checkout_url"] = checkout_url
+    elif plan_id in {PLAN_PREMIUM, PLAN_PREMIUM_PLUS}:
+        consent = st.checkbox("I consent to trial and recurring billing terms shown at checkout.", key=f"consent_{plan_id}")
+        payment = st.checkbox("I will supply a payment method at secure checkout.", key=f"payment_{plan_id}")
+        if st.button("Continue to secure checkout", use_container_width=True, key=f"plan_cta_{plan_id}", type="primary"):
+            if not st.session_state.get("auth_token"):
+                st.session_state.signup_account_type = plan_id.lower()
+                st.session_state.main_nav = "Create Account"
+                st.rerun()
+            elif not consent or not payment:
+                st.warning("Please review and accept the billing terms before continuing.")
             else:
-                try:
-                    detail = response.json().get(
-                        "detail",
-                        "Could not start checkout.",
-                    )
-                except Exception:
-                    detail = "Could not start checkout."
-
-                st.error(detail)
-
-        if st.session_state.get("premium_checkout_url"):
-            st.link_button(
-                "Continue to Stripe →",
-                st.session_state["premium_checkout_url"],
-                use_container_width=True,
-            )
-
-
-    elif plan_id == PLAN_PREMIUM_PLUS:
-        if st.button(
-            "Start 7-day free trial",
-            use_container_width=True,
-            key=f"plan_cta_{plan_id}",
-            type="primary",
-        ):
-
-            response = api_client.request(
-                "POST",
-                "/billing/checkout?plan=premium_plus",
-            )
-
-            if response.status_code == 200:
-                checkout_url = response.json().get("checkout_url")
-
-                if checkout_url:
-                    st.session_state["premium_plus_checkout_url"] = checkout_url
-            else:
-                try:
-                    detail = response.json().get(
-                        "detail",
-                        "Could not start checkout.",
-                    )
-                except Exception:
-                    detail = "Could not start checkout."
-
-                st.error(detail)
-
-        if st.session_state.get("premium_plus_checkout_url"):
-            st.link_button(
-                "Continue to Stripe →",
-                st.session_state["premium_plus_checkout_url"],
-                use_container_width=True,
-            )
+                response = api_client.create_checkout_session(plan_id.lower(), trial_consent=consent, payment_method_confirmed=payment)
+                if response.status_code == 200:
+                    payload = response.json()
+                    st.session_state[f"checkout_url_{plan_id}"] = payload.get("checkout_url")
+                    provider_price = payload.get("price", {})
+                    if provider_price.get("amount_cents") is not None:
+                        st.caption(f"Configured checkout price: {provider_price['amount_cents'] / 100:g} {provider_price.get('currency', '').upper()}. Review the provider's terms; advertised prices above are unchanged.")
+                else:
+                    st.error("Checkout is unavailable. Your current access and balance are unchanged.")
+        if st.session_state.get(f"checkout_url_{plan_id}"):
+            st.link_button("Continue to Stripe →", st.session_state[f"checkout_url_{plan_id}"], use_container_width=True)
 
 
 # ── Inline upgrade prompt ─────────────────────────────────────────────────────

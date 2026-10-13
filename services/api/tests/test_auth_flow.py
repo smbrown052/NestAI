@@ -1,9 +1,8 @@
 import os
-import tempfile
 import unittest
 from pathlib import Path
 
-os.environ["DATABASE_URL"] = f"sqlite:///{Path(tempfile.gettempdir()) / 'nestai-api-auth-tests.db'}"
+os.environ["DATABASE_URL"] = "sqlite://"
 os.environ["ENVIRONMENT"] = "test"
 os.environ["JWT_SECRET_KEY"] = "test-secret-key-with-32-plus-characters"
 os.environ["NESTAI_OWNER_EMAIL"] = "smbrown.052@gmail.com"

@@ -40,6 +40,7 @@ from parser.home_listing import (
 )
 from plan_ui import render_upgrade_prompt, navigate_to_plans
 from ui_theme import normalize_plan, tier_class
+from api_views import display_frame
 
 # ── Session-state keys (homes tab only) ──────────────────────────────────────
 
@@ -899,4 +900,4 @@ def _render_comparison_table(homes: list[dict]) -> None:
     # Streamlit/PyArrow requires each displayed column to use consistent types.
     display_df = df.fillna("—").astype(str)
 
-    st.dataframe(display_df, width="stretch")
+    display_frame(display_df)

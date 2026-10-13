@@ -80,7 +80,7 @@ _CAPABILITIES: dict[str, dict[str, Any]] = {
         "saved_property_limit": 2,          # one active saved property
         "can_restore_archived_property": False,
         # Comparison
-        "can_compare_multiple_properties": False,
+        "can_compare_multiple_properties": True,
         # Filtering
         "can_use_basic_filters": True,
         "can_use_natural_language_filtering": False,
@@ -286,6 +286,9 @@ def _init() -> None:
 def get_plan() -> str:
     """Return the current user's plan (FREE / PREMIUM / PREMIUM_PLUS / BETA)."""
     _init()
+    if st.session_state.get("auth_token"):
+        entitlements = st.session_state.get("account_entitlements") or {}
+        return normalize_plan_value(entitlements.get("plan"))
     return st.session_state.nestai_plan
 
 
@@ -307,8 +310,8 @@ def get_effective_plan(backend_plan: str | None = None, *, beta_access: bool = F
     - Dev/owner mode: session preview plan is authoritative
     """
     _init()
-    if is_dev_mode() or is_owner_mode_env():
-        return get_plan()
+    if st.session_state.get("account_entitlements"):
+        return normalize_plan_value(st.session_state["account_entitlements"].get("plan"))
     if backend_plan is not None or beta_access:
         return normalize_plan_value(backend_plan, beta_access=beta_access)
     return get_plan()
@@ -352,6 +355,11 @@ def capability(feature: str) -> bool:
     Always returns True for admin users and for OWNER_TEST.
     """
     _init()
+    entitlements = st.session_state.get("account_entitlements")
+    if st.session_state.get("auth_token"):
+        if not isinstance(entitlements, dict):
+            return feature in {"can_use_basic_filters", "can_analyze_property"}
+        return entitlements.get("capabilities", {}).get(feature) is True
     if is_admin() or is_owner_test():
         return True
 
@@ -374,6 +382,10 @@ def get_quota(quota_name: str) -> Optional[int]:
     Callers must treat ``None`` as unlimited.
     """
     _init()
+    entitlements = st.session_state.get("account_entitlements")
+    if st.session_state.get("auth_token"):
+        quotas = entitlements.get("quotas", {}) if isinstance(entitlements, dict) else {}
+        return int(quotas.get(quota_name, 0))
     if is_owner_test():
         return None   # unlimited for OWNER_TEST
     plan = get_plan()
@@ -423,7 +435,8 @@ def monthly_analyses_remaining() -> Optional[int]:
     limit = get_quota("monthly_analyses_limit")
     if limit is None:
         return None   # unlimited
-    used = int(st.session_state.nestai_analyses_used_month)
+    entitlements = st.session_state.get("account_entitlements") or {}
+    used = int(entitlements.get("usage", {}).get("analyses_used", 0)) if st.session_state.get("auth_token") else int(st.session_state.nestai_analyses_used_month)
     return max(0, limit - used)
 
 

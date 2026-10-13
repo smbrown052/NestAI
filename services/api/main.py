@@ -12,12 +12,18 @@ Admin dashboard:
     http://localhost:8000/admin/    (JSON API, use Swagger UI or a REST client)
 """
 
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.admin.router import router as admin_router
 from app.auth.router import router as auth_router
 from app.billing.router import router as billing_router
+from app.platform.router import router as platform_router
 
 app = FastAPI(
     title="NestAI API",
@@ -42,6 +48,7 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(billing_router)
 app.include_router(admin_router)
+app.include_router(platform_router)
 
 
 

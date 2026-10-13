@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import hmac
-import json
 import logging
 import os
 import socket
@@ -58,6 +55,17 @@ def registration_error_message(status_code: int) -> str:
         return "Please check the registration fields and try again."
     return "Could not create the account right now. Please try again."
 
+def handle_forgot_password_response(response, state) -> None:
+    state["auth_notice"] = None
+    state["dev_reset_link"] = None
+    if response.status_code == 0:
+        state["auth_error"] = SERVICE_UNAVAILABLE_MESSAGE
+    elif response.status_code != 200:
+        state["auth_error"] = f"Service error (HTTP {response.status_code}). Please try again."
+    else:
+        state["auth_error"] = None
+        state["auth_notice"] = "If an account exists for that email, a password reset link has been sent."
+
 
 def _streamlit_secret_value(key: str) -> str | None:
     try:
@@ -93,17 +101,6 @@ def payment_required_message(plan: str) -> str:
     if normalized == "premium_plus":
         return "Payment required to activate Premium Plus"
     return "Payment required to activate Premium"
-
-
-def billing_webhook_secret() -> str:
-    return os.getenv("BILLING_WEBHOOK_SECRET") or os.getenv("JWT_SECRET_KEY") or os.getenv("SECRET_KEY") or ""
-
-
-def sign_webhook_payload(raw_payload: bytes) -> str:
-    secret = billing_webhook_secret()
-    if not secret:
-        raise RuntimeError("BILLING_WEBHOOK_SECRET or JWT_SECRET_KEY is required for payment confirmation")
-    return hmac.new(secret.encode("utf-8"), raw_payload, hashlib.sha256).hexdigest()
 
 
 def get_api_base_url() -> str | None:
@@ -222,31 +219,18 @@ class NestAIAPIClient:
     def me(self) -> requests.Response:
         return self.request("GET", "/auth/me")
 
-    def create_checkout_session(self, plan: str) -> requests.Response:
-        return self.request("POST", "/billing/create-checkout-session", json={"plan": plan})
+    def create_checkout_session(self, plan: str, *, trial_consent: bool = False, payment_method_confirmed: bool = False) -> requests.Response:
+        return self.request("POST", "/billing/checkout", json={
+            "plan": plan, "idempotency_key": secrets.token_urlsafe(24),
+            "trial_consent": trial_consent, "payment_method_confirmed": payment_method_confirmed,
+        })
 
     def billing_status(self) -> requests.Response:
         return self.request("GET", "/billing/status")
 
     def confirm_payment(self, checkout_session_id: str, requested_plan: str) -> requests.Response:
-        event_payload = {
-            "event_id": f"evt_{secrets.token_urlsafe(16)}",
-            "event_type": "payment_succeeded",
-            "checkout_session_id": checkout_session_id,
-            "payment_customer_id": f"cus_{secrets.token_urlsafe(12)}",
-            "payment_subscription_id": f"sub_{secrets.token_urlsafe(12)}",
-            "requested_plan": requested_plan,
-        }
-        raw_payload = json.dumps(event_payload).encode("utf-8")
-        signature = sign_webhook_payload(raw_payload)
-        response = self.session.request(
-            "POST",
-            self._url("/billing/webhook"),
-            data=raw_payload,
-            headers={"Content-Type": "application/json", "X-NestAI-Signature": signature},
-            timeout=20,
-        )
-        return response
+        # Only a provider webhook may activate a plan; the UI merely refreshes it.
+        return self.billing_status()
 
 
 class StreamlitAuthManager:
@@ -289,6 +273,9 @@ class StreamlitAuthManager:
 
     def set_authenticated(self, token: str, user: dict[str, Any]) -> None:
         session_state = self._session_state
+        previous = session_state.get("auth_user") or {}
+        if previous.get("id") != user.get("id"):
+            self._clear_account_state()
         session_state["auth_token"] = token
         session_state["auth_user"] = user
         session_state["auth_error"] = None
@@ -296,8 +283,29 @@ class StreamlitAuthManager:
         session_state["nestai_tier"] = user.get("active_plan") or user.get("tier", "free")
         self.api_client.set_token(token)
 
+    def _clear_account_state(self) -> None:
+        """Clear account-derived data and widgets without touching local storage."""
+        state = self._session_state
+        keep = {"main_nav", "api_available", "api_last_health_check"}
+        for key in list(state):
+            if key not in keep:
+                del state[key]
+        import pandas as pd
+        state.update({
+            "comparison_df": pd.DataFrame(), "enriched_df": pd.DataFrame(),
+            "parsed_df": pd.DataFrame(), "advisor_messages": [],
+            "building_cache": {}, "last_enrich_time": {},
+            "negotiation_outputs": {}, "user_profile": {}, "cost_extras": {},
+            "enrichment_done": False, "auth_notice": None, "auth_error": None,
+            "nestai_plan": "FREE", "nestai_tier": "free",
+            "paid_features_enabled": False,
+        })
+        for key, value in AUTH_STATE_DEFAULTS.items():
+            state.setdefault(key, value)
+
     def clear_authenticated(self) -> None:
         session_state = self._session_state
+        self._clear_account_state()
         session_state["auth_token"] = None
         session_state["auth_user"] = None
         session_state["nestai_tier"] = "free"
@@ -345,16 +353,6 @@ class StreamlitAuthManager:
 
     def logout(self) -> None:
         self.clear_authenticated()
-        session_state = self._session_state
-        comparison_df = session_state.get("comparison_df")
-        enriched_df = session_state.get("enriched_df")
-        session_state["comparison_df"] = comparison_df.iloc[0:0] if hasattr(comparison_df, "iloc") else comparison_df
-        session_state["enriched_df"] = enriched_df.iloc[0:0] if hasattr(enriched_df, "iloc") else enriched_df
-        session_state["enrichment_done"] = False
-        session_state["negotiation_outputs"] = {}
-        session_state["building_cache"] = {}
-        session_state["last_enrich_time"] = {}
-        session_state["advisor_messages"] = []
 
     def login(self, email: str, password: str) -> requests.Response:
         return self.api_client.login(email, password)
@@ -419,8 +417,12 @@ class StreamlitAuthManager:
                 self._session_state["api_available"] = False
             return False
         refreshed = self.fetch_current_user()
-        if refreshed.status_code == 200:
-            self.set_authenticated(self._session_state.get("auth_token"), refreshed.json())
+        if refreshed.status_code != 200:
+            return False
+        user = refreshed.json()
+        if user.get("active_plan") != requested_plan or user.get("subscription_status") not in {"active", "trialing"}:
+            return False
+        self.set_authenticated(self._session_state.get("auth_token"), user)
         self._session_state["pending_checkout_session_id"] = None
         self._session_state["pending_checkout_url"] = None
         return True

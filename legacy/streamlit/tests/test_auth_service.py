@@ -4,7 +4,7 @@ import os
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pandas as pd
 
@@ -22,6 +22,7 @@ from auth_service import (  # noqa: E402
     get_api_base_url,
     login_error_message,
     registration_error_message,
+    handle_forgot_password_response as _run_forgot_password_block,
 )
 from ui_state import get_navigation_options  # noqa: E402
 
@@ -36,6 +37,57 @@ class FakeResponse:
 
 
 class StreamlitAuthServiceTests(unittest.TestCase):
+    def test_account_switch_clears_house_widgets_preferences_and_caches(self):
+        state = {"auth_user": {"id": 1}, "homes_current_result": {"address": "private"},
+                 "apt_prefs": {"pets": "Yes"}, "account_report": "private", "user_profile": {"max_budget": 9000}}
+        manager = StreamlitAuthManager(Mock(), state)
+        manager.set_authenticated("new-token", {"id": 2, "active_plan": "free"})
+        self.assertNotIn("homes_current_result", state)
+        self.assertNotIn("apt_prefs", state)
+        self.assertNotIn("account_report", state)
+        self.assertEqual(state["user_profile"], {})
+        self.assertEqual(state["auth_user"]["id"], 2)
+
+    def test_api_entitlements_hydrate_profile_and_mixed_properties(self):
+        import api_views
+        client = Mock()
+        client.request.side_effect = [
+            FakeResponse(200, {"plan": "premium_plus", "features": {"exports": True, "advisor": True},
+                               "limits": {"analyses": 500, "properties": 200}, "usage": {"analyses": 7}}),
+            FakeResponse(200, {"properties": [{"id": "a", "kind": "apartment", "parsed": {"address": "A"}},
+                                               {"id": "h", "kind": "home", "parsed": {"address": "H"}}]}),
+            FakeResponse(200, {"preferences": {"max_budget": 2500}}),
+        ]
+        with patch.object(api_views.st, "session_state", {}):
+            self.assertTrue(api_views.hydrate_account(client))
+            state = api_views.st.session_state
+            self.assertEqual(state["user_profile"]["max_budget"], 2500)
+            self.assertEqual(len(state["account_properties"]), 2)
+            self.assertEqual(state["account_entitlements"]["quotas"]["monthly_analyses_limit"], 500)
+            self.assertTrue(state["account_entitlements"]["capabilities"]["can_export"])
+            self.assertEqual(state["account_entitlements"]["usage"]["analyses_used"], 7)
+
+    def test_free_uses_static_table_not_native_download_toolbar(self):
+        import api_views
+        with patch.object(api_views, "capability", return_value=False), patch.object(api_views.st, "table", create=True) as table, patch.object(api_views.st, "dataframe", create=True) as dataframe:
+            api_views.display_frame(pd.DataFrame([{"property": "A"}]))
+            table.assert_called_once()
+            dataframe.assert_not_called()
+
+    def test_safe_errors_do_not_render_backend_details(self):
+        import api_views
+        client = Mock()
+        client.request.return_value = FakeResponse(500, {"detail": "database secret exception"})
+        with patch.object(api_views.st, "error", create=True) as error:
+            self.assertIsNone(api_views.api_call(client, "GET", "/properties"))
+            self.assertNotIn("secret", error.call_args.args[0])
+
+    def test_bed_and_bath_labels_are_normalized(self):
+        from api_views import number_label
+        self.assertEqual(number_label(1.0, "bed"), "1 bed")
+        self.assertEqual(number_label(1.0, "bath"), "1 bath")
+        self.assertEqual(number_label(1.5, "bath"), "1.5 baths")
+
     def test_bearer_token_is_attached_to_authenticated_requests(self) -> None:
         session = Mock()
         session.request.return_value = FakeResponse(200, {"email": "a@example.com"})

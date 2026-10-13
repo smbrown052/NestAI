@@ -1,5 +1,16 @@
 import pandas as pd
 from datetime import datetime, timedelta
+import sys
+from pathlib import Path
+
+_ROOT = Path(__file__).resolve().parents[2]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+from shared.constraints import number
+
+
+def _first_number(row, *names):
+    return next((value for name in names if (value := number(row.get(name))) is not None), None)
 
 
 def apply_ai_filters(df: pd.DataFrame, prefs: dict) -> pd.DataFrame:
@@ -125,9 +136,9 @@ def compute_match_score(row: pd.Series, profile: dict) -> float:
         if ratio <= 0.85:
             score = 1.0
         elif ratio <= 1.0:
-            score = 1.0 - (ratio - 0.85) * (1.0 / 0.15)
+            score = 1.0 - (ratio - 0.85) * (0.3 / 0.15)
         else:
-            score = max(0.0, 1.0 - (ratio - 1.0) * 3)
+            score = max(0.0, 0.7 - (ratio - 1.0) * 3)
         factors.append(("price", min(1.0, score), price_priority))
 
     # ── Square footage fit ────────────────────────────────────────────────
@@ -149,16 +160,16 @@ def compute_match_score(row: pd.Series, profile: dict) -> float:
 
     # ── Commute fit ───────────────────────────────────────────────────────
     commute_tolerance = profile.get("commute_tolerance")
-    commute = row.get("commute_transit_min") or row.get("commute_driving_min") or row.get("metro_min")
-    if commute_tolerance and commute and pd.notna(commute):
+    commute = _first_number(row, "commute_minutes", "commute_transit_min", "commute_driving_min")
+    if commute_tolerance and commute is not None:
         ratio = float(commute) / commute_tolerance
         score = max(0.0, 1.0 - max(0.0, ratio - 0.8) / 0.8)
         factors.append(("commute", min(1.0, score), 1.2))
 
     # ── Walkability fit ───────────────────────────────────────────────────
     walk_priority = float(profile.get("walk_score_priority", 0.0))
-    walk = row.get("official_walk_score") or row.get("walk_score")
-    if walk_priority > 0 and walk and pd.notna(walk):
+    walk = _first_number(row, "official_walk_score", "walk_score")
+    if walk_priority > 0 and walk is not None:
         score = float(walk) / 100.0
         factors.append(("walk", score, walk_priority))
 
@@ -190,8 +201,8 @@ def explain_match(row: pd.Series, profile: dict, match_pct: float) -> list[str]:
             tradeoffs.append(f"Over budget at ${price_int:,}/mo (budget: ${budget:,})")
 
     commute_tolerance = profile.get("commute_tolerance")
-    commute = row.get("commute_transit_min") or row.get("commute_driving_min") or row.get("metro_min")
-    if commute_tolerance and commute and pd.notna(commute):
+    commute = _first_number(row, "commute_minutes", "commute_transit_min", "commute_driving_min")
+    if commute_tolerance and commute is not None:
         commute_int = int(commute)
         if commute_int <= commute_tolerance:
             reasons.append(f"{commute_int}-min commute fits your {commute_tolerance}-min limit")
@@ -199,8 +210,8 @@ def explain_match(row: pd.Series, profile: dict, match_pct: float) -> list[str]:
             tradeoffs.append(f"{commute_int}-min commute exceeds your {commute_tolerance}-min limit")
 
     walk_priority = float(profile.get("walk_score_priority", 0.0))
-    walk = row.get("official_walk_score") or row.get("walk_score")
-    if walk_priority >= 0.5 and walk and pd.notna(walk):
+    walk = _first_number(row, "official_walk_score", "walk_score")
+    if walk_priority >= 0.5 and walk is not None:
         walk_int = int(walk)
         if walk_int >= 70:
             reasons.append(f"Walk score {walk_int}/100 matches your walkability priority")
@@ -236,7 +247,7 @@ def price_position(row: pd.Series, all_units_df: pd.DataFrame) -> tuple[float | 
     """
     beds = row.get("beds_num")
     price = row.get("price_num")
-    if pd.isna(price) or price is None:
+    if pd.isna(price) or price is None or pd.isna(beds) or "beds_num" not in all_units_df or "price_num" not in all_units_df:
         return None, None
 
     same_beds = all_units_df[

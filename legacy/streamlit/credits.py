@@ -57,7 +57,7 @@ TIERS: dict[str, dict] = {
     },
     "premium_plus": {
         "label": "Premium Plus",
-        "analyses": None,
+        "analyses": 500,
         "ai_chat": True,
         "walk_score": True,
         "commute": True,
@@ -111,11 +111,16 @@ def get_tier_info() -> dict:
 
 def analyses_used() -> int:
     _init()
+    if st.session_state.get("account_entitlements"):
+        return int(st.session_state["account_entitlements"].get("usage", {}).get("analyses_used", 0))
     return st.session_state.nestai_analyses_used
 
 
 def analyses_limit() -> int | None:
     _init()
+    if st.session_state.get("auth_token"):
+        from feature_access import get_quota
+        return get_quota("monthly_analyses_limit")
     if _owner_mode_enabled():
         return 10**9
     tier = TIERS[get_tier()]
@@ -139,6 +144,9 @@ def has_feature(feature: str) -> bool:
     Returns True for paid features only on premium tier.
     """
     _init()
+    if st.session_state.get("auth_token"):
+        from feature_access import has_feature as account_feature
+        return account_feature(feature)
     if feature == "parse":
         return True
     if _owner_mode_enabled():
@@ -167,6 +175,8 @@ def consume_analysis(building_id: str) -> bool:
     Idempotent within the same session (same building is not charged twice).
     """
     _init()
+    if st.session_state.get("auth_token"):
+        return False  # Account credits are debited only by the feature endpoint.
     if _owner_mode_enabled():
         st.session_state.nestai_enriched_buildings.add(building_id)
         return True
@@ -184,13 +194,13 @@ def consume_analysis(building_id: str) -> bool:
 def add_extra_credits(n: int = _EXTRA_PACK_SIZE) -> None:
     """Add *n* extra analysis credits (e.g. after purchase)."""
     _init()
-    st.session_state.nestai_extra_credits += n
+    raise RuntimeError("Credits can only be granted by the account service.")
 
 
 def upgrade_to_premium() -> None:
     """Simulate upgrading to Premium (called after payment confirmation)."""
     _init()
-    st.session_state.nestai_tier = "premium"
+    raise RuntimeError("Subscriptions can only be activated by verified billing.")
 
 
 # ── Demo helper used by the sidebar ──────────────────────────────────────────
@@ -209,22 +219,10 @@ def render_tier_badge() -> None:
         )
         if remaining == 0:
             st.warning("You've used all free analyses.")
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("⭐ Upgrade — $24.99", use_container_width=True, key="upgrade_btn"):
-                upgrade_to_premium()
-                st.success("Upgraded to Premium!")
-                st.rerun()
-        with col2:
-            if st.button("➕ 50 credits — $9.99", use_container_width=True, key="buy_credits_btn"):
-                add_extra_credits(50)
-                st.success("50 credits added!")
-                st.rerun()
     else:
         st.markdown(
-            f"**⭐ Premium** · {remaining}/{limit} analyses left"
+            f"**⭐ {info['label']}** · {remaining}/{limit} analyses left"
         )
-        if st.button("➕ More credits — $9.99 / 50", use_container_width=True, key="buy_more_btn"):
-            add_extra_credits(50)
-            st.success("50 credits added!")
-            st.rerun()
+    if st.button("View subscription plans", key="credit_view_plans"):
+        st.session_state["main_nav"] = "Pricing"
+        st.rerun()

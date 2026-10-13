@@ -1,5 +1,13 @@
 import re
 import pandas as pd
+import sys
+from pathlib import Path
+
+_REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPOSITORY_ROOT))
+
+from shared.constraints import parse_constraints, eligible
 
 
 def clean_money(value):
@@ -12,8 +20,11 @@ def clean_money(value):
 def parse_number(value):
     if not isinstance(value, str):
         return None
-    match = re.search(r"(\d+)", value.replace(",", ""))
-    return int(match.group(1)) if match else None
+    match = re.search(r"(\d+(?:\.\d+)?)", value.replace(",", ""))
+    if not match:
+        return 0 if value.strip().lower() == "studio" else None
+    parsed = float(match.group(1))
+    return int(parsed) if parsed.is_integer() else parsed
 
 
 def parse_floor_from_unit(unit):
@@ -54,15 +65,15 @@ def extract_amenities_from_text(text):
     Searches Apartment Features, Community Amenities, and FAQ sections.
     """
     amenities = {
-        "has_laundry": False,
-        "has_gym": False,
-        "has_fitness": False,
-        "has_pool": False,
-        "has_parking": False,
-        "has_balcony": False,
-        "has_patio": False,
-        "has_security": False,
-        "has_concierge": False,
+        "has_laundry": None,
+        "has_gym": None,
+        "has_fitness": None,
+        "has_pool": None,
+        "has_parking": None,
+        "has_balcony": None,
+        "has_patio": None,
+        "has_security": None,
+        "has_concierge": None,
     }
     
     text_lower = text.lower()
@@ -105,6 +116,14 @@ def extract_amenities_from_text(text):
     
     if "concierge" in text_lower:
         amenities["has_concierge"] = True
+
+    for key, term in (("has_pool", "pool"), ("has_parking", "parking"),
+                      ("has_gym", "gym"), ("has_fitness", "fitness center"),
+                      ("has_laundry", "in-unit laundry"), ("has_balcony", "balcony"),
+                      ("has_patio", "patio"), ("has_security", "security"),
+                      ("has_concierge", "concierge")):
+        if re.search(r"\bno\s+" + re.escape(term) + r"\b", text_lower):
+            amenities[key] = False
     
     return amenities
 
@@ -282,6 +301,10 @@ def parse_renter_rating(lines):
 
 
 def parse_apartment_text(text):
+    if not isinstance(text, str):
+        raise ValueError("Listing text must be text.")
+    if len(text.encode("utf-8")) > 131_072:
+        raise ValueError("Listing text must be at most 128 KB.")
     lines = [line.strip() for line in text.splitlines() if line.strip()]
 
     property_title = ""
@@ -302,6 +325,8 @@ def parse_apartment_text(text):
 
     # Extract amenities from full text
     building_amenities = extract_amenities_from_text(text)
+    pet_match = re.search(r"(?im)^.*(?:no pets|pets (?:allowed|welcome)|pet[- ]friendly|cats,? dogs ok).*$", text)
+    pets_policy = pet_match.group(0).strip() if pet_match else None
 
     # Nearby uses the FULL page
     nearby_places = parse_nearby_places(lines)
@@ -310,7 +335,6 @@ def parse_apartment_text(text):
     # Building-level scores shared by all units
     walk_score = parse_walk_score(lines)
     renter_rating = parse_renter_rating(lines)
-    safety_score = round(renter_rating / 5.0 * 100) if renter_rating is not None else None
 
     # Units use ONLY the pricing section
     pricing_start = None
@@ -453,7 +477,8 @@ def parse_apartment_text(text):
                         "availability": availability,
                         "available_date": availability,
                         "walk_score": walk_score,
-                        "safety_score": safety_score,
+                        "renter_rating": renter_rating,
+                        "pets_policy": pets_policy,
                     }
 
                     # Add building amenities to each unit
@@ -478,6 +503,12 @@ def parse_apartment_text(text):
 
 
 def filter_units_by_request(df, request):
+    numeric_request = re.search(r"(?:under|below|less than|at most|up to|square feet|sqft|pet.friend|pets required)", request.lower())
+    if numeric_request:
+        constraints = parse_constraints(request)
+        if df.empty:
+            return df.copy()
+        return df[df.apply(lambda row: eligible(row.to_dict(), constraints), axis=1)].copy()
     if df.empty:
         return df
 

@@ -81,9 +81,9 @@ class TestTierDefinitions:
         from credits import TIERS
         assert TIERS["premium"]["analyses"] == 100
 
-    def test_premium_plus_has_unlimited_analyses(self):
+    def test_premium_plus_has_finite_analyses(self):
         from credits import TIERS
-        assert TIERS["premium_plus"]["analyses"] is None
+        assert TIERS["premium_plus"]["analyses"] == 500
 
     def test_free_has_no_ai(self):
         from credits import TIERS
@@ -119,11 +119,11 @@ class TestAnalysesLimit:
         from credits import analyses_limit
         assert analyses_limit() == 100
 
-    def test_premium_plus_limit_is_none(self):
+    def test_premium_plus_limit_is_five_hundred(self):
         import streamlit as st
         st.session_state = _fresh_state(nestai_tier="premium_plus")
         from credits import analyses_limit
-        assert analyses_limit() is None
+        assert analyses_limit() == 500
 
     def test_extra_credits_added_to_limit(self):
         import streamlit as st
@@ -145,19 +145,19 @@ class TestAnalysesRemaining:
         from credits import analyses_remaining
         assert analyses_remaining() == 0
 
-    def test_premium_plus_remaining_is_none(self):
+    def test_premium_plus_remaining_is_finite(self):
         import streamlit as st
         st.session_state = _fresh_state(nestai_tier="premium_plus", nestai_analyses_used=99)
         from credits import analyses_remaining
-        assert analyses_remaining() is None
+        assert analyses_remaining() == 401
 
 
 class TestCanEnrichBuilding:
-    def test_premium_plus_can_always_enrich(self):
+    def test_premium_plus_cannot_enrich_at_limit(self):
         import streamlit as st
         st.session_state = _fresh_state(nestai_tier="premium_plus", nestai_analyses_used=500)
         from credits import can_enrich_building
-        assert can_enrich_building("any_building") is True
+        assert can_enrich_building("any_building") is False
 
     def test_free_tier_blocked_at_limit(self):
         import streamlit as st
@@ -177,11 +177,11 @@ class TestCanEnrichBuilding:
 
 
 class TestConsumeAnalysis:
-    def test_premium_plus_consumes_without_limit(self):
+    def test_premium_plus_rejects_when_exhausted(self):
         import streamlit as st
         st.session_state = _fresh_state(nestai_tier="premium_plus", nestai_analyses_used=999)
         from credits import consume_analysis
-        assert consume_analysis("bldg_xyz") is True
+        assert consume_analysis("bldg_xyz") is False
 
     def test_free_tier_fails_when_exhausted(self):
         import streamlit as st
@@ -260,4 +260,3 @@ class TestSetTier:
         from credits import set_tier, get_tier
         set_tier("enterprise")  # invalid — should be ignored
         assert get_tier() == "free"
-

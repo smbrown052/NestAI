@@ -78,7 +78,7 @@ def render_lifestyle_priorities(
             key=f"{key_prefix}_commute_priority",
         )
         safety = st.slider(
-            "🛡️ Safety",
+            "⭐ Renter rating",
             1,
             5,
             3,

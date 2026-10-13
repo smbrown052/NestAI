@@ -21,7 +21,7 @@ from app.auth.plans import (
     requested_plan,
     set_user_plan,
 )
-from app.billing.service import create_checkout_session, payment_required_message
+from app.billing.service import payment_required_message
 from app.auth.security import (
     create_access_token,
     hash_password,
@@ -173,7 +173,6 @@ def register_user(payload: RegisterRequest, db: Session = Depends(get_db)):
         referral_credit_cents=0,
     )
 
-    checkout_session_info = None
     if account_type == FREE_PLAN:
         set_user_plan(user, FREE_PLAN, requested=None, subscription_status="active")
     elif account_type == BETA_PLAN:
@@ -244,26 +243,9 @@ def register_user(payload: RegisterRequest, db: Session = Depends(get_db)):
     }
 
     if account_type in PAYMENT_PLANS:
-        try:
-            checkout_session_info = create_checkout_session(
-                db,
-                user,
-                account_type,
-                trial_consent=payload.trial_consent,
-                payment_method_confirmed=payload.payment_method_confirmed,
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
-        db.refresh(user)
-        refreshed_user_data = _serialize_user(user).model_dump(mode="json")
         response.update(
-            {
-                **refreshed_user_data,
-                "plan": plan_label(current_plan(user)).upper(),
-                "user": refreshed_user_data,
-                **checkout_session_info,
-                "payment_required_message": payment_required_message(account_type),
-            }
+            payment_required_message=payment_required_message(account_type),
+            checkout_required=True,
         )
 
     return response

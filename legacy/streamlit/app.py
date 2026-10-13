@@ -2,6 +2,7 @@ import time as _time
 from html import escape as html_escape
 from pathlib import Path
 from homes_tab import render_homes_tab
+from api_views import hydrate_account, render_account_view, render_advisor, display_frame
 
 import streamlit as st
 import pandas as pd
@@ -66,6 +67,7 @@ from auth_service import (
     registration_error_message,
     payment_required_message,
     SERVICE_UNAVAILABLE_MESSAGE,
+    handle_forgot_password_response,
 )
 
 st.set_page_config(page_title="NestAI", page_icon="🏠", layout="wide")
@@ -537,6 +539,8 @@ for key, default in {
 auth.initialize()
 auth.restore_from_session()
 auth.sync_user_tier()
+if auth.is_authenticated():
+    hydrate_account(api_client)
 api_available = auth.is_api_available()
 
 if auth.is_authenticated():
@@ -651,80 +655,12 @@ with st.sidebar:
 
     st.divider()
 
-    # ── Remove Building ─────────────────────────────────────────────────────
-    if auth.is_authenticated() and not st.session_state.comparison_df.empty:
-        buildings_available = sorted(
-            st.session_state.comparison_df["property"].dropna().unique().tolist()
-        )
-        if buildings_available:
-            st.markdown("## 🗑 Remove Building")
-            building_to_remove = st.selectbox(
-                "Select building to remove",
-                options=["— keep all —"] + buildings_available,
-                key="remove_building_select",
-            )
-            if st.button("Remove Building", use_container_width=True, type="secondary"):
-                if building_to_remove and building_to_remove != "— keep all —":
-                    st.session_state.comparison_df = st.session_state.comparison_df[
-                        st.session_state.comparison_df["property"] != building_to_remove
-                    ].reset_index(drop=True)
-                    if not st.session_state.enriched_df.empty:
-                        st.session_state.enriched_df = st.session_state.enriched_df[
-                            st.session_state.enriched_df["property"] != building_to_remove
-                        ].reset_index(drop=True)
-                    # Clear building cache entry for removed building
-                    addr_keys = [
-                        k for k in st.session_state.building_cache
-                        if building_to_remove.lower() in k.lower()
-                    ]
-                    for k in addr_keys:
-                        del st.session_state.building_cache[k]
-                    st.success(f"Removed **{building_to_remove}** from your search.")
-                    st.rerun()
-            st.divider()
-
     st.markdown("## 🤖 AI Apartment Advisor")
     st.caption(
         "Ask about commutes, tradeoffs, lifestyle fit, or anything else about your saved units."
     )
 
-    if not has_feature("ai_chat"):
-        render_upgrade_prompt("can_use_ai_chat", "AI Apartment Advisor")
-    elif not openai_configured():
-        st.info("Add `OPENAI_API_KEY` to Streamlit secrets to enable the advisor.")
-    else:
-        units_ctx = (
-            st.session_state.enriched_df.to_dict("records")
-            if not st.session_state.enriched_df.empty
-            else st.session_state.comparison_df.to_dict("records")
-        )
-
-        for msg in st.session_state.advisor_messages:
-            with st.chat_message(msg["role"]):
-                st.write(msg["content"])
-
-        if prompt := st.chat_input("Ask your advisor…"):
-            st.session_state.advisor_messages.append(
-                {"role": "user", "content": prompt}
-            )
-            with st.spinner("Thinking…"):
-                try:
-                    reply = advisor_chat_response(
-                        prompt,
-                        st.session_state.advisor_messages[:-1],
-                        units_ctx,
-                    )
-                except Exception as e:
-                    reply = f"⚠️ Advisor error: {e}"
-            st.session_state.advisor_messages.append(
-                {"role": "assistant", "content": reply}
-            )
-            st.rerun()
-
-        if st.session_state.advisor_messages:
-            if st.button("🗑 Clear conversation", use_container_width=True):
-                st.session_state.advisor_messages = []
-                st.rerun()
+    render_advisor(api_client)
 
     st.divider()
 
@@ -751,6 +687,10 @@ with st.sidebar:
             st.caption("Paste an apartment listing to get started.")
 
 
+if active_screen in {"Apartment Search", "Houses", "Profile"}:
+    render_account_view(api_client, auth, active_screen)
+    st.stop()
+
 if active_screen == "Profile":
     if auth.is_authenticated():
         user = auth.user() or {}
@@ -759,8 +699,8 @@ if active_screen == "Profile":
         visual_tier = current_visual_tier(user)
         st.markdown("### Account Dashboard")
         render_badge(visual_tier, icon="✦")
-        account_tab, subscription_tab, referrals_tab, preferences_tab = st.tabs(
-            ["Account", "Subscription & Pricing", "Referrals", "Preferences"]
+        account_tab, subscription_tab, preferences_tab = st.tabs(
+            ["Account", "Subscription & Pricing", "Preferences"]
         )
 
         with account_tab:
@@ -851,32 +791,7 @@ if active_screen == "Profile":
                     if auth.confirm_pending_payment():
                         st.session_state.auth_notice = "Payment verified. Premium access activated."
                         st.rerun()
-            render_pricing_cards()
-
-        with referrals_tab:
-            summary_response = auth.api_client.request("GET", "/auth/referrals/summary")
-            if summary_response.status_code == 200:
-                summary_payload = summary_response.json()
-                st.text_input("Your referral code", value=summary_payload.get("referral_code") or "", disabled=True)
-                st.text_input("Your referral link", value=summary_payload.get("referral_link") or "", disabled=True)
-                credits_dollars = (summary_payload.get("earned_credit_cents") or 0) / 100
-                st.metric("Earned referral credits", f"${credits_dollars:,.2f}")
-                invitations = summary_payload.get("referrals") or []
-                if invitations:
-                    st.dataframe(pd.DataFrame(invitations), use_container_width=True)
-            else:
-                st.info("Referral details are unavailable right now.")
-
-            with st.form("referral_invite_form"):
-                invite_email = st.text_input("Invite by email")
-                invite_submit = st.form_submit_button("Send referral invite", use_container_width=True, disabled=not api_available)
-            if invite_submit and invite_email.strip():
-                invite_response = auth.api_client.request("POST", "/auth/referrals/invite", json={"email": invite_email.strip()})
-                if invite_response.status_code in {200, 201}:
-                    st.success("Referral invitation saved.")
-                    st.rerun()
-                else:
-                    st.error("Could not send referral invitation.")
+            render_pricing_cards(api_client)
 
         with preferences_tab:
             render_lifestyle_profile_controls()
@@ -952,7 +867,7 @@ if active_screen == "Create Account":
         register_name = st.text_input("Display name", key="register_name")
         register_email = st.text_input("Email", key="register_email")
         register_password = st.text_input("Password", type="password", key="register_password")
-        referral_code = st.text_input("Referral code (optional)", key="register_referral_code")
+        referral_code = None
         beta_invite_code = None
         trial_consent = False
         payment_method_confirmed = False
@@ -960,13 +875,13 @@ if active_screen == "Create Account":
             beta_invite_code = st.text_input("Beta invite code", type="password", key="beta_invite_code")
         if selected_account_type in {"premium", "premium_plus"}:
             st.caption("Free trial ends in 7 days. Then monthly billing starts unless you cancel before the end date.")
-            st.caption("You will receive a reminder before billing.")
+            st.caption("Review the actual provider terms and price at secure checkout.")
             trial_consent = st.checkbox(
                 "I explicitly agree to automatic conversion after trial ends using my payment method on file.",
                 key="trial_consent_checkbox",
             )
             payment_method_confirmed = st.checkbox(
-                "I have provided and confirmed a payment method.",
+                "I will supply a payment method at secure checkout.",
                 key="payment_method_confirmed_checkbox",
             )
         register_submit = st.form_submit_button("Create Account", use_container_width=True, disabled=not api_available)
@@ -979,7 +894,7 @@ if active_screen == "Create Account":
                 register_name,
                 account_type=selected_account_type,
                 beta_invite_code=beta_invite_code,
-                referral_code=referral_code.strip() or None,
+                referral_code=None,
                 trial_consent=trial_consent,
                 payment_method_confirmed=payment_method_confirmed,
             )
@@ -1021,20 +936,7 @@ if active_screen == "Forgot Password":
         forgot_submit = st.form_submit_button("Send reset instructions", use_container_width=True, disabled=not api_available)
     if forgot_submit:
         response = auth.forgot_password(forgot_email)
-        if response.status_code == 0:
-            st.session_state.auth_error = SERVICE_UNAVAILABLE_MESSAGE
-        else:
-            try:
-                payload = response.json()
-            except ValueError:
-                st.session_state.auth_error = f"Service error (HTTP {response.status_code}). Please try again."
-                st.rerun()
-            else:
-                st.session_state.auth_notice = payload.get("message") or "If an account exists for that email, a password reset link has been sent."
-                reset_link = payload.get("reset_link")
-                if reset_link:
-                    st.session_state.auth_notice = f"{st.session_state.auth_notice} Development reset link generated below."
-                    st.session_state["dev_reset_link"] = reset_link
+        handle_forgot_password_response(response, st.session_state)
         st.rerun()
     if st.session_state.get("dev_reset_link"):
         st.code(st.session_state["dev_reset_link"])
@@ -1080,10 +982,6 @@ if active_screen == "Pricing":
     st.stop()
 
 if active_screen == "Home":
-    if auth.is_authenticated():
-        st.session_state.main_nav = "Apartment Search"
-        st.rerun()
-
     st.markdown(
         """
         <div class="home-hero">
@@ -1102,22 +1000,22 @@ if active_screen == "Home":
 
     with cta1:
         if st.button(
-            "Sign in",
+            "Compare saved properties" if auth.is_authenticated() else "Sign in",
             key="home_sign_in",
             use_container_width=True,
             type="secondary",
         ):
-            st.session_state.main_nav = "Login"
+            st.session_state.main_nav = "Apartment Search" if auth.is_authenticated() else "Login"
             st.rerun()
 
     with cta2:
         if st.button(
-            "Create free account",
+            "View profile" if auth.is_authenticated() else "Create free account",
             key="home_sign_up",
             use_container_width=True,
             type="primary",
         ):
-            st.session_state.main_nav = "Create Account"
+            st.session_state.main_nav = "Profile" if auth.is_authenticated() else "Create Account"
             st.rerun()
 
     st.markdown("### How NestAI works")
@@ -1266,7 +1164,7 @@ if active_screen == "Admin":
             users_list = users_resp.json()
             if users_list:
                 df_users = pd.DataFrame(users_list)
-                st.dataframe(df_users, use_container_width=True)
+                display_frame(df_users)
             else:
                 st.info("No users found.")
         else:
@@ -1279,7 +1177,7 @@ if active_screen == "Admin":
             beta_users = [u for u in all_users if u.get("beta_tester")]
             st.markdown(f"**{len(beta_users)} beta testers**")
             if beta_users:
-                st.dataframe(pd.DataFrame(beta_users), use_container_width=True)
+                display_frame(pd.DataFrame(beta_users))
             st.markdown("#### Promote a user to beta")
             user_id_input = st.number_input("User ID to promote", min_value=1, step=1, key="promote_beta_id")
             if st.button("Promote to Beta", use_container_width=True):
@@ -1297,7 +1195,7 @@ if active_screen == "Admin":
         if codes_resp.status_code == 200:
             codes_list = codes_resp.json()
             if codes_list:
-                st.dataframe(pd.DataFrame(codes_list), use_container_width=True)
+                display_frame(pd.DataFrame(codes_list))
             else:
                 st.info("No invite codes yet.")
         else:
@@ -1347,7 +1245,7 @@ if active_screen == "Admin":
         if fb_resp.status_code == 200:
             fb_list = fb_resp.json()
             if fb_list:
-                st.dataframe(pd.DataFrame(fb_list), use_container_width=True)
+                display_frame(pd.DataFrame(fb_list))
             else:
                 st.info("No feedback reports found.")
         else:
@@ -1485,12 +1383,12 @@ if st.session_state.last_result:
 
     if result.get("nearby_places"):
         with st.expander("View nearby building-level places"):
-            st.dataframe(pd.DataFrame(result["nearby_places"]), use_container_width=True)
+            display_frame(pd.DataFrame(result["nearby_places"]))
 
     if not st.session_state.parsed_df.empty:
         st.markdown("### 📋 Parsed Units")
         st.caption("Units extracted from this listing. Save them to add them to your comparison.")
-        st.dataframe(st.session_state.parsed_df, use_container_width=True)
+        display_frame(st.session_state.parsed_df)
 
         # Cost of living extras for this property
         with st.expander("💵 Set optional monthly fees for this property"):
@@ -2079,7 +1977,7 @@ if auth.is_authenticated() and not st.session_state.comparison_df.empty:
             if score_col in clean_ranked_df.columns:
                 clean_ranked_df[score_col] = clean_ranked_df[score_col].round(1)
 
-        st.dataframe(clean_ranked_df, use_container_width=True)
+        display_frame(clean_ranked_df)
 
 else:
     if auth.is_authenticated():

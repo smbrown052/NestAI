@@ -33,8 +33,6 @@ class User(Base):
     stripe_customer_id = mapped_column(String, nullable=True)
     stripe_subscription_id = mapped_column(String, nullable=True)
 
-    subscription_status = mapped_column(String, nullable=True)
-
     trial_used = mapped_column(Boolean, nullable=False, default=False)
 
     trial_ends_at = mapped_column(DateTime(timezone=True), nullable=True)

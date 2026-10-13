@@ -14,8 +14,8 @@ Find *your* nest.
 
 | Component | Location | Status |
 |-----------|----------|--------|
-| **Streamlit app** (current) | `legacy/streamlit/app.py` | ✅ Working |
-| **FastAPI backend** (new) | `services/api/` | 🏗 In progress |
+| **Streamlit app** (current) | `legacy/streamlit/app.py` | Release validation required |
+| **FastAPI backend** | `services/api/main.py` | Account persistence and entitlement enforcement |
 | **Next.js website** (future) | `apps/web/` | Not started |
 | **Mobile app** (future) | `apps/mobile/` | Not started |
 
@@ -133,6 +133,66 @@ Required Render environment variables:
 - `JWT_SECRET_KEY`
 - `JWT_ALGORITHM`
 - `ACCESS_TOKEN_EXPIRE_MINUTES`
+
+### MVP regression and release validation
+
+The deployed frontend path must be `legacy/streamlit/app.py`; the backend root is
+`services/api` with `uvicorn main:app`. Verify both hosting settings and deployed
+commit identifiers: documentation and matching source traceback lines alone do
+not prove the deployed revision.
+
+Install both components' requirements and `requirements-dev.txt`, then install
+the test browser with `python -m playwright install chromium`. Supply an
+**isolated** PostgreSQL `NESTAI_TEST_DATABASE_URL` through secure test
+configuration; never point regression tests at a production database.
+
+```bash
+make -C /home/runner/work/NestAI/NestAI regression
+make -C /home/runner/work/NestAI/NestAI live-smoke
+```
+
+`regression` covers deterministic unit tests, API/database tests and actual
+Streamlit browser journeys. Legacy unit files run in separate processes because
+they replace Streamlit with module mocks. `live-smoke` is separate: configured
+provider calls and deployed journeys are required for release, and missing
+credentials/access are explicitly blocked rather than counted as passing.
+The machine-readable acceptance record is `docs/acceptance-ledger.json`.
+
+Account quotas are shared across apartments and houses and reset at midnight
+UTC on the first day of each calendar month. A saved apartment building counts
+as one property regardless of unit count. Free has 5 successful analyses and
+2 active properties; Premium has 100/50; Premium Plus has 500/200, not unlimited.
+The separate starting Premium/Plus monthly limits are AI 100/500, enrichment
+50/200, commute 100/400 and reports 20/100. Consult the shared entitlement
+configuration for supported environment overrides.
+
+Repeated successful requests use account-scoped idempotency; failed requests
+must not consume successful-operation quota. Legacy credits and complimentary
+grants remain separate and must not be silently converted or discarded.
+Downgrades preserve saved records. CSV and decision report downloads require
+Premium or Plus, including native table-download controls.
+
+Provider execution belongs in FastAPI. Configure `OPENAI_API_KEY`,
+`GOOGLE_MAPS_API_KEY` and `WALKSCORE_API_KEY` there, not only in Streamlit secrets.
+Billing additionally needs `STRIPE_SECRET_KEY`, `STRIPE_PREMIUM_PRICE_ID`,
+`STRIPE_PREMIUM_PLUS_PRICE_ID`, `STRIPE_WEBHOOK_SECRET` and
+`NESTAI_STREAMLIT_URL`. Use Stripe sandbox credentials for all test operations;
+never create real charges or send real feedback emails during tests. Optional
+integration failures must not prevent authentication, saving or ranking.
+
+**Price reconciliation remains required:** existing UI advertises $12/$25,
+the legacy mock service advertised $19/$49, and older documentation advertises
+$24.99 for Premium. Verify approved Stripe products before changing prices or
+claiming billing readiness. Referrals/support/early-access promises are outside
+this MVP; preserve their existing records.
+
+**Legacy recovery:** apartment session DataFrames were not durable database
+records. House SQLite rows have random session ownership without an established
+account mapping. Back up the hosted SQLite database before changing deployment;
+retain unassigned records and their event history. Do not infer ownership from
+addresses, timestamps, arbitrary session identifiers or the next signed-in
+account. Recovery requires trustworthy historical evidence and an audited
+privileged process. Do not delete or automatically import unowned data.
 
 ---
 

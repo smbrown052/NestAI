@@ -2,6 +2,11 @@
 home_storage.py
 Local SQLite persistence for saved/archived homes (Homes tab).
 
+Legacy records only. The active app uses account-owned API records through
+api_views.py and never infers an account owner from these session identifiers.
+This database is retained intact; reauthentication restores API records, not
+unclaimed legacy records.
+
 NOTE (local/session-based enforcement):
     All records are stored per-session using a session identifier derived
     from Streamlit's session state.  Ownership enforcement is LOCAL and

@@ -38,13 +38,12 @@ sys.modules["streamlit"] = _mock_st
 
 import home_storage
 
-_tmp_db = Path(tempfile.mkdtemp()) / "test_homes.db"
-
 @pytest.fixture(autouse=True)
 def _use_tmp_db(monkeypatch, tmp_path):
     """Redirect all DB operations to an isolated temp database."""
     db_file = tmp_path / "test_homes.db"
     monkeypatch.setattr(home_storage, "_DB_PATH", db_file)
+    monkeypatch.setattr(home_storage.st, "session_state", _state)
     _state.clear()
     _state["nestai_session_id"] = "test-session-001"
     yield

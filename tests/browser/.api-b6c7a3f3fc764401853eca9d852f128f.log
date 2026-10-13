@@ -1,0 +1,42 @@
+INFO:     Started server process [55857]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:46321 (Press CTRL+C to quit)
+INFO:     127.0.0.1:48646 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48654 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48656 - "POST /auth/register HTTP/1.1" 201 Created
+INFO:     127.0.0.1:48658 - "GET /auth/me HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48658 - "GET /billing/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48658 - "GET /entitlements HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48658 - "GET /properties HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48658 - "GET /profile HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48664 - "GET /auth/me HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48664 - "GET /billing/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48664 - "GET /entitlements HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48664 - "GET /properties HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48664 - "GET /profile HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48666 - "GET /auth/me HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48666 - "GET /billing/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48666 - "GET /entitlements HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48666 - "GET /properties HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48666 - "GET /profile HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48674 - "GET /auth/me HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48674 - "GET /billing/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48674 - "GET /entitlements HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48674 - "GET /properties HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48674 - "GET /profile HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48680 - "GET /auth/me HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48680 - "GET /billing/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48680 - "GET /entitlements HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48680 - "GET /properties HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48680 - "GET /profile HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48688 - "GET /auth/me HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48688 - "GET /billing/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48688 - "GET /entitlements HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48688 - "GET /properties HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48688 - "GET /profile HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48696 - "GET /auth/me HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48696 - "GET /billing/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48696 - "GET /entitlements HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48696 - "GET /properties HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48696 - "GET /profile HTTP/1.1" 200 OK

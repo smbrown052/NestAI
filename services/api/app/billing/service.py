@@ -1,232 +1,235 @@
-"""Billing helpers for checkout and webhook processing."""
+"""Stripe-only billing. No local event can activate a subscription."""
 
-from __future__ import annotations
-
-import hashlib
-import hmac
+from datetime import datetime, timezone
 import json
 import os
-import secrets
-from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 
+from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.auth.plans import FREE_PLAN, PAYMENT_PLANS, current_plan, normalize_plan, set_user_plan
+from app.auth.plans import PAYMENT_PLANS, current_plan, normalize_plan, set_user_plan
 from app.db.models.billing import BillingEvent
-from app.db.models.referral import Referral
 from app.db.models.user import User
 
-STREAMLIT_BASE_URL_ENV = "NESTAI_STREAMLIT_URL"
-BILLING_WEBHOOK_SECRET_ENV = "BILLING_WEBHOOK_SECRET"
+
+def plain(value):
+    if isinstance(value, dict):
+        return value
+    if hasattr(value, "to_dict"):
+        return value.to_dict()
+    return value.to_dict_recursive()
 
 
-def billing_webhook_secret() -> str:
-    return (
-        os.getenv(BILLING_WEBHOOK_SECRET_ENV)
-        or os.getenv("JWT_SECRET_KEY")
-        or os.getenv("SECRET_KEY")
-        or ""
-    )
+def stripe_client():
+    key = os.getenv("STRIPE_SECRET_KEY", "")
+    if not key:
+        raise HTTPException(503, "Stripe billing is not configured")
+    if not key.startswith("sk_test_") and os.getenv("STRIPE_ALLOW_LIVE", "").lower() != "true":
+        raise HTTPException(503, "Live Stripe billing requires explicit configuration")
+    import stripe
+    return stripe, key
 
 
-def streamlit_base_url() -> str:
-    return os.getenv(STREAMLIT_BASE_URL_ENV, "http://localhost:8501").rstrip("/")
-
-
-def sign_webhook_payload(raw_payload: bytes) -> str:
-    secret = billing_webhook_secret()
-    if not secret:
-        raise RuntimeError("BILLING_WEBHOOK_SECRET or JWT_SECRET_KEY must be set")
-    return hmac.new(secret.encode("utf-8"), raw_payload, hashlib.sha256).hexdigest()
-
-
-def verify_webhook_signature(raw_payload: bytes, signature: str) -> bool:
-    expected = sign_webhook_payload(raw_payload)
-    return hmac.compare_digest(expected, signature)
+def return_url():
+    from app.core.config import get_settings
+    base = os.getenv("NESTAI_STREAMLIT_URL", "http://localhost:8501").rstrip("/")
+    parsed = urlparse(base)
+    if not parsed.hostname or parsed.scheme not in {"http", "https"} or (
+        not get_settings().is_development and parsed.scheme != "https"
+    ):
+        raise HTTPException(503, "Billing return URL is not securely configured")
+    if parsed.query or parsed.fragment or parsed.username:
+        raise HTTPException(503, "Billing return URL must not contain query, credentials or fragment")
+    return base
 
 
 def payment_required_message(plan: str) -> str:
-    normalized = normalize_plan(plan)
-    if normalized == "premium_plus":
-        return "Payment required to activate Premium Plus"
-    return "Payment required to activate Premium"
+    return f"Payment required to activate {'Premium Plus' if plan == 'premium_plus' else 'Premium'}"
 
 
-def _trial_days_for_plan(plan: str) -> int:
-    _ = plan
-    return 7
+def price_for(plan: str):
+    if plan not in PAYMENT_PLANS:
+        raise HTTPException(422, "Invalid paid plan")
+    stripe, key = stripe_client()
+    prefix = "STRIPE_PREMIUM_PLUS" if plan == "premium_plus" else "STRIPE_PREMIUM"
+    price_id = os.getenv(prefix + "_PRICE_ID")
+    try:
+        if not price_id:
+            product_id = os.getenv(prefix + "_PRODUCT_ID")
+            if not product_id:
+                raise HTTPException(503, "Stripe price/product is not configured")
+            product = plain(stripe.Product.retrieve(product_id, api_key=key))
+            price_id = product.get("default_price")
+        if not isinstance(price_id, str):
+            raise HTTPException(503, "Stripe product has no default price")
+        price = plain(stripe.Price.retrieve(price_id, api_key=key))
+    except stripe.StripeError:
+        raise HTTPException(502, "Stripe price lookup failed") from None
+    if not price.get("active") or price.get("type") != "recurring":
+        raise HTTPException(503, "Configured Stripe price is not an active subscription price")
+    return price
 
 
 def create_checkout_session(
-    db: Session,
-    user: User,
-    requested_plan: str,
-    *,
-    trial_consent: bool = False,
-    payment_method_confirmed: bool = False,
+    db: Session, user: User, requested_plan: str, *,
+    trial_consent: bool = False, payment_method_confirmed: bool = False,
+    idempotency_key: str | None = None,
 ) -> dict:
     plan = normalize_plan(requested_plan)
-    if plan not in PAYMENT_PLANS:
-        raise ValueError("Requested plan does not require payment")
-    if not trial_consent or not payment_method_confirmed:
-        raise ValueError("Checkout requires explicit trial consent and payment method confirmation")
-
-    session_id = f"cs_{secrets.token_urlsafe(18)}"
-    trial_days = _trial_days_for_plan(plan)
-    trial_end = datetime.now(timezone.utc) + timedelta(days=trial_days)
-    monthly_price = "$49/mo" if plan == "premium_plus" else "$19/mo"
-    payload = {
-        "checkout_session_id": session_id,
-        "requested_plan": plan,
-        "user_id": user.id,
-        "trial_consent": True,
-        "payment_method_confirmed": True,
-        "trial_days": trial_days,
-        "trial_end_date": trial_end.date().isoformat(),
-        "monthly_price": monthly_price,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    event = BillingEvent(
-        user_id=user.id,
-        event_type="checkout_session_created",
-        provider="mock",
-        provider_event_id=session_id,
-        tier_before=current_plan(user),
-        tier_after=FREE_PLAN,
-        raw_payload=json.dumps(payload),
-    )
-    db.add(event)
-    user.requested_plan = plan
-    user.subscription_status = "pending_payment"
-    set_user_plan(user, FREE_PLAN, requested=plan, subscription_status="pending_payment")
-    db.commit()
-    db.refresh(user)
-    return {
-        "checkout_session_id": session_id,
-        "checkout_url": f"{streamlit_base_url()}?billing_session_id={session_id}",
-        "payment_required_message": payment_required_message(plan),
-        "active_plan": current_plan(user),
-        "requested_plan": plan,
-        "trial_days": trial_days,
-        "trial_end_date": trial_end.date().isoformat(),
-        "future_monthly_price": monthly_price,
-        "cancellation_terms": "Cancel any time before trial ends to avoid charges.",
-        "billing_reminder": "A billing reminder will be sent before your first charge.",
-    }
-
-
-def record_webhook_event(db: Session, *, event_id: str, event_type: str, raw_payload: str) -> bool:
-    existing = (
-        db.query(BillingEvent)
-        .filter(BillingEvent.provider_event_id == event_id)
-        .first()
-    )
-    if existing:
-        return False
-    db.add(
-        BillingEvent(
-            event_type=event_type,
-            provider="mock",
-            provider_event_id=event_id,
-            raw_payload=raw_payload,
-        )
-    )
-    return True
-
-
-def activate_purchased_plan(db: Session, *, checkout_session_id: str, event_id: str, customer_id: str | None = None, subscription_id: str | None = None) -> User | None:
-    checkout_event = (
-        db.query(BillingEvent)
-        .filter(BillingEvent.provider_event_id == checkout_session_id)
-        .filter(BillingEvent.event_type == "checkout_session_created")
-        .first()
-    )
-    if not checkout_event or not checkout_event.user_id:
-        return None
-
-    user = db.query(User).filter(User.id == checkout_event.user_id).first()
-    if not user:
-        return None
-
-    requested = normalize_plan(user.requested_plan or json.loads(checkout_event.raw_payload or "{}" ).get("requested_plan", FREE_PLAN))
-    if requested not in PAYMENT_PLANS:
-        requested = FREE_PLAN
-
-    if not record_webhook_event(db, event_id=event_id, event_type="payment_succeeded", raw_payload=json.dumps({"checkout_session_id": checkout_session_id, "user_id": user.id, "requested_plan": requested})):
-        return user
-
-    user.payment_customer_id = customer_id
-    user.payment_subscription_id = subscription_id
-    set_user_plan(user, requested, requested=None, subscription_status="active")
-    user.subscription_status = "active"
-
-    if user.referrer_id:
-        existing_reward = (
-            db.query(Referral)
-            .filter(Referral.referred_user_id == user.id)
-            .filter(Referral.status == "converted")
-            .first()
-        )
-        if not existing_reward:
-            referral_row = (
-                db.query(Referral)
-                .filter(Referral.referrer_user_id == user.referrer_id)
-                .filter(Referral.referred_email == user.email.lower())
-                .order_by(Referral.created_at.desc())
-                .first()
+    stripe, key = stripe_client()
+    user = db.query(User).filter(User.id == user.id).populate_existing().with_for_update().one()
+    if user.stripe_subscription_id and user.subscription_status in {"active", "trialing", "past_due"}:
+        raise HTTPException(409, "Manage an existing subscription through the billing portal")
+    price = price_for(plan)
+    pending = db.query(BillingEvent).filter_by(
+        user_id=user.id, provider="stripe", event_type="checkout_session_created"
+    ).order_by(BillingEvent.id.desc()).first()
+    if pending:
+        try:
+            prior = plain(stripe.checkout.Session.retrieve(pending.provider_event_id, api_key=key))
+            if prior.get("status") == "open":
+                response = json.loads(pending.raw_payload)
+                if response.get("requested_plan") == plan:
+                    return response
+                stripe.checkout.Session.expire(prior["id"], api_key=key)
+            elif prior.get("status") == "complete" and (
+                not user.stripe_subscription_id or user.subscription_status == "pending_payment"
+            ):
+                raise HTTPException(409, "Checkout completed; waiting for verified subscription synchronization")
+        except stripe.StripeError:
+            raise HTTPException(502, "Stripe checkout status is temporarily unavailable") from None
+    base = return_url()
+    metadata = {"nestai_user_id": str(user.id), "nestai_plan": plan}
+    subscription_data = {"metadata": metadata}
+    if trial_consent and payment_method_confirmed and not user.trial_used:
+        subscription_data["trial_period_days"] = 7
+    try:
+        if not user.stripe_customer_id:
+            customer = stripe.Customer.create(
+                email=user.email, metadata={"nestai_user_id": str(user.id)},
+                api_key=key, idempotency_key=f"nestai-customer-{user.id}",
             )
-            if not referral_row:
-                referral_row = Referral(
-                    referrer_user_id=user.referrer_id,
-                    referred_user_id=user.id,
-                    referred_email=user.email.lower(),
-                    referral_code=None,
-                    status="converted",
-                    reward_cents=500,
-                    converted_at=datetime.now(timezone.utc),
-                    rewarded_at=datetime.now(timezone.utc),
-                )
-                db.add(referral_row)
-            else:
-                referral_row.referred_user_id = user.id
-                referral_row.status = "converted"
-                referral_row.reward_cents = 500
-                referral_row.converted_at = datetime.now(timezone.utc)
-                referral_row.rewarded_at = datetime.now(timezone.utc)
-            referrer = db.query(User).filter(User.id == user.referrer_id).first()
-            if referrer:
-                referrer.referral_credit_cents = (referrer.referral_credit_cents or 0) + 500
-
+            user.stripe_customer_id = user.payment_customer_id = customer["id"]
+        session = stripe.checkout.Session.create(
+            mode="subscription", customer=user.stripe_customer_id,
+            payment_method_collection="always",
+            line_items=[{"price": price["id"], "quantity": 1}],
+            subscription_data=subscription_data, metadata=metadata,
+            client_reference_id=str(user.id),
+            success_url=f"{base}/?checkout=success&session_id={{CHECKOUT_SESSION_ID}}",
+            cancel_url=f"{base}/?checkout=cancelled",
+            api_key=key, idempotency_key=f"nestai-checkout-{user.id}-{idempotency_key or plan}",
+        )
+    except stripe.StripeError:
+        db.rollback()
+        raise HTTPException(502, "Stripe checkout is temporarily unavailable") from None
+    user.requested_plan = plan
+    if current_plan(user) not in PAYMENT_PLANS:
+        user.subscription_status = "pending_payment"
+    response = {
+        "checkout_session_id": session["id"], "checkout_url": session["url"],
+        "requested_plan": plan, "active_plan": current_plan(user),
+        "trial_days": subscription_data.get("trial_period_days", 0),
+        "price": {"amount_cents": price.get("unit_amount"), "currency": price.get("currency"),
+                  "recurring": dict(price.get("recurring") or {})},
+        "payment_required_message": payment_required_message(plan),
+    }
+    db.add(BillingEvent(user_id=user.id, provider="stripe", event_type="checkout_session_created",
+                       provider_event_id=session["id"], tier_before=current_plan(user),
+                       raw_payload=json.dumps(response)))
     db.commit()
-    db.refresh(user)
-    return user
+    return response
 
 
-def fail_checkout(db: Session, *, checkout_session_id: str, event_id: str, cancelled: bool = False) -> User | None:
-    checkout_event = (
-        db.query(BillingEvent)
-        .filter(BillingEvent.provider_event_id == checkout_session_id)
-        .filter(BillingEvent.event_type == "checkout_session_created")
-        .first()
-    )
-    if not checkout_event or not checkout_event.user_id:
-        return None
-    user = db.query(User).filter(User.id == checkout_event.user_id).first()
-    if not user:
-        return None
-    if not record_webhook_event(
-        db,
-        event_id=event_id,
-        event_type="payment_cancelled" if cancelled else "payment_failed",
-        raw_payload=json.dumps({"checkout_session_id": checkout_session_id, "user_id": user.id}),
+def portal(user: User) -> dict:
+    stripe, key = stripe_client()
+    if not user.stripe_customer_id:
+        raise HTTPException(409, "No Stripe customer exists for this account")
+    try:
+        session = stripe.billing_portal.Session.create(
+            customer=user.stripe_customer_id,
+            return_url=return_url(),
+            api_key=key,
+        )
+        return {"portal_url": session["url"]}
+    except stripe.StripeError:
+        raise HTTPException(502, "Stripe portal is temporarily unavailable") from None
+
+
+def process_webhook(db: Session, raw: bytes, signature: str) -> dict:
+    import stripe
+    secret = os.getenv("STRIPE_WEBHOOK_SECRET")
+    if not secret:
+        raise HTTPException(503, "Stripe webhook is not configured")
+    try:
+        event = plain(stripe.Webhook.construct_event(raw, signature, secret))
+    except (ValueError, stripe.SignatureVerificationError):
+        raise HTTPException(400, "Invalid Stripe webhook signature") from None
+    if not isinstance(event.get("id"), str) or not isinstance(event.get("type"), str) or not isinstance(
+        (event.get("data") or {}).get("object"), dict
     ):
-        return user
-
-    set_user_plan(user, FREE_PLAN, requested=None, subscription_status="cancelled" if cancelled else "failed")
-    user.payment_customer_id = None
-    user.payment_subscription_id = None
-    user.subscription_status = "cancelled" if cancelled else "failed"
+        raise HTTPException(400, "Invalid Stripe event")
+    if event.get("livemode") and os.getenv("STRIPE_ALLOW_LIVE", "").lower() != "true":
+        raise HTTPException(400, "Live Stripe events are not enabled")
+    if db.query(BillingEvent).filter_by(provider_event_id=event["id"]).first():
+        return {"received": True, "duplicate": True}
+    # Flush the unique event marker before processing; transaction rollback allows retries.
+    marker = BillingEvent(provider="stripe", provider_event_id=event["id"],
+                          event_type=event["type"], raw_payload=json.dumps(event))
+    db.add(marker)
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        return {"received": True, "duplicate": True}
+    obj = event["data"]["object"]
+    subscription_id = None
+    if event["type"].startswith("customer.subscription."):
+        subscription_id = obj.get("id")
+    elif event["type"] in {"checkout.session.completed", "checkout.session.async_payment_succeeded",
+                           "invoice.paid", "invoice.payment_failed"}:
+        subscription_id = obj.get("subscription")
+        if not subscription_id:
+            subscription_id = (obj.get("parent") or {}).get("subscription_details", {}).get("subscription")
+    if subscription_id:
+        sdk, key = stripe_client()
+        try:
+            # Read current state instead of trusting arrival order or checkout redirect.
+            sub = plain(sdk.Subscription.retrieve(subscription_id, api_key=key))
+        except sdk.StripeError:
+            db.rollback()
+            raise HTTPException(502, "Stripe subscription lookup failed; retry webhook") from None
+        metadata = sub.get("metadata") or {}
+        try:
+            user_id = int(metadata.get("nestai_user_id", ""))
+        except (ValueError, TypeError):
+            user_id = None
+        user = db.query(User).filter(User.id == user_id).populate_existing().with_for_update().first() if user_id else None
+        if user and user.stripe_customer_id == sub.get("customer"):
+            if user.stripe_subscription_id and user.stripe_subscription_id != sub["id"] and (
+                user.subscription_status in {"active", "trialing", "past_due"}
+                or sub.get("status") not in {"active", "trialing"}
+            ):
+                db.commit()
+                return {"received": True, "ignored": True}
+            plan = normalize_plan(metadata.get("nestai_plan"))
+            items = (sub.get("items") or {}).get("data", [])
+            configured_price = price_for(plan) if plan in PAYMENT_PLANS else None
+            valid_price = configured_price and any(
+                item.get("price", {}).get("id") == configured_price["id"] for item in items
+            )
+            status = sub.get("status", "incomplete")
+            previous = current_plan(user)
+            active = plan if valid_price and status in {"active", "trialing"} else "free"
+            set_user_plan(user, active, subscription_status=status)
+            user.stripe_subscription_id = user.payment_subscription_id = sub["id"]
+            user.payment_customer_id = user.stripe_customer_id
+            user.cancel_at_period_end = bool(sub.get("cancel_at_period_end"))
+            if sub.get("trial_end"):
+                user.trial_used = True
+                user.trial_ends_at = datetime.fromtimestamp(sub["trial_end"], timezone.utc)
+            marker.user_id, marker.tier_before, marker.tier_after = user.id, previous, active
     db.commit()
-    db.refresh(user)
-    return user
+    return {"received": True, "duplicate": False}

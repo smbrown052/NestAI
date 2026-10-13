@@ -14,6 +14,7 @@ from app.db.models.referral import Referral
 from app.db.models.unit import Unit
 from app.db.models.usage_event import UsageEvent
 from app.db.models.user import User
+from app.db.models.account import AccountProperty, AccountUnit, AccountPreference, MonthlyUsage, RequestReceipt
 
 __all__ = [
     "AICallLog",

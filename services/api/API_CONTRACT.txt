@@ -1,0 +1,118 @@
+NestAI account API contract
+==========================
+All endpoints except /health, auth registration/login/reset, and /billing/webhook
+require HTTP bearer authentication using the access token returned at login.
+Interactive schema: GET /docs,
+GET /openapi.json. Unknown JSON fields are rejected on new platform endpoints.
+
+Persistence
+-----------
+GET /properties -> {"properties":[{id,external_id,kind,parsed,units,created_at,updated_at}]}
+POST /analyses {text,kind,idempotency_key} -> {kind,parsed}
+POST /properties {kind,parsed,idempotency_key,external_id?} -> saved property
+DELETE /properties/{id} -> {deleted:id}
+kind: apartment | home | rental_home. Parsing does not automatically save.
+For a stable update, reuse external_id but supply a fresh idempotency_key.
+When external_id is omitted, a content hash is used. Unit objects need unique
+nonempty STRING id, unit_number, unit_label, or unit; numeric IDs are rejected.
+All saved records/units are account-owned; no legacy SQLite/session claim occurs.
+Property count is shared across kinds and counts current saved properties.
+
+GET /profile -> {preferences:object}
+PUT /profile {preferences:object} -> {preferences:object}
+GET /entitlements -> {plan,period,timezone:"UTC",limits,usage,features,
+                      legacy_credits,legacy_credits_policy}
+Free: 5 analyses/month, 2 saved properties, basic comparison.
+Premium: 100 analyses/month, 50 properties, 100 shared AI calls, 50 enrichment,
+100 commute, 20 reports/month. Plus: 500/200/500/200/400/100 respectively.
+Paid-only: advisor, negotiation, enrichment, commute, reports, exports.
+Plus-only: sensitivity analytics. Advisor and negotiation share the AI quota.
+Monthly quotas reset at UTC month boundaries; saved-property count does not.
+Override limits with NESTAI_QUOTA_{FREE|PREMIUM|PREMIUM_PLUS}_{METRIC}.
+Old credits, grants, purchases and referral records remain independent/unmodified.
+Failures roll back quotas; repeated identical requests replay the recorded response.
+An idempotency_key reused with different input/operation returns 409.
+PostgreSQL account row locks serialize writes and quota consumption.
+SQLite is supported only for local/testing; production concurrency needs PostgreSQL.
+
+Comparison and paid tools
+-------------------------
+POST /ranking {property_ids?:string[],constraints?:object,priorities?:object}
+-> {ranked:[{property_id,unit_id,lifestyle_score,lifestyle_*_score,...}],
+    method,warnings}. Empty property_ids selects this account's properties.
+Priorities: commute,safety,nightlife,budget,gym (finite nonnegative weights).
+Constraints: max_price,min_beds,min_sqft,max_commute,has_gym. Missing inputs do
+not satisfy a requested constraint; otherwise existing neutral scorer rules apply.
+Scores reuse the legacy lifestyle scorer, not a new scoring implementation.
+
+POST /advisor, /negotiation, /enrichment, /commute, /analytics, /reports:
+{property_ids:string[],idempotency_key:string,question?:string,
+ destination?:string,mode?:driving|walking|bicycling|transit,
+ priorities?:object,constraints?:object}
+Advisor/negotiation -> {provider,mock,answer,citations,warning?}
+Enrichment -> {property_id,provider,mock,places,warning?}
+Commute -> {property_id,provider,mock,routes,warning?}
+Enrichment and commute require exactly one property and confirmed parsed.address.
+Commute also requires destination. Provider errors redact credentials/upstream detail.
+Enrichment returns location candidates, not invented neighborhood statistics.
+Successful live enrichment/commute results are saved with the account property;
+transit duration feeds the existing ranking adapter. Mock results are not promoted
+into confirmed property facts.
+Analytics -> {baseline,sensitivity:[{priority,factor,ranked}],method}
+Sensitivity varies each requested/default priority by 0.5x and 1.5x.
+Reports -> {report_id,filename,media_type:"application/json",content,download_url}
+GET /reports/{report_id}/download -> deterministic JSON attachment, same account only.
+Reports are reproducible decision records, not generated/verified appraisals.
+POST /exports {property_ids?:string[],format?:csv|json,scope?:properties|units}
+-> attachment bytes (not a JSON envelope). Formula prefixes in text cells are
+escaped. Unit IDs remain strings; rent/size/beds/baths are finite numeric columns.
+
+Provider configuration
+----------------------
+OPENAI_API_KEY, OPENAI_MODEL (default gpt-4o-mini); GOOGLE_MAPS_API_KEY.
+Credentials are read only on the backend. All remote destinations are fixed.
+NESTAI_PROVIDER_MODE defaults to live. Explicit mock is development/test-only;
+mock outputs are labeled and contain no claims of live locations/travel times.
+Missing credentials -> 503, upstream failure -> 502, missing facts -> 422.
+
+Billing
+-------
+Paid signup creates a free account with requested_plan and pending_payment;
+response includes checkout_required:true, never a mock checkout or paid activation.
+POST /billing/checkout {plan:premium|premium_plus,idempotency_key,
+                       trial_consent?:bool,payment_method_confirmed?:bool}
+-> {checkout_session_id,checkout_url,requested_plan,active_plan,trial_days,
+    price:{amount_cents,currency,recurring},payment_required_message}
+GET /billing/prices -> {premium:{amount_cents,currency,recurring},
+                       premium_plus:{amount_cents,currency,recurring}}
+GET /billing/status -> {active_plan,requested_plan,subscription_status,
+                       trial_used,trial_ends_at,cancel_at_period_end,billing_configured}
+POST /billing/portal -> {portal_url}; existing subscribers use the portal.
+POST /billing/webhook requires Stripe-Signature and STRIPE_WEBHOOK_SECRET.
+Verified, unique Stripe events retrieve canonical current subscriptions, match
+account customer + configured price, and update lifecycle atomically. Checkout
+redirects and unsigned/local events NEVER activate paid access.
+active/trialing grant paid features; past_due/unpaid/canceled/incomplete revoke them.
+Cancel-at-period-end retains entitlement while subscription remains active.
+Trial reuse does not block paid checkout; only first consented trial gets seven days.
+An existing open checkout is reused for the same plan; changing plans expires it
+before a new checkout is created. This prevents concurrent pending trial offers.
+
+Optional environment: STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET,
+STRIPE_PREMIUM_PRICE_ID, STRIPE_PREMIUM_PLUS_PRICE_ID; alternatively
+STRIPE_PREMIUM_PRODUCT_ID / STRIPE_PREMIUM_PLUS_PRODUCT_ID resolve default_price.
+STRIPE_ALLOW_LIVE=true explicitly permits live billing; default allows only sk_test.
+NESTAI_STREAMLIT_URL sets checkout/portal return URLs; development defaults localhost.
+No price is created/changed or inferred from conflicting UI/mock/docs amounts.
+Configured prices are retrieved read-only; missing config yields 503 not startup crash.
+
+Deployment and validation
+-------------------------
+Set DATABASE_URL to PostgreSQL; run alembic upgrade head from services/api.
+New migration 0007_account_services follows ae05715be4e2 and is additive.
+Start uvicorn main:app from services/api; repository shared adapters must be shipped
+alongside legacy/streamlit/parser and lifestyle_scoring.py.
+Run PYTHONPATH=services/api python -m pytest services/api/tests.
+Set TEST_POSTGRES_URL to an explicit disposable PostgreSQL test database for
+migration/row-lock tests; otherwise PostgreSQL tests are honestly skipped.
+Automated Stripe/provider tests use mocks and do not claim live/sandbox verification.
