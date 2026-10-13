@@ -42,6 +42,7 @@
     "local_results": "Passed: 43 tests, 0 failures, 0 skips in 323.85 seconds. Includes 32 actual desktop/mobile journeys, 9 runtime HTTP integration cases and 2 diagnostics regressions. Real migrated isolated PostgreSQL, FastAPI main:app and legacy/streamlit/app.py; deterministic provider fixtures only. No asset interception or retry mechanism. Prior transport failures remain recorded; final full run had no failed cases. Deployed/live acceptance remains Blocked.",
     "final_log": "/tmp/nestai-browser-final.log",
     "final_runtime_logs": "/tmp/nestai-browser-runtime-n1s8goaw",
+    "tested_code_revision": "07239213102d9d0d1d4819a2fd1c36341010702c",
     "fresh_decision_tests": "34 passed, 0 failed; /tmp/nestai-decision-resume.log. Full make regression was not rerun in this browser-only resume.",
     "security_review": {
       "status": "Two pre-existing findings; release blocked",
@@ -53,9 +54,9 @@
     },
     "deployment_checklist": "README.md: Deployment acceptance checklist; branch, entrypoints, root/start/migration commands, backups, service-specific variable names, sandbox portal, test accounts and CI approval.",
     "public_browser": "Blocked: playwright-browser_navigate to https://nest--ai--v1.streamlit.app/ returned MCP Transport closed. This is separate from the local Playwright test subprocess.",
-    "ci": "GitHub MCP: pushed revision 74d2a3f31cffd51ce1a0b1c8b08360473aaa7d9b MVP regression run 38485464054 is action_required; get_job_logs reports total_jobs=0, failed_jobs=0. No CI pass; approve the latest revision after final push."
+    "ci": "GitHub MCP: tested code revision 07239213102d9d0d1d4819a2fd1c36341010702c MVP regression run 38486374084 is action_required; get_job_logs reports total_jobs=0, failed_jobs=0. No CI pass; approve the latest revision after final ledger push."
   },
-  "latest_checkpoint_revision": "74d2a3f31cffd51ce1a0b1c8b08360473aaa7d9b",
+  "latest_checkpoint_revision": "07239213102d9d0d1d4819a2fd1c36341010702c",
   "resume_checkpoint": {
     "revision": "541ac7a5096f9523639b658436efd4efcc1081cb",
     "working_tree_at_start": "Clean",
@@ -161,9 +162,9 @@
     {"command": "make -C /home/runner/work/NestAI/NestAI regression; make -C /home/runner/work/NestAI/NestAI live-smoke", "status": "Running", "log": "/tmp/nestai-regression-checkpoint.log", "kind": "Fresh final rerun on checkpoint66b8e95 after reset fix and late portal UI tests; separate live log /tmp/nestai-live-smoke-checkpoint.log"}
   ],
   "validation": {
-    "codeql": "Fresh browser-resume parallel validation: actions/Python 0 alerts. Manual authentication findings remain release blockers.",
+    "codeql": "Fresh browser-resume actions/Python scan found 0 alerts. Final accumulated-branch nontrivial validation after code commit 0723921: Python 0 alerts; Actions unchanged since prior scan. Manual authentication findings remain release blockers.",
     "automated_review": "Unavailable: review binary not installed; a success heading does not establish that automated review ran. Fresh read-only security specialist confirmed two pre-existing auth findings; see browser_resume.security_review.",
-    "ci": "Pushed revision 74d2a3f31cffd51ce1a0b1c8b08360473aaa7d9b run 38485464054 action_required; GitHub get_job_logs confirms 0 total jobs. Owner must approve the latest pushed revision.",
+    "ci": "Tested code revision 07239213102d9d0d1d4819a2fd1c36341010702c run 38486374084 action_required; GitHub get_job_logs confirms 0 total jobs. Owner must approve the latest pushed revision.",
     "final_validation": "Previous checkpoint hit a validation circuit breaker; the fresh browser-resume session successfully ran CodeQL with 0 alerts. Automated review remains unavailable; no claim that authentication is secure.",
     "public_access": "Resume public navigation failed: browser MCP Transport closed. Previous session log URL returns HTTP 404. Hosting entrypoints and deployed revisions remain unverified."
   },
@@ -182,7 +183,7 @@
     "FastAPI live providers: OPENAI_API_KEY, GOOGLE_MAPS_API_KEY and optional WALKSCORE_API_KEY missing",
     "Stripe sandbox: configure STRIPE_SECRET_KEY (test only), STRIPE_PREMIUM_PRICE_ID, STRIPE_PREMIUM_PLUS_PRICE_ID, STRIPE_WEBHOOK_SECRET and enable approved portal plan changes; deliver sandbox subscription.updated events to registered /billing/webhook",
     "Live acceptance: configure HTTPS NESTAI_LIVE_API_BASE_URL and dedicated NESTAI_LIVE_FREE_EMAIL, NESTAI_LIVE_FREE_PASSWORD, NESTAI_LIVE_PREMIUM_EMAIL, NESTAI_LIVE_PREMIUM_PASSWORD, NESTAI_LIVE_PLUS_EMAIL, NESTAI_LIVE_PLUS_PASSWORD securely; seed apartment samples; explicitly authorize NESTAI_RUN_LIVE_TESTS=1 and NESTAI_LIVE_ALLOW_ACCOUNT_OPERATIONS=1",
-    "Owner must approve GitHub Actions regression run for the latest pushed revision (74d2a3f run 38485464054 action_required, zero jobs), then required regression must run",
+    "Owner must approve GitHub Actions regression run for the latest pushed revision (tested code 0723921 run 38486374084 action_required, zero jobs), then required regression must run",
     "Owner must provide hosting-console access/deployment authorization and verify Streamlit legacy/streamlit/app.py, FastAPI main:app, and deployed commit identifiers before public tier journeys",
     "Hosting owner must configure Streamlit NESTAI_API_BASE_URL to the verified HTTPS FastAPI service and backend DATABASE_URL to persistent PostgreSQL, JWT_SECRET_KEY securely, ENVIRONMENT=production and NESTAI_PROVIDER_MODE=live; do not deploy test or mock provider mode.",
     "Earlier localhost browser transport instability is preserved in browser_resume; the final full local run passed 43/43. Public browser transport remains closed and deployed acceptance still requires a stable authorized runner.",
