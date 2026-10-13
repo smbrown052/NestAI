@@ -167,6 +167,20 @@ provider calls and deployed journeys are required for release, and missing
 credentials/access are explicitly blocked rather than counted as passing.
 The machine-readable acceptance record is `docs/acceptance-ledger.json`.
 
+Live account-service checks require `NESTAI_RUN_LIVE_TESTS=1`,
+`NESTAI_LIVE_API_BASE_URL` (HTTPS), and securely provisioned
+`NESTAI_LIVE_FREE_EMAIL`/`NESTAI_LIVE_FREE_PASSWORD`,
+`NESTAI_LIVE_PREMIUM_EMAIL`/`NESTAI_LIVE_PREMIUM_PASSWORD`, and
+`NESTAI_LIVE_PLUS_EMAIL`/`NESTAI_LIVE_PLUS_PASSWORD`. Use dedicated accounts
+with saved samples, not customer accounts. Set
+`NESTAI_LIVE_ALLOW_ACCOUNT_OPERATIONS=1` only when provider spending and
+report/AI quota consumption on those accounts are authorized. These checks
+exercise reauthentication, an actual grounded advisor call, strict filtering,
+and downloaded report/export content. Provider credential-read checks alone
+do not prove the advisor works. Neither service smoke checks nor local browser
+tests replace the required deployed browser journeys across all three tiers.
+Never put credential values in shell history, chat, or repository files.
+
 Account quotas are shared across apartments and houses and reset at midnight
 UTC on the first day of each calendar month. A saved apartment building counts
 as one property regardless of unit count. Free has 5 successful analyses and
