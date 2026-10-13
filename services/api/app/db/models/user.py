@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -30,6 +30,9 @@ class User(Base):
     payment_subscription_id: Mapped[str | None] = mapped_column(String(255))
     beta_tester: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     beta_approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    beta_access_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    beta_limits: Mapped[dict | None] = mapped_column(JSON)
+    beta_features: Mapped[dict | None] = mapped_column(JSON)
     stripe_customer_id = mapped_column(String, nullable=True)
     stripe_subscription_id = mapped_column(String, nullable=True)
 

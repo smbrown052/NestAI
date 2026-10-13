@@ -52,18 +52,33 @@ def _wait(process, url, log):
 
 @pytest.fixture(scope="session")
 def runtime():
-    database_url = os.getenv(
-        "NESTAI_BROWSER_DATABASE_URL",
-        "postgresql+psycopg2://runner@127.0.0.1:55432/nestai_browser",
+    explicit_browser_url = os.getenv("NESTAI_BROWSER_DATABASE_URL")
+    source_url = (
+        explicit_browser_url
+        or os.getenv("NESTAI_TEST_DATABASE_URL")
+        or os.getenv("DATABASE_URL")
+        or "postgresql+psycopg2://runner@127.0.0.1:55432/nestai_test"
     )
-    url = make_url(database_url)
+    url = make_url(source_url)
+    if not explicit_browser_url:
+        url = url.set(database="nestai_browser")
     if url.get_backend_name() != "postgresql" or url.database != "nestai_browser":
         pytest.fail("Browser tests require an isolated PostgreSQL database named nestai_browser")
+    database_url = url.render_as_string(hide_password=False)
     admin = create_engine(url.set(database="postgres"), isolation_level="AUTOCOMMIT")
-    with admin.connect() as conn:
-        if not conn.execute(text("SELECT 1 FROM pg_database WHERE datname='nestai_browser'")).scalar():
-            conn.execute(text("CREATE DATABASE nestai_browser"))
-    admin.dispose()
+    try:
+        with admin.connect() as conn:
+            if not conn.execute(text("SELECT 1 FROM pg_database WHERE datname='nestai_browser'")).scalar():
+                if not conn.execute(text("""
+                    SELECT rolcreatedb OR rolsuper FROM pg_roles WHERE rolname = current_user
+                """)).scalar():
+                    pytest.fail(
+                        "Browser regressions require CREATE DATABASE permission, or a precreated "
+                        "nestai_browser database owned by the configured test role."
+                    )
+                conn.execute(text("CREATE DATABASE nestai_browser"))
+    finally:
+        admin.dispose()
     api_port, ui_port = _port(), _port()
     api_url, ui_url = f"http://127.0.0.1:{api_port}", f"http://127.0.0.1:{ui_port}"
     env = os.environ.copy()
@@ -73,6 +88,7 @@ def runtime():
             env.pop(key)
     env.update(
         DATABASE_URL=database_url,
+        NESTAI_TEST_DATABASE_URL=database_url,
         ENVIRONMENT="test",
         JWT_SECRET_KEY=secrets.token_urlsafe(48),
         NESTAI_API_BASE_URL=api_url,

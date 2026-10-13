@@ -46,7 +46,7 @@ _CREDITS_TIER_MAP = {
 CAPABILITY_FEATURES = {
     "can_compare_multiple_properties": "basic_comparison",
     "can_restore_archived_property": "exports",
-    "can_use_natural_language_filtering": "natural_language",
+    "can_use_natural_language_filtering": "natural_filter",
     "can_use_lifestyle_score": "lifestyle",
     "can_use_ai_explanations": "advisor",
     "can_generate_ai_reports": "reports",
@@ -61,7 +61,7 @@ CAPABILITY_FEATURES = {
 
 
 def capabilities_from_features(features: dict) -> dict:
-    result = {key: features.get(source, features.get("advisor", False) if source in {"natural_language", "lifestyle"} else False) is True
+    result = {key: features.get(source, features.get("advisor", False) if source in {"natural_filter", "lifestyle"} else False) is True
               for key, source in CAPABILITY_FEATURES.items()}
     result.update(can_analyze_property=True, can_save_property=True, can_use_basic_filters=True)
     return result

@@ -38,6 +38,45 @@ class FakeResponse:
 
 
 class StreamlitAuthServiceTests(unittest.TestCase):
+    def test_property_fee_form_preserves_unknown_values_and_scopes_widgets(self):
+        import api_views
+        ui = Mock()
+        ui.session_state = {}
+        ui.selectbox.return_value = "property-one"
+        ui.form.return_value = nullcontext()
+        ui.number_input.return_value = None
+        ui.form_submit_button.return_value = True
+        ui.button.return_value = False
+        with patch.object(api_views, "st", ui), patch.object(api_views, "capability", return_value=False), patch.object(api_views, "api_call", return_value={"id": "property-one"}) as call:
+            api_views.render_property_controls(Mock(), [{"id": "property-one", "fees": {}}])
+            self.assertEqual(call.call_args.args[1:3], ("PATCH", "/properties/property-one"))
+            self.assertTrue(all(value is None for value in call.call_args.args[3]["fees"].values()))
+            for widget in ui.number_input.call_args_list:
+                self.assertIsNone(widget.kwargs["value"])
+                self.assertTrue(widget.kwargs["key"].startswith("property_fee_property-one_"))
+
+    def test_checkout_uses_supplied_retry_key_and_explicit_consent(self):
+        session = Mock()
+        session.request.return_value = FakeResponse(200, {"checkout_url": "https://checkout.stripe.com/example"})
+        client = NestAIAPIClient(base_url="http://127.0.0.1:8000", session=session)
+        client.create_checkout_session("premium", trial_consent=True, payment_method_confirmed=True, idempotency_key="stable-intent")
+        self.assertEqual(session.request.call_args.kwargs["json"], {
+            "plan": "premium", "idempotency_key": "stable-intent",
+            "trial_consent": True, "payment_method_confirmed": True,
+        })
+
+    def test_api_retry_reuses_intent_key_until_response_succeeds(self):
+        import api_views
+        client = Mock()
+        client.request.side_effect = [FakeResponse(0, {}), FakeResponse(200, {"answer": "ok"}), FakeResponse(200, {"answer": "new"})]
+        ui = Mock()
+        ui.session_state = {}
+        with patch.object(api_views, "st", ui):
+            for key in ("first", "retry", "new-intent"):
+                api_views.api_call(client, "POST", "/advisor", {"question": "same", "property_ids": ["one"], "idempotency_key": key})
+        keys = [call.kwargs["json"]["idempotency_key"] for call in client.request.call_args_list]
+        self.assertEqual(keys, ["first", "first", "new-intent"])
+
     def test_report_download_rechecks_authenticated_backend_route(self):
         import api_views
         ui = Mock()
@@ -88,9 +127,11 @@ class StreamlitAuthServiceTests(unittest.TestCase):
         with patch.object(api_views, "st", ui), patch.object(api_views, "render_profile"), patch.object(api_views, "api_call", return_value={"public_reference": "FEEDBACK-1"}) as call:
             api_views.render_account_view(Mock(), auth, "Profile")
             self.assertEqual(call.call_args.args[2], "/feedback")
-            self.assertEqual(call.call_args.args[3], {
+            payload = call.call_args.args[3]
+            self.assertTrue(payload.pop("idempotency_key"))
+            self.assertEqual(payload, {
                 "category": "bug", "title": "A reproducible issue", "description": "Steps to reproduce",
-                "platform": "web", "route_or_screen": "Profile",
+                "route_or_screen": "Profile",
             })
 
     def test_account_switch_clears_house_widgets_preferences_and_caches(self):

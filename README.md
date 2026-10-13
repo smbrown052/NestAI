@@ -136,10 +136,16 @@ Required Render environment variables:
 
 ### MVP regression and release validation
 
-The deployed frontend path must be `legacy/streamlit/app.py`; the backend root is
-`services/api` with `uvicorn main:app`. Verify both hosting settings and deployed
-commit identifiers: documentation and matching source traceback lines alone do
-not prove the deployed revision.
+The frontend entrypoint is `legacy/streamlit/app.py`; the backend entrypoint is
+`services/api/main.py`. The new API shares `shared/` and the existing legacy
+parsers, so deployment must include those repository directories. Use the
+repository root for the backend service, install
+`services/api/requirements.txt`, and start
+`uvicorn --app-dir services/api main:app --host 0.0.0.0 --port "$PORT"`.
+The previously documented `services/api` service root is safe only if the host
+also makes its sibling directories available. Verify hosting settings and
+deployed commit identifiers; matching local traceback lines do not establish
+either. No hosting settings have been changed by this implementation.
 
 Install both components' requirements and `requirements-dev.txt`, then install
 the test browser with `python -m playwright install chromium`. Supply an

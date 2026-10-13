@@ -9,6 +9,8 @@ from app.db.models.user import User
 from app.db.models.account import AccountProperty, AccountUnit, AccountPreference, MonthlyUsage, RequestReceipt
 from app.db.models.credits import CreditBalance
 from app.db.models.feedback import FeedbackReport
+from app.db.models.property import Property
+from app.db.models.comparison import Comparison
 from app.db.session import get_db
 from app.platform import schemas, service, providers
 from shared.adapters import parse_listing
@@ -24,7 +26,9 @@ def entitlements(db: Session = Depends(get_db), user: User = Depends(get_current
     usage["properties"] = db.query(AccountProperty).filter_by(user_id=user.id).count()
     balance = db.query(CreditBalance).filter_by(user_id=user.id).first()
     return {"plan": plan, "period": service.period(), "timezone": "UTC",
-            "limits": limits_for(plan), "usage": usage, "features": features_for(plan),
+            "limits": service.limits(user), "usage": usage, "features": service.features(user),
+            "entitlement_source": "trusted_beta_grant" if plan == "beta" else "account_plan",
+            "beta_access_expires_at": user.beta_access_expires_at,
             "legacy_credits": {"remaining": balance.credits_remaining, "purchased": balance.credits_purchased} if balance else None,
             "legacy_credits_policy": "Preserved separately; not converted into monthly quotas."}
 
@@ -63,6 +67,7 @@ def patch_profile(payload: schemas.ProfilePatch, db: Session = Depends(get_db), 
 
 @router.post("/requests")
 def natural_request(payload: schemas.NaturalRequest, user: User = Depends(get_current_user)):
+    service.gate(user, "natural_filter")
     from shared.constraints import parse_constraints, ConstraintError
     try:
         constraints = parse_constraints(payload.request)
@@ -117,6 +122,31 @@ def analyse(payload: schemas.Analysis, db: Session = Depends(get_db), user: User
 @router.get("/properties")
 def list_properties(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     return {"properties": [service.serialize(db, row) for row in service.properties(db, user)]}
+
+
+@router.get("/recovery")
+def recovery_inventory(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    return {"owned_legacy_properties": db.query(Property).filter_by(user_id=user.id).count(),
+            "owned_comparison_snapshots": db.query(Comparison).filter_by(user_id=user.id).count(),
+            "recovery_endpoint": "/recovery", "comparisons_endpoint": "/comparisons",
+            "policy": "Recovery requires a pre-existing explicit PostgreSQL user_id; no SQLite/session/cache ownership inference."}
+
+
+@router.post("/recovery")
+def recovery(payload: schemas.Recovery, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    return service.execute(db, user, "recover_legacy", payload, lambda account: service.recover_legacy(db, account))
+
+
+@router.get("/comparisons")
+def comparison_snapshots(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    rows = db.query(Comparison).filter_by(user_id=user.id).order_by(Comparison.created_at, Comparison.id)
+    return {"comparisons": [
+        {"id": row.id, "name": row.name, "units_snapshot": row.units_snapshot,
+         "lifestyle_weights": row.lifestyle_weights, "commute_destination": row.commute_destination,
+         "ai_summary": row.ai_summary, "created_at": row.created_at, "updated_at": row.updated_at,
+         "policy": "Owned snapshot only; referenced shared cache units are not assigned to this account."}
+        for row in rows
+    ]}
 
 
 @router.post("/properties")
@@ -243,10 +273,11 @@ def report(payload: schemas.PaidRequest, db: Session = Depends(get_db), user: Us
         selected = records(db, account, payload)
         comparison = service.ranking(db, account, payload.property_ids, payload.constraints, payload.priorities)
         report_id = hashlib.sha256(f"{account.id}:{payload.idempotency_key}".encode()).hexdigest()
+        deeper_report = service.features(account)["analytics"]
         snapshot = {"properties": selected, "comparison": comparison,
-                    "report_level": "plus" if service.effective_plan(account) == "premium_plus" else "premium",
+                    "report_level": "plus" if deeper_report else "premium",
                     "disclaimer": "Listing data and neutral score assumptions are not independent verification."}
-        if service.effective_plan(account) == "premium_plus":
+        if deeper_report:
             snapshot["analytics"] = service.analytics(
                 db, account, payload.property_ids, payload.constraints, payload.priorities
             )

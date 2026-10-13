@@ -30,6 +30,17 @@ excluded from ranking/export results. DELETE is the explicit property remove act
 When external_id is omitted, a content hash is used. Unit objects need unique
 nonempty STRING id, unit_number, unit_label, or unit; numeric IDs are rejected.
 All saved records/units are account-owned; no legacy SQLite/session claim occurs.
+GET /recovery inventories only the account's explicitly user_id-owned legacy
+PostgreSQL properties/comparison snapshots. POST /recovery {idempotency_key}
+performs audited, deterministic, repeat-safe recovery of those owned properties
+and their home_details into account_properties. Source records remain untouched.
+Existing records are retained even above today's cap; subsequent new saves remain
+capped. Already recovered account records are never overwritten by re-recovery.
+GET /comparisons returns only explicitly user_id-owned existing Comparison
+snapshots verbatim, without assigning/dereferencing shared cache unit ownership.
+Null-owned properties/comparisons, session-only records, buildings/units caches and
+legacy SQLite data stay unclaimed. Administrative proof/audit is required before
+any future manual ownership correction; never match solely by address/session.
 Property count is shared across kinds and counts current saved properties.
 
 GET /profile -> {preferences:object}
@@ -51,6 +62,18 @@ Premium: 100 analyses/month, 50 properties, 100 shared AI calls, 50 enrichment,
 100 commute, 20 reports/month. Plus: 500/200/500/200/400/100 respectively.
 Paid-only: advisor, negotiation, enrichment, commute, reports, exports.
 Plus-only: sensitivity analytics. Advisor and negotiation share the AI quota.
+Natural-language request parsing and custom lifestyle weights are paid capabilities
+under features.natural_filter and features.lifestyle, enforced by the API.
+Trusted persisted beta_tester grants (admin promotion or verified invite signup)
+retain Premium-equivalent default features/quotas without Stripe IDs. A mere beta
+plan string without the trusted persisted flag does not grant access. Existing
+grants with no recorded expiry are preserved, not silently shortened/converted.
+Admin PATCH /admin/users/{id}/beta-access {active:bool,expires_at?:UTC datetime|null,
+limits?:{metric:nonnegative integer},features?:{known feature:boolean}} configures
+grant expiry/per-account overrides independently of payment status. Expired/revoked
+beta grants fall back to the actual account/subscription plan; no credits are edited.
+Global beta caps use NESTAI_QUOTA_BETA_{METRIC}. Entitlements include
+entitlement_source and beta_access_expires_at for explicit grant visibility.
 Monthly quotas reset at UTC month boundaries; saved-property count does not.
 Override limits with NESTAI_QUOTA_{FREE|PREMIUM|PREMIUM_PLUS}_{METRIC}.
 Old credits, grants, purchases and referral records remain independent/unmodified.
@@ -149,7 +172,8 @@ Configured prices are retrieved read-only; missing config yields 503 not startup
 Deployment and validation
 -------------------------
 Set DATABASE_URL to PostgreSQL; run alembic upgrade head from services/api.
-New migration 0007_account_services follows ae05715be4e2 and is additive.
+Additive migration 0007_account_services follows ae05715be4e2; 0008_beta_grants
+adds nullable per-account beta expiry/quota/feature configuration without data conversion.
 Start uvicorn main:app from services/api; repository shared adapters must be shipped
 alongside legacy/streamlit/parser and shared.decision/shared.constraints.
 Run PYTHONPATH=services/api python -m pytest services/api/tests.

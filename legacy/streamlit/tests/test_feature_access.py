@@ -74,6 +74,12 @@ class TestDefaults:
             assert capabilities["monthly_analyses_limit"] == configured["analyses"]
             assert capabilities["saved_property_limit"] == configured["properties"]
 
+    def test_natural_filter_override_is_not_inferred_from_advisor(self):
+        caps = fa.capabilities_from_features({"advisor": True, "natural_filter": False, "lifestyle": True})
+        assert caps["can_use_natural_language_filtering"] is False
+        assert caps["can_use_ai_chat"] is True
+        assert caps["can_use_lifestyle_score"] is True
+
     def test_default_plan_is_free(self):
         _reset()
         assert fa.get_plan() == fa.PLAN_FREE

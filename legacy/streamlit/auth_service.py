@@ -219,9 +219,9 @@ class NestAIAPIClient:
     def me(self) -> requests.Response:
         return self.request("GET", "/auth/me")
 
-    def create_checkout_session(self, plan: str, *, trial_consent: bool = False, payment_method_confirmed: bool = False) -> requests.Response:
+    def create_checkout_session(self, plan: str, *, trial_consent: bool = False, payment_method_confirmed: bool = False, idempotency_key: str | None = None) -> requests.Response:
         return self.request("POST", "/billing/checkout", json={
-            "plan": plan, "idempotency_key": secrets.token_urlsafe(24),
+            "plan": plan, "idempotency_key": idempotency_key or secrets.token_urlsafe(24),
             "trial_consent": trial_consent, "payment_method_confirmed": payment_method_confirmed,
         })
 

@@ -14,14 +14,19 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def navigate(page, name):
+    idle(page)
     sidebar = page.locator('[data-testid="stSidebar"]')
     expect(sidebar).to_be_attached()
-    box = sidebar.bounding_box()
-    if not sidebar.is_visible() or box is None or box["x"] < 0:
+    if sidebar.get_attribute("aria-expanded") == "false":
         page.locator('[data-testid="stExpandSidebarButton"]').click()
-    sidebar.get_by_role("button", name=name, exact=True).click()
+    expect(sidebar).to_have_attribute("aria-expanded", "true")
+    button = sidebar.get_by_role("button", name=name, exact=True)
+    button.click()
+    expect(button).to_have_attribute("kind", "primary")
+    idle(page)
     if page.viewport_size["width"] < 600:
         page.locator('[data-testid="stSidebarCollapseButton"]').click()
+        expect(sidebar).to_have_attribute("aria-expanded", "false")
 
 
 def sign_in(page, runtime, user):
@@ -36,6 +41,7 @@ def sign_in(page, runtime, user):
 def healthy(page):
     expect(page.locator('[data-testid="stException"]')).to_have_count(0)
     expect(page.get_by_text("Account services are temporarily unavailable.", exact=True)).to_have_count(0)
+    expect(page.get_by_text(re.compile("TypeError: Failed to fetch dynamically imported module"))).to_have_count(0)
 
 
 def idle(page):
@@ -52,9 +58,13 @@ def select_value(page, label, value):
     idle(page)
     select = page.get_by_role("combobox", name=label, exact=True)
     if select.input_value() != value:
+        select.scroll_into_view_if_needed()
+        select.click()
         select.press("ArrowDown")
+        expect(select).to_have_attribute("aria-expanded", "true")
         page.get_by_role("option").filter(has_text=value).click()
     expect(select).to_have_value(value)
+    idle(page)
 
 
 def save_example(page, fixture_name, kind="Apartment"):

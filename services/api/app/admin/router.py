@@ -17,7 +17,7 @@ import secrets
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPBasic, HTTPBasicCredentials, HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictInt, StrictBool
 
 from app.auth.security import hash_password, verify_password, decode_access_token, normalize_email
 from app.db.session import get_db
@@ -38,6 +38,14 @@ class BetaInviteCreateRequest(BaseModel):
     email_restriction: str | None = None
     max_uses: int = Field(default=1, ge=1, le=1000)
     expires_at: datetime | None = None
+
+
+class BetaGrantRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+    active: StrictBool
+    expires_at: datetime | None = None
+    limits: dict[str, StrictInt] | None = None
+    features: dict[str, StrictBool] | None = None
 
 
 class BetaInviteRead(BaseModel):
@@ -176,8 +184,33 @@ def promote_to_beta(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     user.beta_tester = True
+    user.beta_approved_at = user.beta_approved_at or datetime.now(timezone.utc)
     db.commit()
     return {"message": f"User {user.email} promoted to beta tester"}
+
+
+@router.patch("/users/{user_id}/beta-access")
+def configure_beta_grant(
+    user_id: int, payload: BetaGrantRequest,
+    admin: User = Depends(require_admin), db: Session = Depends(get_db),
+):
+    from shared.entitlements import limits_for, features_for
+    user = db.query(User).filter_by(id=user_id).populate_existing().with_for_update().first()
+    if not user:
+        raise HTTPException(404, "User not found")
+    if payload.expires_at and payload.expires_at.tzinfo is None:
+        raise HTTPException(422, "Beta grant expiry must include a UTC timezone offset")
+    if payload.limits and (set(payload.limits) - set(limits_for("beta")) or any(value < 0 for value in payload.limits.values())):
+        raise HTTPException(422, "Invalid beta quota overrides")
+    if payload.features and set(payload.features) - set(features_for("beta")):
+        raise HTTPException(422, "Invalid beta feature overrides")
+    user.beta_tester = payload.active
+    user.beta_approved_at = user.beta_approved_at or datetime.now(timezone.utc)
+    user.beta_access_expires_at = payload.expires_at
+    user.beta_limits, user.beta_features = payload.limits, payload.features
+    db.commit()
+    return {"user_id": user.id, "active": user.beta_tester,
+            "expires_at": user.beta_access_expires_at, "limits": user.beta_limits, "features": user.beta_features}
 
 
 # ── Feedback ───────────────────────────────────────────────────────────────────

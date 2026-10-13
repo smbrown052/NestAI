@@ -116,7 +116,10 @@ def _find_valid_beta_access(db: Session, invite_code: str, email: str) -> BetaAc
     for beta_access in beta_codes:
         if not verify_password(invite_code, beta_access.code_hash):
             continue
-        if beta_access.expires_at and beta_access.expires_at < now:
+        expires = beta_access.expires_at
+        if expires and expires.tzinfo is None:
+            expires = expires.replace(tzinfo=timezone.utc)
+        if expires and expires < now:
             continue
         if beta_access.use_count >= beta_access.max_uses:
             continue

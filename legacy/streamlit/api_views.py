@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import uuid
 import math
+import hashlib
+import json
 
 import pandas as pd
 import streamlit as st
@@ -13,6 +15,13 @@ from plan_ui import render_pricing_cards, render_upgrade_prompt
 
 
 def api_call(client, method, path, payload=None, *, quiet=False, raw=False):
+    pending = None
+    fingerprint = None
+    if isinstance(payload, dict) and "idempotency_key" in payload:
+        intent = {key: value for key, value in payload.items() if key != "idempotency_key"}
+        fingerprint = hashlib.sha256(json.dumps([method, path, intent], sort_keys=True).encode()).hexdigest()
+        pending = st.session_state.setdefault("account_pending_requests", {})
+        payload = {**payload, "idempotency_key": pending.setdefault(fingerprint, payload["idempotency_key"])}
     response = client.request(method, path, json=payload)
     if response.status_code not in {200, 201}:
         if not quiet:
@@ -28,9 +37,14 @@ def api_call(client, method, path, payload=None, *, quiet=False, raw=False):
             st.error(messages.get(response.status_code, "Could not complete this request. Please try again."))
         return None
     if raw:
+        if pending is not None:
+            pending.pop(fingerprint, None)
         return response.text
     try:
-        return response.json()
+        data = response.json()
+        if pending is not None:
+            pending.pop(fingerprint, None)
+        return data
     except (ValueError, TypeError):
         if not quiet:
             st.error("The account service returned an unexpected response. Please try again.")
@@ -207,7 +221,9 @@ def render_property_controls(client, properties):
         st.caption("Monthly recurring fees apply only to this property.")
         fields = {}
         for key, label in [("parking", "Parking"), ("utilities", "Utilities"), ("pet_fee", "Pet fee"), ("renters_insurance", "Renters insurance"), ("other", "Other monthly fees")]:
-            fields[key] = st.number_input(f"{label} ($/month)", min_value=0.0, value=float(fees.get(key) or 0), step=5.0, key=f"property_fee_{selected}_{key}")
+            value = fees.get(key)
+            fields[key] = st.number_input(f"{label} ($/month)", min_value=0.0, value=float(value) if value is not None else None,
+                                          step=5.0, placeholder="Unknown", key=f"property_fee_{selected}_{key}")
         save = st.form_submit_button("Save property fees")
     if save and api_call(client, "PATCH", f"/properties/{selected}", {"fees": fields}) is not None:
         st.rerun()
@@ -350,8 +366,9 @@ def render_account_view(client, auth, screen):
             description = st.text_area("Describe the issue or suggestion")
             submitted = st.form_submit_button("Submit feedback")
         if submitted and title.strip():
-            payload = {"category": category, "title": title, "description": description,
-                       "platform": "web", "route_or_screen": screen}
+            payload = {"category": {"bug": "bug", "feature_request": "feature", "improvement": "feedback"}[category],
+                       "title": title, "description": description, "route_or_screen": screen,
+                       "idempotency_key": str(uuid.uuid4())}
             result = api_call(client, "POST", "/feedback", payload)
             if result is not None:
                 st.success(f"Feedback saved. Reference: {result.get('public_reference', '')}")

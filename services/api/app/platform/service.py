@@ -6,12 +6,14 @@ import hashlib
 import io
 import json
 import math
-from uuid import uuid4
+from uuid import uuid4, uuid5, NAMESPACE_URL
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from app.auth.plans import current_plan
 from app.db.models.user import User
+from app.db.models.property import Property
+from app.db.models.home_details import HomeDetails
 from app.db.models.account import AccountProperty, AccountUnit, AccountPreference, MonthlyUsage, RequestReceipt
 from shared.entitlements import limits_for, features_for
 from shared.adapters import rank
@@ -22,10 +24,25 @@ def period():
 
 
 def effective_plan(user):
+    expires = user.beta_access_expires_at
+    if expires and expires.tzinfo is None:
+        expires = expires.replace(tzinfo=timezone.utc)
+    if user.beta_tester and (expires is None or expires > datetime.now(timezone.utc)):
+        return "beta"
     plan = current_plan(user)
     if plan in {"premium", "premium_plus"} and user.subscription_status not in {"active", "trialing"}:
         return "free"
     return plan if plan in {"premium", "premium_plus"} else "free"
+
+
+def limits(user):
+    plan = effective_plan(user)
+    return limits_for(plan, user.beta_limits if plan == "beta" else None)
+
+
+def features(user):
+    plan = effective_plan(user)
+    return features_for(plan, user.beta_features if plan == "beta" else None)
 
 
 def lock_account(db, user):
@@ -33,12 +50,12 @@ def lock_account(db, user):
 
 
 def gate(user, feature):
-    if not features_for(effective_plan(user)).get(feature):
+    if not features(user).get(feature):
         raise HTTPException(403, {"code": "plan_required", "feature": feature})
 
 
 def consume(db, user, metric):
-    cap = limits_for(effective_plan(user))[metric]
+    cap = limits(user)[metric]
     month = period()
     row = db.get(MonthlyUsage, (user.id, month, metric))
     if not row:
@@ -108,7 +125,7 @@ def save(db, user, payload):
     row = db.query(AccountProperty).filter_by(user_id=user.id, external_id=identity).first()
     if not row:
         count = db.query(AccountProperty).filter_by(user_id=user.id).count()
-        cap = limits_for(effective_plan(user))["properties"]
+        cap = limits(user)["properties"]
         if count >= cap:
             raise HTTPException(429, {"code": "property_limit", "limit": cap})
         row = AccountProperty(id=str(uuid4()), user_id=user.id, external_id=identity,
@@ -150,6 +167,40 @@ def save(db, user, payload):
     return serialize(db, row)
 
 
+def recover_legacy(db, user):
+    recovered, existing = [], []
+    for source in db.query(Property).filter(Property.user_id == user.id).order_by(Property.id):
+        identity = f"legacy-property:{source.id}"
+        previous = db.query(AccountProperty).filter_by(user_id=user.id, external_id=identity).first()
+        if previous:
+            existing.append(previous.id)
+            continue
+        parsed = {column.name: getattr(source, column.name) for column in source.__table__.columns
+                  if column.name not in {"id", "user_id", "session_id", "created_at", "updated_at"}}
+        details = db.query(HomeDetails).filter_by(property_id=source.id).first()
+        if details:
+            facts = {column.name: getattr(details, column.name) for column in details.__table__.columns
+                     if column.name not in {"id", "property_id", "created_at", "updated_at"}}
+            parsed.update(facts)
+            parsed["legacy_home_details_id"] = details.id
+        parsed["legacy_property_id"] = source.id
+        parsed["ownership_provenance"] = "existing_postgres_properties.user_id"
+        parsed["is_archived"] = bool(source.is_archived or source.status == "ARCHIVED")
+        kind = ("rental_home" if source.property_type == "RENTAL_HOME" else
+                "apartment" if source.property_type.startswith("APARTMENT") else "home")
+        row = AccountProperty(
+            id=str(uuid5(NAMESPACE_URL, f"nestai:user:{user.id}:{identity}")),
+            user_id=user.id, external_id=identity, kind=kind, parsed=parsed,
+            created_at=source.created_at, updated_at=source.updated_at,
+        )
+        db.add(row)
+        recovered.append(row.id)
+    db.flush()
+    return {"recovered_property_ids": recovered, "already_recovered_property_ids": existing,
+            "policy": "Only pre-existing explicit PostgreSQL user_id ownership is recovered. Shared/null-owned caches are never claimed.",
+            "quota_policy": "Existing owned records are preserved even above current caps; new saves remain capped."}
+
+
 def numeric(value):
     if isinstance(value, bool):
         return None
@@ -160,7 +211,13 @@ def numeric(value):
         return None
 
 
+def first_numeric(*values):
+    return next((number for value in values if (number := numeric(value)) is not None), None)
+
+
 def ranking(db, user, ids, constraints, priorities):
+    if priorities:
+        gate(user, "lifestyle")
     rows = decision_rows(db, user, ids)
     profile = db.get(AccountPreference, user.id)
     try:
@@ -192,11 +249,13 @@ def decision_rows(db, user, ids):
             row = {**values, "id": prop.id, "kind": prop.kind, "property_id": prop.id, "unit_id": unit.id if unit else None,
                    "property": values.get("display_name") or values.get("property_title") or values.get("address"),
                    "unit": unit.id if unit else "",
-                   "price_num": numeric(values.get("price", values.get("rent_price", values.get("monthly_rent", values.get("sale_price"))))),
-                   "sqft_num": numeric(values.get("sqft", values.get("square_feet"))),
-                   "beds_num": numeric(values.get("beds_num", values.get("beds", values.get("bedrooms")))),
-                   "baths_num": numeric(values.get("baths_num", values.get("baths", values.get("bathrooms")))),
-                   "commute_minutes": numeric(values.get("commute_minutes", values.get("commute_transit_min")))}
+                   "price_num": first_numeric(
+                       values.get("sale_price") if prop.kind == "home" else None,
+                       values.get("price_num"), values.get("price"), values.get("rent_price"), values.get("monthly_rent")),
+                   "sqft_num": first_numeric(values.get("sqft_num"), values.get("sqft"), values.get("square_feet")),
+                   "beds_num": first_numeric(values.get("beds_num"), values.get("beds"), values.get("bedrooms")),
+                   "baths_num": first_numeric(values.get("baths_num"), values.get("baths"), values.get("bathrooms")),
+                   "commute_minutes": first_numeric(values.get("commute_minutes"), values.get("commute_transit_min"))}
             rows.append(row)
     return rows
 

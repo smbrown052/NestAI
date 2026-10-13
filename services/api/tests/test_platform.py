@@ -1,6 +1,7 @@
 """Local tests use mocks; no test represents real provider/Stripe validation."""
 
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 import csv
 import hashlib
 import hmac
@@ -23,6 +24,12 @@ from app.db.base import Base
 from app.db.models.account import MonthlyUsage, AccountProperty
 from app.db.models.credits import CreditBalance, CreditTransaction
 from app.db.models.referral import Referral
+from app.db.models.feedback import FeedbackReport
+from app.db.models.property import Property
+from app.db.models.home_details import HomeDetails
+from app.db.models.comparison import Comparison
+from app.db.models.building import Building
+from app.db.models.unit import Unit
 from app.db.models.user import User
 from app.db.session import get_db
 from app.auth.security import create_access_token
@@ -104,6 +111,65 @@ def test_approved_entitlements(api):
     assert result["timezone"] == "UTC"
 
 
+def test_trusted_beta_grant_preserved_without_stripe_and_expiry_enforced(api):
+    client, factory, headers, ids, _ = api
+    with factory() as db:
+        user = db.get(User, ids[0])
+        user.beta_tester = True
+        user.beta_approved_at = datetime.now(timezone.utc)
+        user.active_plan = user.tier = "beta"
+        user.subscription_status = "pending_payment"
+        user.beta_limits = {"properties": 3, "ai": 2}
+        db.add(CreditBalance(user_id=user.id, credits_remaining=87))
+        db.commit()
+    result = client.get("/entitlements", headers=headers[0]).json()
+    assert result["plan"] == "beta" and result["entitlement_source"] == "trusted_beta_grant"
+    assert result["limits"]["properties"] == 3 and result["features"]["advisor"] is True
+    prop = save(api)
+    response = client.post("/advisor", headers=headers[0], json={
+        "property_ids": [prop["id"]], "idempotency_key": "beta-advisor"})
+    assert response.status_code == 200
+    with factory() as db:
+        assert db.query(CreditBalance).one().credits_remaining == 87
+        assert db.get(User, ids[0]).stripe_customer_id is None
+        db.get(User, ids[0]).beta_access_expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+        db.commit()
+    assert client.get("/entitlements", headers=headers[0]).json()["plan"] == "free"
+    assert client.post("/advisor", headers=headers[0], json={
+        "property_ids": [prop["id"]], "idempotency_key": "beta-expired"}).status_code == 403
+
+
+def test_beta_string_without_grant_and_free_advanced_gates(api):
+    client, factory, headers, ids, _ = api
+    with factory() as db:
+        db.get(User, ids[0]).active_plan = "beta"
+        db.commit()
+    assert client.get("/entitlements", headers=headers[0]).json()["plan"] == "free"
+    assert client.post("/requests", headers=headers[0], json={"request": "under $2500"}).status_code == 403
+    assert client.post("/ranking", headers=headers[0], json={"priorities": {"price": 1}}).status_code == 403
+    assert client.post("/ranking", headers=headers[0], json={}).status_code == 200
+
+
+def test_admin_beta_grant_configuration_is_owned_and_payment_independent(api):
+    client, factory, headers, ids, _ = api
+    with factory() as db:
+        db.get(User, ids[1]).is_admin = True
+        db.commit()
+    endpoint = f"/admin/users/{ids[0]}/beta-access"
+    payload = {"active": True, "expires_at": (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(),
+               "limits": {"analyses": 2}, "features": {"analytics": True}}
+    assert client.patch(endpoint, headers=headers[0], json=payload).status_code == 403
+    response = client.patch(endpoint, headers=headers[1], json=payload)
+    assert response.status_code == 200, response.text
+    entitlement = client.get("/entitlements", headers=headers[0]).json()
+    assert entitlement["plan"] == "beta" and entitlement["limits"]["analyses"] == 2
+    assert entitlement["features"]["analytics"] is True
+    assert client.patch(endpoint, headers=headers[1], json={**payload, "limits": {"ai": -1}}).status_code == 422
+    assert client.patch(endpoint, headers=headers[1], json={**payload, "limits": {"ai": True}}).status_code == 422
+    assert client.patch(endpoint, headers=headers[1], json={"active": False}).status_code == 200
+    assert client.get("/entitlements", headers=headers[0]).json()["plan"] == "free"
+
+
 def test_analysis_idempotency_and_monthly_quota(api):
     client, factory, headers, ids, _ = api
     payload = {"kind": "apartment", "text": APARTMENT_TEXT, "idempotency_key": "analysis"}
@@ -151,6 +217,33 @@ def test_apartment_parser_preserves_authoritative_numeric_fields(api):
     result = client.post("/ranking", headers=headers[0], json={
         "constraints": {"min_baths": 1.5, "min_beds": 2}}).json()
     assert result["ranked"][0]["baths_num"] == 1.5 and result["ranked"][0]["beds_num"] == 2
+
+
+def test_actual_avalon_cortland_fixture_api_29_13_and_dedup42(api):
+    client, _, headers, _, _ = api
+    root = Path(__file__).resolve().parents[3]
+    ids = []
+    for index, count in ((1, 29), (2, 13)):
+        text_value = (root / f"legacy/streamlit/data/app_listing_{index}.txt").read_text()
+        analysis = client.post("/analyses", headers=headers[0], json={
+            "kind": "apartment", "text": text_value, "idempotency_key": f"fixture-analysis-{index}"})
+        assert analysis.status_code == 200, analysis.text
+        assert len(analysis.json()["parsed"]["units"]) == count
+        payload = {"kind": "apartment", "parsed": analysis.json()["parsed"],
+                   "external_id": f"fixture-{index}", "idempotency_key": f"fixture-save-{index}"}
+        saved = client.post("/properties", headers=headers[0], json=payload)
+        assert saved.status_code == 200, saved.text
+        assert len(saved.json()["units"]) == count
+        ids.append(saved.json()["id"])
+        repeated = client.post("/properties", headers=headers[0], json={**payload, "idempotency_key": f"fixture-resave-{index}"})
+        assert repeated.status_code == 200 and repeated.json()["id"] == saved.json()["id"]
+    assert len(client.get("/properties", headers=headers[0]).json()["properties"]) == 2
+    ranked = client.post("/ranking", headers=headers[0], json={"property_ids": ids}).json()["ranked"]
+    assert len(ranked) == len({(row["property_id"], row["unit_id"]) for row in ranked}) == 42
+    paid(api)
+    exported = client.post("/exports", headers=headers[0], json={"property_ids": ids, "scope": "units"})
+    csv_rows = list(csv.DictReader(io.StringIO(exported.text)))
+    assert len(csv_rows) == len({(row["property_id"], row["unit_id"]) for row in csv_rows}) == 42
 
 
 def test_upsert_quotas_unit_ids_and_account_isolation(api):
@@ -208,6 +301,7 @@ def test_profile_name_patch_and_natural_requests(api):
         assert db.get(User, ids[0]).display_name == "Updated Name"
         assert db.get(User, ids[1]).display_name is None
     assert client.patch("/profile", headers=headers[0], json={"display_name": "X", "is_admin": True}).status_code == 422
+    paid(api)
     response = client.post("/requests", headers=headers[0], json={"request": "under $2500 and at least 2 beds"})
     assert response.status_code == 200, response.text
     assert response.json()["constraints"]["rent_lt"] == 2500 and response.json()["constraints"]["min_beds"] == 2
@@ -235,6 +329,49 @@ def test_property_fee_patch_archive_restore_and_quota_preservation(api):
     response = client.post("/properties/" + prop["id"] + "/restore", headers=headers[0], json={})
     assert response.status_code == 200 and response.json()["is_archived"] is False
     assert client.post("/ranking", headers=headers[0], json={}).json()["ranked"][0]["monthly_total"] == 2180
+
+
+def test_feedback_persists_admin_table_with_owned_idempotency(api):
+    client, factory, headers, ids, _ = api
+    payload = {"idempotency_key": "feedback", "category": "bug", "title": "Ranking issue",
+               "description": "A reproducible issue", "route_or_screen": "Apartment Search"}
+    response = client.post("/feedback", headers=headers[0], json=payload)
+    assert response.status_code == 200, response.text
+    assert client.post("/feedback", headers=headers[0], json=payload).json() == response.json()
+    with factory() as db:
+        report = db.query(FeedbackReport).one()
+        assert report.user_id == ids[0] and report.contact_email is None and report.status == "new"
+        db.get(User, ids[1]).is_admin = True
+        db.commit()
+    assert client.get("/admin/feedback", headers=headers[0]).status_code == 403
+    admin_response = client.get("/admin/feedback", headers=headers[1])
+    assert admin_response.status_code == 200 and admin_response.json()[0]["id"] == response.json()["id"]
+    assert client.post("/feedback", headers=headers[0], json={**payload, "user_id": ids[1]}).status_code == 422
+
+
+def test_backend_email_suppression_no_transport_calls(monkeypatch):
+    from email_service import send_password_reset_email
+    monkeypatch.setenv("NESTAI_DISABLE_EMAIL", "true")
+    with patch("resend.Emails.send") as send:
+        assert send_password_reset_email("unused@example.com", "https://example.invalid/reset") is False
+    send.assert_not_called()
+
+
+def test_password_reset_provider_failure_does_not_enumerate_accounts(api, monkeypatch):
+    client, _, _, _, _ = api
+    from app.core.config import get_settings
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("JWT_SECRET_KEY", "x" * 40)
+    get_settings.cache_clear()
+    try:
+        with patch("app.auth.router.send_password_reset_email", side_effect=RuntimeError("private-provider-error")):
+            response = client.post("/auth/forgot-password", json={"email": "user1@example.com"})
+            unknown = client.post("/auth/forgot-password", json={"email": "unknown@example.com"})
+        assert response.status_code == unknown.status_code == 200
+        assert response.json() == unknown.json()
+        assert "private-provider-error" not in response.text and "has been sent" not in response.text
+    finally:
+        get_settings.cache_clear()
 
 
 @pytest.mark.parametrize("path", ["advisor", "enrichment", "commute", "negotiation", "analytics", "reports"])
@@ -404,6 +541,7 @@ def test_ranking_reports_download_and_plus_sensitivity(api):
 
 
 def test_shared_constraints_fractional_baths_and_transit_provenance(api):
+    paid(api)
     client, _, headers, _, _ = api
     save(api, units=[
         {"id": "0012", "unit_price": "$2,000", "unit_sqft": "900", "beds": 2, "baths": 1.5,
@@ -433,6 +571,59 @@ def test_legacy_credits_and_referrals_unchanged(api):
         assert db.query(CreditBalance).one().credits_remaining == 87
         assert db.query(CreditTransaction).one().delta == 87
         assert db.query(Referral).one().reward_cents == 500
+
+
+def test_audited_recovery_only_trusted_owned_records_and_snapshots(api):
+    client, factory, headers, ids, _ = api
+    with factory() as db:
+        owned = Property(user_id=ids[0], property_type="HOME_FOR_SALE", address="Owned Home", sale_price=450000)
+        db.add(owned)
+        db.flush()
+        db.add(HomeDetails(property_id=owned.id, walk_score=80, pets_policy="Pets allowed"))
+        db.add(Property(user_id=None, session_id="ambiguous", property_type="HOME_FOR_SALE", address="Never Claim Me"))
+        db.add(Property(user_id=ids[1], property_type="RENTAL_HOME", address="Other Account"))
+        db.add(Comparison(user_id=ids[0], name="Owned snapshot", units_snapshot='[{"unit":"0012"}]'))
+        db.add(Comparison(user_id=ids[1], name="Other snapshot", units_snapshot="private"))
+        db.add(Comparison(user_id=None, name="Unowned snapshot", units_snapshot="unclaimed"))
+        building = Building(building_key="shared-cache", building_name="Shared")
+        db.add(building)
+        db.flush()
+        db.add(Unit(building_id=building.id, unit_number="0012", rent_price=1234))
+        db.add(CreditBalance(user_id=ids[0], credits_remaining=87))
+        db.commit()
+    inventory = client.get("/recovery", headers=headers[0]).json()
+    assert inventory["owned_legacy_properties"] == inventory["owned_comparison_snapshots"] == 1
+    result = client.post("/recovery", headers=headers[0], json={"idempotency_key": "recover"})
+    assert result.status_code == 200, result.text
+    assert client.post("/recovery", headers=headers[0], json={"idempotency_key": "recover"}).json() == result.json()
+    rows = client.get("/properties", headers=headers[0]).json()["properties"]
+    assert len(rows) == 1 and rows[0]["parsed"]["address"] == "Owned Home"
+    assert rows[0]["parsed"]["walk_score"] == 80 and rows[0]["units"] == []
+    assert rows[0]["parsed"]["ownership_provenance"] == "existing_postgres_properties.user_id"
+    ranked = client.post("/ranking", headers=headers[0], json={}).json()["ranked"]
+    assert ranked[0]["price_num"] == 450000
+    assert client.get("/properties", headers=headers[1]).json()["properties"] == []
+    comparisons = client.get("/comparisons", headers=headers[0]).json()["comparisons"]
+    assert len(comparisons) == 1 and comparisons[0]["units_snapshot"] == '[{"unit":"0012"}]'
+    with factory() as db:
+        assert db.query(Property).count() == 3 and db.query(Comparison).count() == 3
+        assert db.query(Property).filter_by(user_id=None).one().address == "Never Claim Me"
+        assert db.query(Unit).one().unit_number == "0012" and db.query(Building).count() == 1
+        assert db.query(CreditBalance).one().credits_remaining == 87
+    again = client.post("/recovery", headers=headers[0], json={"idempotency_key": "recover-again"}).json()
+    assert again["recovered_property_ids"] == [] and len(again["already_recovered_property_ids"]) == 1
+
+
+def test_recovery_preserves_existing_owned_data_above_current_caps(api):
+    client, factory, headers, ids, _ = api
+    with factory() as db:
+        db.add_all([Property(user_id=ids[0], property_type="HOME_FOR_SALE", address=f"Owned {i}") for i in range(3)])
+        db.commit()
+    result = client.post("/recovery", headers=headers[0], json={"idempotency_key": "all-owned"})
+    assert result.status_code == 200 and len(result.json()["recovered_property_ids"]) == 3
+    assert client.get("/entitlements", headers=headers[0]).json()["usage"]["properties"] == 3
+    assert client.post("/properties", headers=headers[0], json={
+        "kind": "home", "parsed": {"address": "New"}, "idempotency_key": "new"}).status_code == 429
 
 
 def stripe_signature(raw, secret):
@@ -604,7 +795,7 @@ def test_additive_migration_preserves_unowned_and_credits(monkeypatch):
             assert conn.execute(text("SELECT credits_remaining FROM credit_balances")).scalar() == 88
             assert conn.execute(text("SELECT user_id FROM properties WHERE session_id='legacy-unowned'")).scalar() is None
             assert conn.execute(text("SELECT count(*) FROM account_properties")).scalar() == 0
-            assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0007_account_services"
+            assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0008_beta_grants"
         command.downgrade(cfg, "ae05715be4e2")
         with admin.begin() as conn:
             conn.execute(text(f'SET search_path TO "{schema}"'))

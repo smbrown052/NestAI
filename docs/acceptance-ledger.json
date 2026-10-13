@@ -1,6 +1,7 @@
 {
   "baseline_revision": "c7a197f0e16e697a150b7286fd29afb1d56c181d",
   "deployment_verified": false,
+  "latest_checkpoint_revision": "2dfbde5dde3ec73e85dd6cfbff94d29aad6fff07",
   "public_acceptance": "Blocked",
   "baseline": {
     "frontend": {"passed": 322, "failed": 9, "evidence": "Existing suite: undefined forgot-password test harness and conflicting Streamlit test mocks"},
@@ -46,7 +47,8 @@
   "validation": {
     "codeql": "Initial committed snapshot: 0 alerts",
     "automated_review": "Unavailable: review binary not installed; independent read-only reviewer used",
-    "ci": "Run 38470838504 action_required; no jobs ran. Owner approval required.",
+    "ci": "Run 38473715758 action_required; logs confirm 0 total jobs. Owner approval required.",
+    "final_validation": "parallel_validation circuit breaker after consecutive timeouts; cannot claim final scan passed",
     "public_access": "Web fetch failed DNS lookup; browser MCP transport unavailable"
   },
   "tiers": {
@@ -55,10 +57,11 @@
     "Premium Plus": "Blocked"
   },
   "blockers": [
-    "Hosting configuration, deployed revisions and deployment authorization not verified",
+    "Hosting configuration, deployed revisions and deployment authorization not verified; API deployment must include shared/ and legacy parser directories, preferably with repository service root",
     "Production provider access and real integration responses not verified",
     "Approved Stripe product prices and sandbox credentials not verified",
     "Hosted SQLite backup and ownership evidence unavailable",
-    "GitHub Actions requires approval before the new regression workflow can run"
+    "GitHub Actions requires approval before the new regression workflow can run",
+    "Final parallel validation is circuit-breaker blocked after consecutive timeouts"
   ]
 }

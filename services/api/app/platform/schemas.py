@@ -59,6 +59,10 @@ class Feedback(Idempotent):
     user_contact_allowed: bool = False
 
 
+class Recovery(Idempotent):
+    pass
+
+
 class Ranking(StrictModel):
     property_ids: list[str] = Field(default_factory=list, max_length=200)
     constraints: dict = Field(default_factory=dict)

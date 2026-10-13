@@ -22,6 +22,7 @@ Environment flags:
 from __future__ import annotations
 
 from html import escape
+import uuid
 
 import streamlit as st
 from auth_service import NestAIAPIClient
@@ -474,9 +475,12 @@ def _render_plan_card(
             elif not consent or not payment:
                 st.warning("Please review and accept the billing terms before continuing.")
             else:
-                response = api_client.create_checkout_session(plan_id.lower(), trial_consent=consent, payment_method_confirmed=payment)
+                key_name = f"checkout_intent_{plan_id}"
+                intent_key = st.session_state.setdefault(key_name, str(uuid.uuid4()))
+                response = api_client.create_checkout_session(plan_id.lower(), trial_consent=consent, payment_method_confirmed=payment, idempotency_key=intent_key)
                 if response.status_code == 200:
                     payload = response.json()
+                    st.session_state.pop(key_name, None)
                     st.session_state[f"checkout_url_{plan_id}"] = payload.get("checkout_url")
                     provider_price = payload.get("price", {})
                     if provider_price.get("amount_cents") is not None:
