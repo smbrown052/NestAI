@@ -26,9 +26,23 @@
         "classification": "Transport/environment failure plus test diagnostic defect",
         "evidence": "/tmp/nestai-browser-resume.log: Route.fetch GET localhost /static/js/_baseFlatten.IOj0lc7G.js raised read ECONNRESET. The failure hook then raised from Locator.inner_text, causing pytest INTERNALERROR after 24 passes and masking the original failure.",
         "fix": "Remove asset transport interception, make browser text diagnostics bounded/nonthrowing, retain runtime logs in /tmp, and add two diagnostics regressions."
+      },
+      {
+        "failure": "Direct-browser desktop signup could not click Create free account",
+        "classification": "Transport/environment failure",
+        "evidence": "/tmp/nestai-browser-direct.log: blank body and explicit net::ERR_NETWORK_CHANGED failures on /static/css/index.D6tEYVqA.css, /static/js/react-dom.CbzydqoA.js, /static/js/_baseFlatten.IOj0lc7G.js and other local assets. This classification is based on request failures, not the timeout alone."
+      },
+      {
+        "failure": "Direct-browser desktop/mobile negotiation expected AI usage 2 but saw 1",
+        "classification": "Test synchronization defect, fixed and verified",
+        "evidence": "/tmp/nestai-browser-direct.log: test matched mock reply text already displayed by the advisor; /tmp/nestai-browser-runtime-v9ihwfjm/api.log shows no final negotiation request. No failed browser requests were captured for these cases. Strengthened desktop/mobile tests both pass in /tmp/nestai-browser-final.log; /tmp/nestai-browser-runtime-n1s8goaw/api.log confirms POST /negotiation 200 and both tests verify shared AI usage advances from 1 to 2.",
+        "fix": "Wait for two actual reply elements before checking unchanged AI usage assertion; do not count the existing advisor response as negotiation success."
       }
     ],
-    "local_results": "Strengthened direct-browser suite running; acceptance pending final result.",
+    "local_results": "Passed: 43 tests, 0 failures, 0 skips in 323.85 seconds. Includes 32 actual desktop/mobile journeys, 9 runtime HTTP integration cases and 2 diagnostics regressions. Real migrated isolated PostgreSQL, FastAPI main:app and legacy/streamlit/app.py; deterministic provider fixtures only. No asset interception or retry mechanism. Prior transport failures remain recorded; final full run had no failed cases. Deployed/live acceptance remains Blocked.",
+    "final_log": "/tmp/nestai-browser-final.log",
+    "final_runtime_logs": "/tmp/nestai-browser-runtime-n1s8goaw",
+    "fresh_decision_tests": "34 passed, 0 failed; /tmp/nestai-decision-resume.log. Full make regression was not rerun in this browser-only resume.",
     "security_review": {
       "status": "Two pre-existing findings; release blocked",
       "findings": [
@@ -39,16 +53,16 @@
     },
     "deployment_checklist": "README.md: Deployment acceptance checklist; branch, entrypoints, root/start/migration commands, backups, service-specific variable names, sandbox portal, test accounts and CI approval.",
     "public_browser": "Blocked: playwright-browser_navigate to https://nest--ai--v1.streamlit.app/ returned MCP Transport closed. This is separate from the local Playwright test subprocess.",
-    "ci": "GitHub MCP: checkpoint e24b00e MVP regression run 38482516394 is action_required; get_job_logs reports total_jobs=0, failed_jobs=0. No CI pass."
+    "ci": "GitHub MCP: pushed revision 74d2a3f31cffd51ce1a0b1c8b08360473aaa7d9b MVP regression run 38485464054 is action_required; get_job_logs reports total_jobs=0, failed_jobs=0. No CI pass; approve the latest revision after final push."
   },
-  "latest_checkpoint_revision": "66b8e954149f67abf6991834010685ed57852d46",
+  "latest_checkpoint_revision": "74d2a3f31cffd51ce1a0b1c8b08360473aaa7d9b",
   "resume_checkpoint": {
     "revision": "541ac7a5096f9523639b658436efd4efcc1081cb",
     "working_tree_at_start": "Clean",
     "previous_revision": "73f982be1a1eac40ae44e32677457d0a2e3aa4e8",
     "diff_reviewed": true,
     "timeout_evidence": "Previous checkpoint records Agent-Logs-Url https://github.com/smbrown052/NestAI/sessions/0efe7c95-776d-4222-a780-6c4cd4db123e. Prior timeout log files are not present in this fresh environment; earlier ledger records validation circuit-breaker timeouts. No inferred timeout root cause.",
-    "next_step": "Read /tmp/nestai-regression-checkpoint.log for the full rerun after the reset callback fix and late portal UI tests. Desktop mixed apartment/house priority, exact CSV/report and reset journey passed; mobile requires a stable Chromium asset transport. Resolve any genuine remaining failures, preserve infrastructure failures, approve CI, run fresh security validation, configure authorized live accounts/providers and Stripe sandbox, verify hosted entrypoints/revisions, and execute deployed tier journeys; do not restart completed phases."
+    "next_step": "Browser-only resume completed 43/43 local tests; see browser_resume for fresh evidence and preserved earlier failures. Approve latest CI, remediate authentication findings, provide hosting/backup authorization, configure actual providers and Stripe sandbox portal, verify matching hosted revisions/entrypoints, provision dedicated accounts and execute deployed acceptance. Do not restart completed implementation."
   },
   "public_acceptance": "Blocked",
   "resume_checks": {
@@ -73,9 +87,9 @@
       "explanation": "Original single skip was the SQLite parameter of row-lock concurrency. Additional concurrency cases now produce three intentional SQLite-only skips: webhook account lock, save/restore active cap, quota/idempotency. SQLite cannot verify PostgreSQL SELECT FOR UPDATE. PostgreSQL variants must run; missing PostgreSQL configuration would block acceptance."
     },
     "priority_and_artifact_integration": {
-      "status": "Desktop end-to-end passed; mobile infrastructure Blocked; deployed Blocked",
+      "status": "Desktop/mobile end-to-end passed locally; deployed Blocked",
       "evidence": "/requests returns shared parsed priorities; listings exports preserve ranked apartment units and houses including null unit IDs. Raw report snapshots exclude nonmatching units and preserve ranked order. The real desktop journey verified opposite priorities change the winner, numeric filters, identical displayed/CSV/report identities and order, invalidation of stale downloads, and reset. A full run exposed reset retaining 2600 in the browser despite cleared backend filters; a stronger unit regression failed first, callback now assigns explicit widget defaults rather than deleting keys, and 37 auth/UI tests plus the actual desktop journey passed after the fix.",
-      "browser_infrastructure": "Paid CSV/report desktop journey passed. A mobile rerun failed before inputs with Chromium net::ERR_NETWORK_CHANGED on Streamlit JS chunks; preserve this as unavailable browser evidence, not a product pass."
+      "browser_infrastructure": "Earlier mobile rerun failed on Streamlit JS chunks with net::ERR_NETWORK_CHANGED; historical failure preserved. Final fresh browser-only run passed all desktop/mobile mixed-listing ranking, exact downloaded CSV/report content and reset cases without asset interception. See /tmp/nestai-browser-final.log; no deployed acceptance inferred."
     }
   },
   "baseline": {
@@ -83,7 +97,7 @@
     "api": {"passed": 0, "failed": 2, "evidence": "Existing suite import blocked by undeclared PyJWT dependency"}
   },
   "issues": [
-    {"id": "profile", "cause": "Required API client omitted from pricing renderer caller", "status": "Pending", "regression": "Real account tab rendering under all tiers"},
+    {"id": "profile", "cause": "Required API client omitted from pricing renderer caller", "status": "Passed locally; deployed Blocked", "regression": "Fresh real browser account-tab rendering under all tiers on desktop/mobile"},
     {"id": "startup", "cause": "Billing reads mandatory optional credentials at module import", "status": "Passed locally; deployment Blocked", "regression": "API suite and migrated FastAPI/Streamlit runtime startup without Stripe/provider credentials"},
     {"id": "persistence", "cause": "Apartments are session DataFrames; houses have random-session SQLite ownership", "status": "Passed locally; deployment and historical recovery Blocked", "regression": "PostgreSQL upsert, fresh session, rollback and cross-account tests; desktop/mobile re-login restored 42 visible saved units"},
     {"id": "legacy-recovery", "cause": "No verified account mapping exists for house session identifiers", "status": "Blocked", "regression": "Preserve original records; no automatic ownership claims"},
@@ -92,17 +106,17 @@
     {"id": "constraints", "cause": "Active text filter ignored rent and area", "status": "Passed", "regression": "tests/test_decision_contract.py: strict numeric boundaries, invalid output, unknown facts, hard pets"},
     {"id": "providers", "cause": "Frontend credentials and no durable backend access/usage service", "status": "Mocked protocol tests passed; actual providers Blocked", "regression": "Mock failure cases separately from opt-in actual authenticated advisor, enrichment, commute and negotiation calls"},
     {"id": "billing", "cause": "Mock signup billing and registered Stripe checkout routes disagree", "status": "Local protocol regressions passed; real Stripe sandbox Blocked", "regression": "Signature/lifecycle/idempotency, configured-price portal changes and frontend endpoint alignment"},
-    {"id": "plus", "cause": "Decorative explanatory panel instead of additional analytics", "status": "API regressions passed; final browser pending; deployed Blocked", "regression": "Backend gates, sensitivity, chart points and detailed report download"},
-    {"id": "exports", "cause": "CSV public download unverified; native table download can bypass paid gate", "status": "API regressions and desktop download passed; final mixed-listing browser pending; deployed Blocked", "regression": "Actual browser downloads, ranked mixed-property identities/order and sanitized content"},
+    {"id": "plus", "cause": "Decorative explanatory panel instead of additional analytics", "status": "Local API/browser regressions passed; deployed Blocked", "regression": "Backend gates, sensitivity, chart points and detailed report download; final desktop/mobile paid journeys passed"},
+    {"id": "exports", "cause": "CSV public download unverified; native table download can bypass paid gate", "status": "Local API/browser regressions passed; deployed Blocked", "regression": "Actual desktop/mobile downloads, ranked mixed-property identities/order, exact strict numeric filtered contents and sanitized content"},
     {"id": "feedback", "cause": "Frontend SQLite feedback disconnected from PostgreSQL admin view", "status": "Local API integration passed; deployment Blocked", "regression": "Persistence, validation and suppressed external notifications"},
-    {"id": "parsed-units", "classification": "Bug", "cause": "Parsed/saved session states diverged; units confused with properties", "fix": "Active parser plus separate property and unit identities", "status": "Parser passed; UI pending", "regression": "tests/test_decision_contract.py; tests/browser/test_journeys.py::test_apartment_save_dedup_persists_and_free_has_no_native_downloads"},
+    {"id": "parsed-units", "classification": "Bug", "cause": "Parsed/saved session states diverged; units confused with properties", "fix": "Active parser plus separate property and unit identities", "status": "Parser/UI passed locally; deployed Blocked", "regression": "tests/test_decision_contract.py; final desktop/mobile tests/browser/test_journeys.py::test_apartment_save_dedup_persists_and_free_has_no_native_downloads"},
     {"id": "preferences", "classification": "Persistence bug; scoring decision", "cause": "Ephemeral preferences; soft weighting mistaken for exclusion", "fix": "Account profile persistence; explicit hard pet filter separate from soft scoring", "status": "Local API integration and reload restoration passed; deployed Blocked", "regression": "services/api/tests/test_platform.py::test_profile_isolation; tests/browser/test_api_integration.py::test_numeric_and_natural_constraints_share_results_hard_pets_and_soft_mismatch"},
     {"id": "renter-rating", "classification": "Misleading metric bug", "cause": "Reviews labeled as safety", "fix": "Accurate renter-rating metric; remove unsupported safety inference", "status": "Passed", "regression": "tests/test_decision_contract.py"},
     {"id": "paid-features", "classification": "Incomplete features", "cause": "No authoritative end-to-end advisor, commute, negotiation or priority workflow", "fix": "Grounded backend providers with stored provenance, separate quotas and user-reviewed drafts", "status": "Live blocked", "regression": "services/api/tests/test_platform.py::test_paid_services_mock_and_shared_ai_quota; test_live_commute_and_enrichment_mocked_transport_persist_verified_fields; tests/live/test_providers.py"},
-    {"id": "navigation", "classification": "UX bug", "cause": "Mixed old/new account components and misleading Home routing", "fix": "Home overview, unified account sections, accurate bed/bath labels", "status": "Pending", "regression": "tests/browser/test_journeys.py::test_signup_and_all_navigation"},
-    {"id": "referrals", "classification": "Approved scope removal", "cause": "Unsupported MVP promises in UI", "fix": "Remove navigation/support promises without deleting records", "status": "Pending", "regression": "services/api/tests/test_platform.py::test_legacy_credits_and_referrals_unchanged; browser navigation"},
+    {"id": "navigation", "classification": "UX bug", "cause": "Mixed old/new account components and misleading Home routing", "fix": "Home overview, unified account sections, accurate bed/bath labels", "status": "Passed locally; deployed Blocked", "regression": "Final desktop/mobile tests/browser/test_journeys.py::test_signup_and_all_navigation"},
+    {"id": "referrals", "classification": "Approved scope removal", "cause": "Unsupported MVP promises in UI", "fix": "Remove navigation/support promises without deleting records", "status": "Local API/browser regressions passed; deployed Blocked", "regression": "services/api/tests/test_platform.py::test_legacy_credits_and_referrals_unchanged; final desktop/mobile navigation"},
     {"id": "balances-grants", "classification": "Preservation safeguard", "cause": "Multiple legacy entitlement/credit models", "fix": "Retain monetary balances and trusted grants separately; no fabricated ownership", "status": "Local API regressions passed; hosted historical data access Blocked", "regression": "services/api/tests/test_platform.py::test_month_rollover_does_not_reset_legacy_credits; test_additive_migration_preserves_unowned_and_credits"},
-    {"id": "free-journeys", "classification": "Test correction", "cause": "Shared fixtures exhaust Free limits across independent journeys", "fix": "Separate apartment and house accounts plus explicit mixed-property boundary test", "status": "Implemented; final browser pending; deployed Blocked", "regression": "tests/browser/test_journeys.py::test_free_house_account_and_shared_limit; test_free_mixed_account_uses_one_shared_property_allowance"},
+    {"id": "free-journeys", "classification": "Test correction", "cause": "Shared fixtures exhaust Free limits across independent journeys", "fix": "Separate apartment and house accounts plus explicit mixed-property boundary test", "status": "Desktop/mobile passed locally; deployed Blocked", "regression": "Final tests/browser/test_journeys.py::test_free_house_account_and_shared_limit; test_free_mixed_account_uses_one_shared_property_allowance"},
     {"id": "purchase-prices", "classification": "Integration bug", "cause": "Null monthly rent masked known sale price; purchase amounts mislabeled monthly", "fix": "Explicit rent/purchase semantics, comparable peer groups and rent-only constraints", "status": "Passed", "regression": "tests/test_decision_contract.py"}
   ],
   "product_decisions": {
@@ -126,6 +140,10 @@
     "prerequisites": "Existing dependencies and Chromium in /tmp/nestai-venv; isolated local PostgreSQL on port55432 with test databases. Never point regression database variables at production."
   },
   "test_runs": [
+    {"command": "PATH=/tmp/nestai-venv/bin:$PATH NESTAI_BROWSER_DATABASE_URL=postgresql+psycopg2://runner@127.0.0.1:55432/nestai_browser make -C /home/runner/work/NestAI/NestAI browser", "passed": 43, "failed": 0, "skipped": 0, "seconds": 323.85, "log": "/tmp/nestai-browser-final.log", "kind": "Final browser-only resume: full suite without asset interception, hardened credential isolation, correct negotiation synchronization; desktop/mobile real downloads, reset, persistence, all-tier tabs and mixed limits"},
+    {"command": "PATH=/tmp/nestai-venv/bin:$PATH NESTAI_BROWSER_DATABASE_URL=postgresql+psycopg2://runner@127.0.0.1:55432/nestai_browser make -C /home/runner/work/NestAI/NestAI browser", "passed": 24, "status": "Aborted with pytest INTERNALERROR", "log": "/tmp/nestai-browser-resume.log", "kind": "Fresh resume baseline: route-fetch ECONNRESET plus throwing diagnostic hook; not a completed suite"},
+    {"command": "PATH=/tmp/nestai-venv/bin:$PATH NESTAI_BROWSER_DATABASE_URL=postgresql+psycopg2://runner@127.0.0.1:55432/nestai_browser make -C /home/runner/work/NestAI/NestAI browser", "passed": 40, "failed": 3, "log": "/tmp/nestai-browser-direct.log", "kind": "Without asset interception: desktop signup asset transport failure and two suspected negotiation test races; all ten new tab/preference/strict-filter-download cases passed"},
+    {"command": "/tmp/nestai-venv/bin/python -m pytest /home/runner/work/NestAI/NestAI/tests/test_decision_contract.py -q", "passed": 34, "failed": 0, "log": "/tmp/nestai-decision-resume.log", "kind": "Fresh deterministic decision/parser regression"},
     {"command": "python -m pytest tests/test_decision_contract.py legacy/streamlit/tests/test_ranking_ui_updates.py legacy/streamlit/tests/test_home_parser.py legacy/streamlit/tests/test_house_parser.py -q", "passed": 151, "failed": 0, "kind": "deterministic parser/math"},
     {"command": "cd services/api && TEST_POSTGRES_URL=<isolated-postgresql-url> python -m pytest tests -q", "passed": 90, "skipped": 1, "failed": 0, "kind": "Latest backend-owner checkpoint; follow-up fixes still pending"},
     {"command": "python -m pytest <each owned Streamlit test file separately> -q", "passed": 225, "failed": 0, "kind": "Latest frontend-owner checkpoint; browser integration still pending"},
@@ -143,10 +161,10 @@
     {"command": "make -C /home/runner/work/NestAI/NestAI regression; make -C /home/runner/work/NestAI/NestAI live-smoke", "status": "Running", "log": "/tmp/nestai-regression-checkpoint.log", "kind": "Fresh final rerun on checkpoint66b8e95 after reset fix and late portal UI tests; separate live log /tmp/nestai-live-smoke-checkpoint.log"}
   ],
   "validation": {
-    "codeql": "Initial committed snapshot: 0 alerts",
-    "automated_review": "Unavailable: review binary not installed; independent read-only reviewer confirmed original integration findings and report-order finding resolved, with no remaining high-confidence bugs in latest widget/reset and API changes. This does not replace the blocked latest security scan.",
-    "ci": "Pushed code checkpoint 510124e40a87f09027ec131f5fbb6753501a71c3 run 38480460310 action_required; GitHub get_job_logs confirms 0 total jobs. Owner approval required. Prior runs 38479320655 and 38476028615 also had zero jobs.",
-    "final_validation": "Resumed parallel_validation explicitly refused execution: validation time limit reached, with instruction not to retry. Latest code/security scan is Blocked, not passed. Independent final read-only review requested; prior session also recorded circuit-breaker timeouts.",
+    "codeql": "Fresh browser-resume parallel validation: actions/Python 0 alerts. Manual authentication findings remain release blockers.",
+    "automated_review": "Unavailable: review binary not installed; a success heading does not establish that automated review ran. Fresh read-only security specialist confirmed two pre-existing auth findings; see browser_resume.security_review.",
+    "ci": "Pushed revision 74d2a3f31cffd51ce1a0b1c8b08360473aaa7d9b run 38485464054 action_required; GitHub get_job_logs confirms 0 total jobs. Owner must approve the latest pushed revision.",
+    "final_validation": "Previous checkpoint hit a validation circuit breaker; the fresh browser-resume session successfully ran CodeQL with 0 alerts. Automated review remains unavailable; no claim that authentication is secure.",
     "public_access": "Resume public navigation failed: browser MCP Transport closed. Previous session log URL returns HTTP 404. Hosting entrypoints and deployed revisions remain unverified."
   },
   "tiers": {
@@ -160,14 +178,14 @@
     "Approved Stripe product prices and sandbox credentials not verified",
     "Hosted SQLite backup and ownership evidence unavailable",
     "GitHub Actions requires approval before the new regression workflow can run",
-    "Latest parallel_validation could not execute because session validation time limit was reached; run final review/security validation in an authorized fresh session before release",
+    "Fresh CodeQL has 0 alerts, but automated review binary is unavailable and manual authentication findings remain: unverified owner-email admin promotion and password reset without bearer-session revocation",
     "FastAPI live providers: OPENAI_API_KEY, GOOGLE_MAPS_API_KEY and optional WALKSCORE_API_KEY missing",
     "Stripe sandbox: configure STRIPE_SECRET_KEY (test only), STRIPE_PREMIUM_PRICE_ID, STRIPE_PREMIUM_PLUS_PRICE_ID, STRIPE_WEBHOOK_SECRET and enable approved portal plan changes; deliver sandbox subscription.updated events to registered /billing/webhook",
     "Live acceptance: configure HTTPS NESTAI_LIVE_API_BASE_URL and dedicated NESTAI_LIVE_FREE_EMAIL, NESTAI_LIVE_FREE_PASSWORD, NESTAI_LIVE_PREMIUM_EMAIL, NESTAI_LIVE_PREMIUM_PASSWORD, NESTAI_LIVE_PLUS_EMAIL, NESTAI_LIVE_PLUS_PASSWORD securely; seed apartment samples; explicitly authorize NESTAI_RUN_LIVE_TESTS=1 and NESTAI_LIVE_ALLOW_ACCOUNT_OPERATIONS=1",
-    "Owner must approve GitHub Actions regression run for the latest pushed revision (code checkpoint run 38480460310 action_required, zero jobs), then required regression must run",
+    "Owner must approve GitHub Actions regression run for the latest pushed revision (74d2a3f run 38485464054 action_required, zero jobs), then required regression must run",
     "Owner must provide hosting-console access/deployment authorization and verify Streamlit legacy/streamlit/app.py, FastAPI main:app, and deployed commit identifiers before public tier journeys",
     "Hosting owner must configure Streamlit NESTAI_API_BASE_URL to the verified HTTPS FastAPI service and backend DATABASE_URL to persistent PostgreSQL, JWT_SECRET_KEY securely, ENVIRONMENT=production and NESTAI_PROVIDER_MODE=live; do not deploy test or mock provider mode.",
-    "Stable browser runner required: Chromium intermittently fails localhost Streamlit JS chunks with ERR_NETWORK_CHANGED. Do not weaken browser assertions; rerun required desktop/mobile journeys after transport is stable.",
+    "Earlier localhost browser transport instability is preserved in browser_resume; the final full local run passed 43/43. Public browser transport remains closed and deployed acceptance still requires a stable authorized runner.",
     "Password-reset email delivery is intentionally excluded from live smoke. Separately authorize a dedicated-recipient check, configure backend RESEND_API_KEY and verify sender/domain delivery; current onboarding@resend.dev sender has sandbox restrictions."
   ]
 }

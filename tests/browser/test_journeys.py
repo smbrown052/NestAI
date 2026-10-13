@@ -484,6 +484,7 @@ def test_paid_runtime_advisor_enrichment_commute_and_negotiation(page, runtime, 
     expect(page.get_by_text(re.compile("Mock mode has no real travel times"))).to_be_visible()
     assert usage()["commute"] == 1
     page.get_by_role("button", name="Generate negotiation guidance", exact=True).click()
-    expect(page.get_by_text("MOCK ONLY: compare confirmed costs and request written concessions.", exact=True).last).to_be_visible()
+    # The advisor already displays identical mock text; wait for a second response.
+    expect(page.get_by_text("MOCK ONLY: compare confirmed costs and request written concessions.", exact=True)).to_have_count(2)
     assert usage()["ai"] == 2
     healthy(page)
