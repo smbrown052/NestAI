@@ -5,6 +5,7 @@ from uuid import uuid4
 
 import pytest
 import requests
+from sqlalchemy import create_engine, text
 
 
 def call(runtime, user, method, path, payload=None, status=200):
@@ -100,3 +101,42 @@ def test_free_api_cannot_bypass_ui_gates(runtime, account, path):
     else:
         payload.update(idempotency_key=uuid4().hex)
     call(runtime, user, "POST", path, payload, status=403)
+
+
+def test_feedback_idempotency_admin_visibility_and_durable_database_record(runtime, account):
+    user, admin = account("free"), account("free", admin=True)
+    payload = {
+        "idempotency_key": uuid4().hex, "category": "bug",
+        "title": "Persisted API feedback " + uuid4().hex,
+        "description": "The regression verifies the real PostgreSQL-backed admin record.",
+        "actual_behavior": "Before fix, browser feedback and admin used different stores.",
+        "expected_behavior": "One durable record visible to authorized administrators.",
+        "route_or_screen": "Apartment Search", "user_contact_allowed": False,
+    }
+    created = call(runtime, user, "POST", "/feedback", payload).json()
+    assert call(runtime, user, "POST", "/feedback", payload).json() == created
+    reports = call(runtime, admin, "GET", "/admin/feedback?status=new").json()
+    record = next(report for report in reports if report["id"] == created["id"])
+    assert record["public_reference"] == created["public_reference"]
+    assert record["title"] == payload["title"]
+    assert record["category"] == "bug"
+    assert record["user_plan"] == "free"
+    call(runtime, user, "GET", "/admin/feedback", status=403)
+    engine = create_engine(runtime["database_url"])
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(text("""
+                SELECT user_id, description, actual_behavior, expected_behavior,
+                       route_or_screen, contact_email, user_contact_allowed
+                FROM feedback_reports WHERE public_reference = :reference
+            """), {"reference": created["public_reference"]}).mappings().all()
+        assert len(rows) == 1
+        assert rows[0]["user_id"] == user["id"]
+        assert rows[0]["description"] == payload["description"]
+        assert rows[0]["actual_behavior"] == payload["actual_behavior"]
+        assert rows[0]["expected_behavior"] == payload["expected_behavior"]
+        assert rows[0]["route_or_screen"] == payload["route_or_screen"]
+        assert rows[0]["contact_email"] is None
+        assert rows[0]["user_contact_allowed"] is False
+    finally:
+        engine.dispose()

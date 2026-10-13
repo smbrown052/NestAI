@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import requests
 from playwright.sync_api import expect
+from sqlalchemy import create_engine, text
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -213,4 +214,81 @@ def test_free_mixed_account_uses_one_shared_property_allowance(page, runtime, ac
     expect(page.get_by_text(re.compile("monthly allowance|account limit"))).to_be_visible()
     assert {item["id"] for item in properties(runtime, user)} == {item["id"] for item in before}
     expect(page.locator('[data-testid="stDownloadButton"]')).to_have_count(0)
+    healthy(page)
+
+
+def test_feedback_browser_submission_reaches_durable_admin_store(page, runtime, account):
+    user, admin = account("free"), account("free", admin=True)
+    title = "Browser feedback " + uuid4().hex
+    description = "Confirm the UI sends feedback to the real API-backed administrator store."
+    sign_in(page, runtime, user)
+    page.get_by_role("button", name="Report a bug", exact=True).click()
+    page.get_by_role("textbox", name="Feedback title", exact=True).fill(title)
+    page.get_by_role("textbox", name="Describe the issue or suggestion", exact=True).fill(description)
+    page.get_by_role("button", name="Submit feedback", exact=True).click()
+    notice = page.get_by_text(re.compile(r"^Feedback saved\. Reference: NA-"))
+    expect(notice).to_be_visible()
+    reference = notice.inner_text().split("Reference: ", 1)[1].strip()
+    response = requests.get(runtime["api"] + "/admin/feedback", headers=admin["headers"], timeout=10)
+    assert response.status_code == 200, response.text
+    record = next(item for item in response.json() if item["public_reference"] == reference)
+    assert record["title"] == title
+    assert record["category"] == "bug"
+    assert record["status"] == "new"
+    engine = create_engine(runtime["database_url"])
+    try:
+        with engine.connect() as conn:
+            stored = conn.execute(text("""
+                SELECT user_id, description, contact_email, user_contact_allowed
+                FROM feedback_reports WHERE id = :id
+            """), {"id": record["id"]}).mappings().one()
+        assert stored["user_id"] == user["id"]
+        assert stored["description"] == description
+        assert stored["contact_email"] is None
+        assert stored["user_contact_allowed"] is False
+    finally:
+        engine.dispose()
+    page.get_by_role("button", name="Log out", exact=True).click()
+    sign_in(page, runtime, user)
+    response = requests.get(runtime["api"] + "/admin/feedback", headers=admin["headers"], timeout=10)
+    assert response.status_code == 200
+    assert any(item["public_reference"] == reference for item in response.json())
+    healthy(page)
+
+
+def test_paid_runtime_advisor_enrichment_commute_and_negotiation(page, runtime, account):
+    user = account("premium_plus")
+    sign_in(page, runtime, user)
+    navigate(page, "Houses")
+    save_example(page, "home_example_1.txt", kind="Rental house")
+
+    def usage():
+        response = requests.get(runtime["api"] + "/entitlements", headers=user["headers"], timeout=10)
+        assert response.status_code == 200, response.text
+        return response.json()["usage"]
+
+    sidebar = page.locator('[data-testid="stSidebar"]')
+    if sidebar.get_attribute("aria-expanded") == "false":
+        page.locator('[data-testid="stExpandSidebarButton"]').click()
+    expect(sidebar).to_have_attribute("aria-expanded", "true")
+    sidebar.get_by_role("textbox", name="Ask about your saved properties", exact=True).fill(
+        "Explain the confirmed listing costs without inventing market statistics."
+    )
+    sidebar.get_by_role("button", name="Ask advisor", exact=True).click()
+    expect(sidebar.get_by_text("MOCK ONLY: compare confirmed costs and request written concessions.", exact=True)).to_be_visible()
+    assert usage()["ai"] == 1
+    if page.viewport_size["width"] < 600:
+        page.locator('[data-testid="stSidebarCollapseButton"]').click()
+        expect(sidebar).to_have_attribute("aria-expanded", "false")
+    idle(page)
+    page.get_by_role("button", name="Enrich neighborhood", exact=True).click()
+    expect(page.locator('[data-testid="stJson"]').filter(has_text="mock")).to_be_visible()
+    assert usage()["enrichment"] == 1
+    page.get_by_role("textbox", name="Destination", exact=True).fill("Washington DC")
+    page.get_by_role("button", name="Calculate commute", exact=True).click()
+    expect(page.get_by_text(re.compile("Mock mode has no real travel times"))).to_be_visible()
+    assert usage()["commute"] == 1
+    page.get_by_role("button", name="Generate negotiation guidance", exact=True).click()
+    expect(page.get_by_text("MOCK ONLY: compare confirmed costs and request written concessions.", exact=True).last).to_be_visible()
+    assert usage()["ai"] == 2
     healthy(page)

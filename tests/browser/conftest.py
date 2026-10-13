@@ -84,7 +84,7 @@ def runtime():
     env = os.environ.copy()
     # Never inherit production provider credentials in deterministic tests.
     for key in list(env):
-        if key.startswith(("STRIPE_", "SMTP_", "SENDGRID_", "OPENAI_", "GOOGLE_", "WALKSCORE_")):
+        if key.startswith(("STRIPE_", "SMTP_", "SENDGRID_", "RESEND_", "OPENAI_", "GOOGLE_", "WALKSCORE_")):
             env.pop(key)
     env.update(
         DATABASE_URL=database_url,
@@ -94,6 +94,7 @@ def runtime():
         NESTAI_API_BASE_URL=api_url,
         NESTAI_STREAMLIT_URL=ui_url,
         NESTAI_PROVIDER_MODE="mock",
+        NESTAI_DISABLE_EMAIL="true",
         NESTAI_OWNER_EMAIL="",
         PYTHONPATH=str(ROOT),
     )
@@ -139,7 +140,7 @@ def account(runtime):
     from pwdlib import PasswordHash
 
     engine = create_engine(runtime["database_url"])
-    def create(plan="free"):
+    def create(plan="free", *, admin=False):
         email = f"browser-{uuid4().hex}@example.com"
         password = secrets.token_urlsafe(20)
         with engine.begin() as conn:
@@ -148,11 +149,11 @@ def account(runtime):
                 (email, hashed_password, display_name, is_active, is_admin, tier,
                  active_plan, subscription_status, beta_tester, trial_used,
                  cancel_at_period_end, referral_credit_cents, referral_code, created_at, updated_at)
-                VALUES (:email, :password, 'Browser Member', true, false, :plan,
+                VALUES (:email, :password, 'Browser Member', true, :admin, :plan,
                         :plan, 'active', false, false, false, 0, :referral, now(), now())
                 RETURNING id
             """), {"email": email, "password": PasswordHash.recommended().hash(password),
-                   "plan": plan, "referral": uuid4().hex}).scalar_one()
+                   "plan": plan, "referral": uuid4().hex, "admin": admin}).scalar_one()
         response = requests.post(runtime["api"] + "/auth/login",
                                  json={"email": email, "password": password}, timeout=10)
         assert response.status_code == 200, response.text

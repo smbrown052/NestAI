@@ -105,10 +105,24 @@ Enrichment -> {property_id,provider,mock,places,warning?}
 Commute -> {property_id,provider,mock,routes,warning?}
 Enrichment and commute require exactly one property and confirmed parsed.address.
 Commute also requires destination. Provider errors redact credentials/upstream detail.
-Enrichment returns location candidates, not invented neighborhood statistics.
+Live enrichment geocodes a non-partial street/building address, retrieves nearby
+groceries/fitness/transit with Google Places, resolves a real walking-to-transit
+route, and optionally obtains WalkScore. Results include categories, location,
+source IDs/links, fetched_at, radius_meters, nearest_transit_walk_minutes and
+walk_score_status. No usable location/category/route/score returns an error, not
+success; quota and persistence roll back. No invented neighborhood/safety statistics.
 Successful live enrichment/commute results are saved with the account property;
-transit duration feeds the existing ranking adapter. Mock results are not promoted
+workplace duration, transit walking provenance and measured walkability feed the
+shared ranking context. Mock results are not promoted
 into confirmed property facts.
+Neighborhood results are account/property/address scoped and cached from trusted
+server RequestReceipt records, not caller-supplied parsed metadata, for 24 hours
+(NESTAI_ENRICHMENT_CACHE_SECONDS override). Cache hits preserve timestamps and are
+labeled; each distinct user enrichment request still consumes its action quota.
+Advisor/negotiation receive deterministic ranked components, signed comparisons,
+validated profile facts and trusted provider receipt data, not raw listing prose.
+Returned citations identify actual selected account property/unit IDs.
+Output is capped by NESTAI_AI_MAX_OUTPUT_TOKENS (default 800, maximum 2000).
 Analytics -> {baseline,sensitivity:[{priority,priorities,winner}],method}
 Sensitivity follows the shared decision function, increasing each priority to
 twice its original weight plus one and reporting the scenario winner.
@@ -129,7 +143,8 @@ contain normalized ranked records, not unfiltered property/unit snapshots.
 
 Provider configuration
 ----------------------
-OPENAI_API_KEY, OPENAI_MODEL (default gpt-4o-mini); GOOGLE_MAPS_API_KEY.
+OPENAI_API_KEY, OPENAI_MODEL (default gpt-4o-mini); GOOGLE_MAPS_API_KEY,
+optional WALKSCORE_API_KEY. Google key needs Geocoding, Places and Directions APIs.
 Credentials are read only on the backend. All remote destinations are fixed.
 NESTAI_PROVIDER_MODE defaults to live. Explicit mock is development/test-only;
 mock outputs are labeled and contain no claims of live locations/travel times.

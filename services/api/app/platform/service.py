@@ -272,6 +272,36 @@ def analytics(db, user, ids, constraints, priorities):
     return {"baseline": baseline, "sensitivity": scenarios, "method": "shared_decision_sensitivity"}
 
 
+def advice_context(db, user, payload):
+    selected = properties(db, user, payload.property_ids)
+    comparison = ranking(db, user, payload.property_ids, payload.constraints, payload.priorities)
+    if not comparison["ranked"]:
+        raise HTTPException(422, "No eligible saved options match these constraints")
+    fields = {"property_id", "unit_id", "property", "unit", "kind", "price_num", "sqft_num", "beds_num", "baths_num",
+              "score", "confidence", "components", "comparison", "monthly_total", "fees_complete", "walk_score",
+              "commute_minutes", "peer_group", "peer_count", "peer_average", "pets_policy", "unmet_preferences"}
+    profile = db.get(AccountPreference, user.id)
+    preferences = profile.preferences if profile else {}
+    verified = {}
+    for receipt in db.query(RequestReceipt).filter_by(user_id=user.id, operation="enrichment").order_by(
+        RequestReceipt.created_at.desc()
+    ).limit(100):
+        response = receipt.response
+        property_id = response.get("property_id")
+        if property_id in payload.property_ids and property_id not in verified and (
+            response.get("status") == "complete" and not response.get("mock")
+        ):
+            verified[property_id] = response
+    return {
+        "ranked": [{key: value for key, value in row.items() if key in fields} for row in comparison["ranked"]],
+        "profile": {"pets": preferences.get("pets") if preferences.get("pets") in {"Yes", "No", "No preference"} else "No preference",
+                    "max_budget": numeric(preferences.get("max_budget"))},
+        "constraints": payload.constraints, "priorities": payload.priorities,
+        "neighborhood": [{"property_id": row.id, "enrichment": verified.get(row.id)} for row in selected],
+        "warning": "Listing facts are user-supplied. Provider facts retain source timestamps. Neutral components are not verified facts.",
+    }
+
+
 def safe_cell(value):
     if value is None:
         return ""

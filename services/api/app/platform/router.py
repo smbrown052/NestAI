@@ -1,6 +1,8 @@
 import hashlib
 import json
 from uuid import uuid4
+from datetime import datetime, timedelta, timezone
+import os
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
@@ -207,14 +209,16 @@ def records(db, user, payload):
 @router.post("/advisor")
 def advisor(payload: schemas.PaidRequest, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     return service.execute(db, user, "advisor", payload,
-                           lambda account: providers.advisor(records(db, account, payload), payload.question),
+                           lambda account: providers.advisor(records(db, account, payload), payload.question,
+                                                             grounding=service.advice_context(db, account, payload)),
                            metric="ai", feature="advisor")
 
 
 @router.post("/negotiation")
 def negotiation(payload: schemas.PaidRequest, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     return service.execute(db, user, "negotiation", payload,
-                           lambda account: providers.advisor(records(db, account, payload), payload.question, True),
+                           lambda account: providers.advisor(records(db, account, payload), payload.question, True,
+                                                             grounding=service.advice_context(db, account, payload)),
                            metric="ai", feature="negotiation")
 
 
@@ -231,10 +235,36 @@ def enrichment(payload: schemas.PaidRequest, db: Session = Depends(get_db), user
         selected = records(db, account, payload)
         if len(selected) != 1:
             raise HTTPException(422, "Enrichment requires exactly one property")
-        result = {"property_id": selected[0]["id"], **providers.enrichment(address(selected[0]))}
+        target_address = address(selected[0])
+        result = None
+        if providers.mode() == "live":
+            try:
+                ttl = max(0, int(os.getenv("NESTAI_ENRICHMENT_CACHE_SECONDS", "86400")))
+            except ValueError:
+                raise HTTPException(503, "Neighborhood cache configuration is invalid") from None
+            recent = db.query(RequestReceipt).filter(
+                RequestReceipt.user_id == account.id, RequestReceipt.operation == "enrichment",
+                RequestReceipt.created_at >= datetime.now(timezone.utc) - timedelta(seconds=ttl),
+            ).order_by(RequestReceipt.created_at.desc()).limit(100)
+            for receipt in recent:
+                cached = receipt.response
+                if cached.get("property_id") == selected[0]["id"] and cached.get("address") == target_address and (
+                    cached.get("status") == "complete" and not cached.get("mock")
+                ):
+                    result = {**cached, "cache_hit": True}
+                    break
+        if result is None:
+            result = {"property_id": selected[0]["id"], **providers.enrichment(target_address)}
         if not result.get("mock"):
             row = service.properties(db, account, [selected[0]["id"]])[0]
-            row.parsed = {**row.parsed, "enrichment": result}
+            fields = {"enrichment": result, **result.get("location", {}),
+                      "nearby_grocery_count": len(result.get("categories", {}).get("groceries", [])),
+                      "nearby_gyms": len(result.get("categories", {}).get("fitness", [])),
+                      "nearby_transit_count": len(result.get("categories", {}).get("transit", [])),
+                      "metro_min": result.get("nearest_transit_walk_minutes"), "metro_travel_mode": "walk"}
+            if result.get("walk_score") is not None:
+                fields["walk_score"] = fields["official_walk_score"] = result["walk_score"]
+            row.parsed = {**row.parsed, **fields}
         return result
     return service.execute(db, user, "enrichment", payload, work, metric="enrichment", feature="enrichment")
 

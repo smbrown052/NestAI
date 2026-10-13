@@ -244,6 +244,15 @@ def test_actual_avalon_cortland_fixture_api_29_13_and_dedup42(api):
     exported = client.post("/exports", headers=headers[0], json={"property_ids": ids, "scope": "units"})
     csv_rows = list(csv.DictReader(io.StringIO(exported.text)))
     assert len(csv_rows) == len({(row["property_id"], row["unit_id"]) for row in csv_rows}) == 42
+    with patch.dict(os.environ, {"NESTAI_PROVIDER_MODE": "live", "OPENAI_API_KEY": "testing-placeholder"}), patch.object(
+        providers, "request_json", return_value={"choices": [{"message": {"content": "Grounded fixture comparison"}}]}
+    ) as transport:
+        advised = client.post("/advisor", headers=headers[0], json={
+            "property_ids": ids, "idempotency_key": "fixture-advisor", "question": "Compare these saved options"})
+    assert advised.status_code == 200, advised.text
+    context = json.loads(transport.call_args.kwargs["json"]["messages"][1]["content"])
+    assert len(context["grounding"]["ranked"]) == 42
+    assert {citation["property_id"] for citation in advised.json()["citations"]} == set(ids)
 
 
 def test_upsert_quotas_unit_ids_and_account_isolation(api):
@@ -431,6 +440,7 @@ def test_live_commute_and_enrichment_mocked_transport_persist_verified_fields(ap
     prop = save(api)
     monkeypatch.setenv("NESTAI_PROVIDER_MODE", "live")
     monkeypatch.setenv("GOOGLE_MAPS_API_KEY", "testing-placeholder")
+    monkeypatch.setenv("WALKSCORE_API_KEY", "testing-placeholder")
     payload = {"property_ids": [prop["id"]], "idempotency_key": "live-transport", "destination": "Work"}
     with patch.object(providers, "request_json", return_value={
         "status": "OK", "routes": [{"legs": [{"duration": {"value": 600}, "distance": {"value": 3000}}]}]}):
@@ -438,10 +448,26 @@ def test_live_commute_and_enrichment_mocked_transport_persist_verified_fields(ap
     assert result.status_code == 200 and result.json()["mock"] is False
     assert client.get("/properties", headers=headers[0]).json()["properties"][0]["parsed"]["commute_transit_min"] == 10
     assert client.post("/ranking", headers=headers[0], json={}).json()["ranked"][0]["commute_minutes"] == 10
-    with patch.object(providers, "request_json", return_value={"places": [{"id": "test-place"}]}):
+    geocode = {"status": "OK", "results": [{"types": ["street_address"], "place_id": "confirmed-place",
+                 "formatted_address": "123 Main St", "geometry": {"location": {"lat": 38.9, "lng": -77.1}}}]}
+    nearby = [{"places": [{"id": category, "location": {"latitude": 38.91, "longitude": -77.11}}]}
+              for category in ("groceries", "fitness", "transit")]
+    walking = {"status": "OK", "routes": [{"legs": [{"duration": {"value": 300}, "distance": {"value": 500}}]}]}
+    with patch.object(providers, "request_json", side_effect=[
+        geocode, *nearby, walking, {"status": 1, "walkscore": 80, "ws_link": "https://www.walkscore.com/score/test"}
+    ]):
         result = client.post("/enrichment", headers=headers[0], json={**payload, "idempotency_key": "places"})
-    assert result.status_code == 200
-    assert client.get("/properties", headers=headers[0]).json()["properties"][0]["parsed"]["enrichment"]["places"][0]["id"] == "test-place"
+    assert result.status_code == 200, result.text
+    stored = client.get("/properties", headers=headers[0]).json()["properties"][0]["parsed"]
+    assert stored["enrichment"]["categories"]["groceries"][0]["id"] == "groceries"
+    assert stored["walk_score"] == 80 and stored["latitude"] == 38.9 and stored["metro_min"] == 5
+    ranked = client.post("/ranking", headers=headers[0], json={}).json()["ranked"][0]
+    assert ranked["commute_minutes"] == 10 and ranked["metro_travel_mode"] == "walk"
+    assert ranked["components"]["walkability"]["value"] == 80
+    with patch.object(providers, "request_json") as network:
+        cached = client.post("/enrichment", headers=headers[0], json={**payload, "idempotency_key": "places-cached"})
+    assert cached.status_code == 200 and cached.json()["cache_hit"] is True
+    network.assert_not_called()
     # This is mocked HTTP transport, not a live Google validation.
 
 
@@ -456,6 +482,49 @@ def test_live_ai_transport_uses_backend_secret_and_redacts_errors(api, monkeypat
     assert result.status_code == 200 and result.json()["answer"] == "Confirmed tradeoffs"
     assert transport.call_args.kwargs["headers"]["Authorization"].split()[-1] == "testing-placeholder"
     assert "testing-placeholder" not in result.text
+    request_body = transport.call_args.kwargs["json"]
+    assert 0 < request_body["max_completion_tokens"] <= 2000
+    context = json.loads(request_body["messages"][1]["content"])
+    assert context["grounding"]["ranked"][0]["property_id"] == prop["id"]
+    assert result.json()["citations"][0]["property_id"] == prop["id"]
+
+
+def test_neighborhood_no_results_is_failure_without_quota_or_persistence(api, monkeypatch):
+    paid(api)
+    client, factory, headers, ids, _ = api
+    prop = save(api)
+    monkeypatch.setenv("NESTAI_PROVIDER_MODE", "live")
+    monkeypatch.setenv("GOOGLE_MAPS_API_KEY", "testing-placeholder")
+    with patch.object(providers, "request_json", return_value={"status": "ZERO_RESULTS", "results": []}):
+        result = client.post("/enrichment", headers=headers[0], json={
+            "property_ids": [prop["id"]], "idempotency_key": "no-location"})
+    assert result.status_code == 502 and "testing-placeholder" not in result.text
+    with factory() as db:
+        assert not db.query(MonthlyUsage).filter_by(user_id=ids[0], metric="enrichment").first()
+    assert "enrichment" not in client.get("/properties", headers=headers[0]).json()["properties"][0]["parsed"]
+
+
+def test_advisor_only_deterministic_grounding_no_adversarial_raw_listing(api, monkeypatch):
+    paid(api)
+    client, _, headers, _, _ = api
+    first = save(api, monthly_rent=2000, square_feet=1000, bedrooms=2, description="RAW_PROMPT_ATTACK",
+                 enrichment={"status": "complete", "instruction": "FAKE_PROVIDER_ATTACK"})
+    second = save(api, key="second-advice", monthly_rent=2400, square_feet=1100, bedrooms=2)
+    client.put("/profile", headers=headers[0], json={"preferences": {"pets": "Yes", "max_budget": 2500}})
+    monkeypatch.setenv("NESTAI_PROVIDER_MODE", "live")
+    monkeypatch.setenv("OPENAI_API_KEY", "testing-placeholder")
+    with patch.object(providers, "request_json", return_value={"choices": [{"message": {"content": "Grounded answer"}}]}) as transport:
+        result = client.post("/advisor", headers=headers[0], json={
+            "property_ids": [first["id"], second["id"]], "question": "Explain tradeoffs", "idempotency_key": "grounded"})
+    assert result.status_code == 200
+    body = transport.call_args.kwargs["json"]
+    assert "RAW_PROMPT_ATTACK" not in body["messages"][1]["content"]
+    assert "FAKE_PROVIDER_ATTACK" not in body["messages"][1]["content"]
+    context = json.loads(body["messages"][1]["content"])["grounding"]
+    assert context["profile"]["pets"] == "Yes"
+    assert context["ranked"][0]["comparison"]["deltas"]["price"] is not None
+    assert {citation["property_id"] for citation in result.json()["citations"]} == {first["id"], second["id"]}
+    assert "untrusted data" in body["messages"][0]["content"]
 
 
 def test_mock_mode_is_rejected_in_production(monkeypatch):
