@@ -167,10 +167,27 @@ def test_apartment_save_dedup_persists_and_free_has_no_native_downloads(page, ru
     page.get_by_role("tab", name="Preferences", exact=True).click()
     expect(page.get_by_role("spinbutton", name="Max monthly budget ($)", exact=True)).to_have_value("3500")
     healthy(page)
+    page.get_by_role("button", name="Log out", exact=True).click()
+    isolated_user = account("free")
+    sign_in(page, runtime, isolated_user)
+    expect(page.get_by_text("Save a listing to begin your comparison.", exact=True)).to_be_visible()
+    expect(page.locator('[data-testid="stTable"]')).to_have_count(0)
+    navigate(page, "Profile")
+    page.get_by_role("tab", name="Preferences", exact=True).click()
+    expect(page.get_by_role("spinbutton", name="Max monthly budget ($)", exact=True)).to_have_value("0")
+    with page.context.browser.new_context(viewport=page.viewport_size) as fresh_context:
+        fresh_page = fresh_context.new_page()
+        sign_in(fresh_page, runtime, user)
+        expect(fresh_page.locator('[data-testid="stTable"]').first.locator("tbody tr")).to_have_count(42)
+        navigate(fresh_page, "Profile")
+        fresh_page.get_by_role("tab", name="Preferences", exact=True).click()
+        expect(fresh_page.get_by_role("spinbutton", name="Max monthly budget ($)", exact=True)).to_have_value("3500")
+        healthy(fresh_page)
 
 
-def test_natural_priorities_and_filtered_downloads_match_visible_comparison(page, runtime, account):
-    user = account("premium_plus")
+@pytest.mark.parametrize("plan", ["premium", "premium_plus"])
+def test_natural_priorities_and_filtered_downloads_match_visible_comparison(page, runtime, account, plan):
+    user = account(plan)
     sign_in(page, runtime, user)
     save_example(page, "app_listing_1.txt")
     save_example(page, "app_listing_2.txt")
@@ -208,12 +225,33 @@ def test_natural_priorities_and_filtered_downloads_match_visible_comparison(page
     with open(csv_download.value.path(), encoding="utf-8-sig") as handle:
         rows = list(csv.DictReader(handle))
     assert [(row["property_id"], row["unit_id"] or None) for row in rows] == expected
+    for exported, visible in zip(rows, ranked):
+        assert int(exported["rank"]) == visible["rank"]
+        assert exported["price_kind"] == visible["price_kind"]
+        assert exported["name"] == visible["property"]
+        for csv_key, rank_key in [
+            ("price", "price_num"), ("square_feet", "sqft_num"),
+            ("beds", "beds_num"), ("baths", "baths_num"),
+            ("score", "score"), ("monthly_total", "monthly_total"),
+        ]:
+            if visible.get(rank_key) is None:
+                assert exported[csv_key] == ""
+            else:
+                assert float(exported[csv_key]) == visible[rank_key]
+        assert exported["fees_complete"] == str(visible["fees_complete"])
     page.get_by_role("button", name="Generate decision report", exact=True).click()
     with page.expect_download() as report_download:
         page.get_by_role("button", name="Download report", exact=True).click()
     with open(report_download.value.path(), encoding="utf-8") as handle:
         report = json.load(handle)
     assert [(row["property_id"], row.get("unit_id")) for row in report["comparison"]["ranked"]] == expected
+    assert report["comparison"]["ranked"] == ranked
+    assert [item["id"] for item in report["properties"]] == list(dict.fromkeys(row["property_id"] for row in ranked))
+    assert [(item["id"], unit["id"]) for item in report["properties"] for unit in item["units"]] == [
+        (row["property_id"], row["unit_id"])
+        for property_id in dict.fromkeys(row["property_id"] for row in ranked)
+        for row in ranked if row["property_id"] == property_id and row.get("unit_id") is not None
+    ]
     page.get_by_role("spinbutton", name="Maximum rent ($/month)", exact=True).fill("2600")
     page.get_by_role("button", name="Apply request and numeric filters", exact=True).click()
     expect(page.get_by_role("button", name="Download comparison CSV", exact=True)).to_have_count(0)

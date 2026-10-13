@@ -1,14 +1,14 @@
 {
   "baseline_revision": "c7a197f0e16e697a150b7286fd29afb1d56c181d",
   "deployment_verified": false,
-  "latest_checkpoint_revision": "510124e40a87f09027ec131f5fbb6753501a71c3",
+  "latest_checkpoint_revision": "66b8e954149f67abf6991834010685ed57852d46",
   "resume_checkpoint": {
     "revision": "541ac7a5096f9523639b658436efd4efcc1081cb",
     "working_tree_at_start": "Clean",
     "previous_revision": "73f982be1a1eac40ae44e32677457d0a2e3aa4e8",
     "diff_reviewed": true,
     "timeout_evidence": "Previous checkpoint records Agent-Logs-Url https://github.com/smbrown052/NestAI/sessions/0efe7c95-776d-4222-a780-6c4cd4db123e. Prior timeout log files are not present in this fresh environment; earlier ledger records validation circuit-breaker timeouts. No inferred timeout root cause.",
-    "next_step": "Finish the final mixed apartment/house natural-language priority, CSV and report browser journey and full make regression on isolated PostgreSQL. Preserve any browser infrastructure failures. Then configure authorized live accounts/providers and Stripe sandbox, approve CI, verify hosted entrypoints/revisions, and run deployed Free/Premium/Premium Plus journeys; do not restart completed phases."
+    "next_step": "Read /tmp/nestai-regression-checkpoint.log for the full rerun after the reset callback fix and late portal UI tests. Desktop mixed apartment/house priority, exact CSV/report and reset journey passed; mobile requires a stable Chromium asset transport. Resolve any genuine remaining failures, preserve infrastructure failures, approve CI, run fresh security validation, configure authorized live accounts/providers and Stripe sandbox, verify hosted entrypoints/revisions, and execute deployed tier journeys; do not restart completed phases."
   },
   "public_acceptance": "Blocked",
   "resume_checks": {
@@ -33,8 +33,8 @@
       "explanation": "Original single skip was the SQLite parameter of row-lock concurrency. Additional concurrency cases now produce three intentional SQLite-only skips: webhook account lock, save/restore active cap, quota/idempotency. SQLite cannot verify PostgreSQL SELECT FOR UPDATE. PostgreSQL variants must run; missing PostgreSQL configuration would block acceptance."
     },
     "priority_and_artifact_integration": {
-      "status": "Backend regressions passed; final browser validation pending",
-      "evidence": "/requests now returns shared parsed priorities; listings exports preserve ranked apartment units and houses including null unit IDs. Report raw snapshots exclude nonmatching units and preserve ranked property/unit order. Backend owner reports 130 full-suite passes, 16 affected export tests and 20 subsequent report/export/advice tests passed including all 42 Avalon/Cortland units. Stable account-scoped widget keys fix consecutive natural-language/form edits; final mixed-listing browser evidence still pending.",
+      "status": "Desktop end-to-end passed; mobile infrastructure Blocked; deployed Blocked",
+      "evidence": "/requests returns shared parsed priorities; listings exports preserve ranked apartment units and houses including null unit IDs. Raw report snapshots exclude nonmatching units and preserve ranked order. The real desktop journey verified opposite priorities change the winner, numeric filters, identical displayed/CSV/report identities and order, invalidation of stale downloads, and reset. A full run exposed reset retaining 2600 in the browser despite cleared backend filters; a stronger unit regression failed first, callback now assigns explicit widget defaults rather than deleting keys, and 37 auth/UI tests plus the actual desktop journey passed after the fix.",
       "browser_infrastructure": "Paid CSV/report desktop journey passed. A mobile rerun failed before inputs with Chromium net::ERR_NETWORK_CHANGED on Streamlit JS chunks; preserve this as unavailable browser evidence, not a product pass."
     }
   },
@@ -74,6 +74,17 @@
     "legacy_balances": "Preserve without conversion",
     "price_conflict": "Unresolved: UI $12/$25, mock billing $19/$49, documentation Premium $24.99; no prices changed"
   },
+  "repeatable_validation": {
+    "environment": {
+      "PATH": "/tmp/nestai-venv/bin:$PATH",
+      "NESTAI_TEST_DATABASE_URL": "postgresql+psycopg2://runner@127.0.0.1:55432/nestai_final_regression",
+      "TEST_POSTGRES_URL": "postgresql+psycopg2://runner@127.0.0.1:55432/nestai_final_regression",
+      "NESTAI_BROWSER_DATABASE_URL": "postgresql+psycopg2://runner@127.0.0.1:55432/nestai_browser"
+    },
+    "regression": "make -C /home/runner/work/NestAI/NestAI regression",
+    "live_smoke": "make -C /home/runner/work/NestAI/NestAI live-smoke",
+    "prerequisites": "Existing dependencies and Chromium in /tmp/nestai-venv; isolated local PostgreSQL on port55432 with test databases. Never point regression database variables at production."
+  },
   "test_runs": [
     {"command": "python -m pytest tests/test_decision_contract.py legacy/streamlit/tests/test_ranking_ui_updates.py legacy/streamlit/tests/test_home_parser.py legacy/streamlit/tests/test_house_parser.py -q", "passed": 151, "failed": 0, "kind": "deterministic parser/math"},
     {"command": "cd services/api && TEST_POSTGRES_URL=<isolated-postgresql-url> python -m pytest tests -q", "passed": 90, "skipped": 1, "failed": 0, "kind": "Latest backend-owner checkpoint; follow-up fixes still pending"},
@@ -85,7 +96,11 @@
     {"command": "Frontend-owner auth/UI suite", "passed": 36, "failed": 0, "kind": "Hydration cleanup, priority precedence, numeric intersections and stable consecutive filter edits"},
     {"command": "Parent password compatibility and auth-flow tests", "passed": 12, "failed": 0, "kind": "Native bcrypt compatibility with historical UTF-8 truncation; new Argon2 unchanged"},
     {"command": "Backend-owner report/export/advice regressions", "passed": 20, "failed": 0, "skipped": 0, "kind": "SQLite/PostgreSQL filtered raw snapshots preserve ranked order; grounded advisor supports actual 42-unit samples"},
-    {"command": "make regression", "status": "Browser stage running", "unit_passed": 390, "api_passed": 134, "api_skipped": 3, "log": "/tmp/nestai-regression-final.log", "kind": "Final validation owner uses /tmp/nestai-venv and isolated nestai_final_regression PostgreSQL database. All API stages including PostgreSQL concurrency passed; do not infer full regression success until browser results are recorded"}
+    {"command": "make regression", "status": "Failed", "unit_passed": 390, "api_passed": 134, "api_skipped": 3, "browser_passed": 18, "browser_failed": 7, "passed": 542, "log": "/tmp/nestai-regression-final.log", "kind": "Full command completed before the final reset fix and late portal UI tests. Two genuine reset failures were fixed afterward; five failures were Chromium dynamic-module/asset transport or associated sign-in timeouts. Raw logs, not the validator's incorrect 393/411 arithmetic, are authoritative."},
+    {"command": "/tmp/nestai-venv/bin/python -m pytest /home/runner/work/NestAI/NestAI/legacy/streamlit/tests/test_auth_service.py -q", "passed": 37, "failed": 0, "kind": "After parent-owned reset callback fix; stronger reset regression failed before fixing"},
+    {"command": "NESTAI_BROWSER_DATABASE_URL=postgresql+psycopg2://runner@127.0.0.1:55432/nestai_browser /tmp/nestai-venv/bin/python -m pytest /home/runner/work/NestAI/NestAI/tests/browser/test_journeys.py -q -k natural_priorities --maxfail=1", "passed": 1, "failed": 1, "deselected": 18, "log": "/tmp/nestai-reset-browser.log", "kind": "Desktop actual filtered mixed-listing CSV/report/ranking/reset passed. Mobile failed before sign-in on local TextInput dynamic import and ERR_NETWORK_CHANGED; not an application acceptance pass."},
+    {"command": "make live-smoke", "passed": 0, "failed": 0, "skipped": 12, "log": "/tmp/nestai-live-smoke-final.log", "kind": "Final actual command completed; authorized live accounts/providers absent, email delivery deliberately excluded. Blocked, not passed."},
+    {"command": "make -C /home/runner/work/NestAI/NestAI regression; make -C /home/runner/work/NestAI/NestAI live-smoke", "status": "Running", "log": "/tmp/nestai-regression-checkpoint.log", "kind": "Fresh final rerun on checkpoint66b8e95 after reset fix and late portal UI tests; separate live log /tmp/nestai-live-smoke-checkpoint.log"}
   ],
   "validation": {
     "codeql": "Initial committed snapshot: 0 alerts",
@@ -110,6 +125,9 @@
     "Stripe sandbox: configure STRIPE_SECRET_KEY (test only), STRIPE_PREMIUM_PRICE_ID, STRIPE_PREMIUM_PLUS_PRICE_ID, STRIPE_WEBHOOK_SECRET and enable approved portal plan changes; deliver sandbox subscription.updated events to registered /billing/webhook",
     "Live acceptance: configure HTTPS NESTAI_LIVE_API_BASE_URL and dedicated NESTAI_LIVE_FREE_EMAIL, NESTAI_LIVE_FREE_PASSWORD, NESTAI_LIVE_PREMIUM_EMAIL, NESTAI_LIVE_PREMIUM_PASSWORD, NESTAI_LIVE_PLUS_EMAIL, NESTAI_LIVE_PLUS_PASSWORD securely; seed apartment samples; explicitly authorize NESTAI_RUN_LIVE_TESTS=1 and NESTAI_LIVE_ALLOW_ACCOUNT_OPERATIONS=1",
     "Owner must approve GitHub Actions regression run for the latest pushed revision (code checkpoint run 38480460310 action_required, zero jobs), then required regression must run",
-    "Owner must provide hosting-console access/deployment authorization and verify Streamlit legacy/streamlit/app.py, FastAPI main:app, and deployed commit identifiers before public tier journeys"
+    "Owner must provide hosting-console access/deployment authorization and verify Streamlit legacy/streamlit/app.py, FastAPI main:app, and deployed commit identifiers before public tier journeys",
+    "Hosting owner must configure Streamlit NESTAI_API_BASE_URL to the verified HTTPS FastAPI service and backend DATABASE_URL to persistent PostgreSQL, JWT_SECRET_KEY securely, ENVIRONMENT=production and NESTAI_PROVIDER_MODE=live; do not deploy test or mock provider mode.",
+    "Stable browser runner required: Chromium intermittently fails localhost Streamlit JS chunks with ERR_NETWORK_CHANGED. Do not weaken browser assertions; rerun required desktop/mobile journeys after transport is stable.",
+    "Password-reset email delivery is intentionally excluded from live smoke. Separately authorize a dedicated-recipient check, configure backend RESEND_API_KEY and verify sender/domain delivery; current onboarding@resend.dev sender has sandbox restrictions."
   ]
 }

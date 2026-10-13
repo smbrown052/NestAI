@@ -192,6 +192,9 @@ def page(browser, request):
     expect.set_options(timeout=15000)
     context = browser.new_context(viewport=request.param, accept_downloads=True)
     page = context.new_page()
+    # Shared-runner interface churn can cancel Chromium's localhost asset requests.
+    # Fetch the actual assets through Playwright's independent HTTP transport.
+    page.route("http://127.0.0.1:*/static/**", lambda route: route.fulfill(response=route.fetch()))
     request.node.browser_failures = []
     page.on("requestfailed", lambda failed: request.node.browser_failures.append(
         failed.url + " " + str(failed.failure)
