@@ -330,10 +330,10 @@ def test_natural_requests_keep_explicit_priorities_separate_from_constraints(api
     assert parsed["constraints"]["min_beds"] == 2
     assert parsed["priorities"]["commute"] == 3 and parsed["priorities"]["price"] == 1
     assert parsed["priorities"]["space"] == 1
-    only_priority = client.post("/requests", headers=headers[0], json={
-        "request": "space is more important than price"})
-    assert only_priority.status_code == 200, only_priority.text
-    assert only_priority.json()["priorities"]["space"] == 3
+    for request in ("space is more important than price", "prioritize space over price"):
+        only_priority = client.post("/requests", headers=headers[0], json={"request": request})
+        assert only_priority.status_code == 200, only_priority.text
+        assert only_priority.json()["priorities"]["space"] == 3
     for request in ("prioritize commute over commute", "prioritize price and prioritize commute over price",
                     "prioritize unverified safety", "under $2500 and invent priorities"):
         assert client.post("/requests", headers=headers[0], json={"request": request}).status_code == 422

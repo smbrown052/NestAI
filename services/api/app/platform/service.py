@@ -347,12 +347,13 @@ def export_rows(ranked, scope):
 def ranked_snapshots(selected, ranked):
     eligible = {}
     for row in ranked:
-        eligible.setdefault(row["property_id"], set()).add(row.get("unit_id"))
+        eligible.setdefault(row["property_id"], []).append(row.get("unit_id"))
+    records = {record["id"]: record for record in selected}
     snapshots = []
-    for record in selected:
-        if record["id"] not in eligible:
-            continue
-        units = [unit for unit in record["units"] if unit["id"] in eligible[record["id"]]]
+    for property_id, unit_ids in eligible.items():
+        record = records[property_id]
+        saved_units = {unit["id"]: unit for unit in record["units"]}
+        units = [saved_units[unit_id] for unit_id in dict.fromkeys(unit_ids) if unit_id in saved_units]
         parsed = dict(record["parsed"])
         if "units" in parsed:
             parsed["units"] = units

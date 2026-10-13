@@ -1,14 +1,14 @@
 {
   "baseline_revision": "c7a197f0e16e697a150b7286fd29afb1d56c181d",
   "deployment_verified": false,
-  "latest_checkpoint_revision": "aa8a8f67873f1985b398c427aadd814c8286cf35",
+  "latest_checkpoint_revision": "095bb9a24cad7b022f467098a6842f1daece5670",
   "resume_checkpoint": {
     "revision": "541ac7a5096f9523639b658436efd4efcc1081cb",
     "working_tree_at_start": "Clean",
     "previous_revision": "73f982be1a1eac40ae44e32677457d0a2e3aa4e8",
     "diff_reviewed": true,
     "timeout_evidence": "Previous checkpoint records Agent-Logs-Url https://github.com/smbrown052/NestAI/sessions/0efe7c95-776d-4222-a780-6c4cd4db123e. Prior timeout log files are not present in this fresh environment; earlier ledger records validation circuit-breaker timeouts. No inferred timeout root cause.",
-    "next_step": "Finish regression fixes for archive/restore, Stripe portal price changes and frontend reauthentication/selection; run full make regression against isolated PostgreSQL and update this ledger with final results."
+    "next_step": "Finish the final mixed apartment/house natural-language priority, CSV and report browser journey and full make regression on isolated PostgreSQL. Preserve any browser infrastructure failures. Then configure authorized live accounts/providers and Stripe sandbox, approve CI, verify hosted entrypoints/revisions, and run deployed Free/Premium/Premium Plus journeys; do not restart completed phases."
   },
   "public_acceptance": "Blocked",
   "resume_checks": {
@@ -33,8 +33,8 @@
       "explanation": "Original single skip was the SQLite parameter of row-lock concurrency. Additional concurrency cases now produce three intentional SQLite-only skips: webhook account lock, save/restore active cap, quota/idempotency. SQLite cannot verify PostgreSQL SELECT FOR UPDATE. PostgreSQL variants must run; missing PostgreSQL configuration would block acceptance."
     },
     "priority_and_artifact_integration": {
-      "status": "Pending final endpoint wiring/browser validation",
-      "evidence": "Reviewer confirmed /requests still needed shared priority parser and default listings export scope needed backend support. Report raw snapshots now filtered to eligible properties/units in 14 SQLite/PostgreSQL report/export tests.",
+      "status": "Backend regressions passed; final browser validation pending",
+      "evidence": "/requests now returns shared parsed priorities; listings exports preserve ranked apartment units and houses including null unit IDs. Report raw snapshots exclude nonmatching units. Backend owner reports 130 full-suite passes and 16 subsequent affected export tests passed. Stable account-scoped widget keys fix consecutive natural-language/form edits; final mixed-listing browser evidence still pending.",
       "browser_infrastructure": "Paid CSV/report desktop journey passed. A mobile rerun failed before inputs with Chromium net::ERR_NETWORK_CHANGED on Streamlit JS chunks; preserve this as unavailable browser evidence, not a product pass."
     }
   },
@@ -79,13 +79,17 @@
     {"command": "cd services/api && TEST_POSTGRES_URL=<isolated-postgresql-url> python -m pytest tests -q", "passed": 90, "skipped": 1, "failed": 0, "kind": "Latest backend-owner checkpoint; follow-up fixes still pending"},
     {"command": "python -m pytest <each owned Streamlit test file separately> -q", "passed": 225, "failed": 0, "kind": "Latest frontend-owner checkpoint; browser integration still pending"},
     {"command": "make regression", "passed": 59, "failed": 7, "errors": 50, "skipped": 2, "kind": "Resume baseline backend stage; unit stage passed. Initial isolated nestai_baseline database was absent (now created). Genuine failures included bcrypt compatibility, oversized advisor context, archive/restore counts and portal price changes. Browser stage not reached. This is not final validation."},
-    {"command": "make live-smoke", "passed": 0, "failed": 0, "skipped": 12, "kind": "Resume live checks explicitly Blocked: live opt-in and dedicated account/provider configuration unavailable. Includes actual authenticated advisor/negotiation, enrichment, commute, filtered artifacts and Plus analytics checks; none exercised without authorization. Exit code zero with skips is not release acceptance."}
+    {"command": "make live-smoke", "passed": 0, "failed": 0, "skipped": 12, "kind": "Resume live checks explicitly Blocked: live opt-in and dedicated account/provider configuration unavailable. Includes actual authenticated advisor/negotiation, enrichment, commute, filtered artifacts and Plus analytics checks; none exercised without authorization. Exit code zero with skips is not release acceptance."},
+    {"command": "Backend-owner full API suite on isolated PostgreSQL", "passed": 130, "failed": 0, "skipped": 3, "kind": "Resume backend suite; SQLite skips intentional and PostgreSQL concurrency variants passed. Subsequent listings export/report-order edits require final regression."},
+    {"command": "Backend-owner affected listings export tests", "passed": 16, "failed": 0, "kind": "SQLite/PostgreSQL mixed apartment/house listings export identity and ordering"},
+    {"command": "Frontend-owner auth/UI suite", "passed": 36, "failed": 0, "kind": "Hydration cleanup, priority precedence, numeric intersections and stable consecutive filter edits"},
+    {"command": "Parent password compatibility and auth-flow tests", "passed": 12, "failed": 0, "kind": "Native bcrypt compatibility with historical UTF-8 truncation; new Argon2 unchanged"}
   ],
   "validation": {
     "codeql": "Initial committed snapshot: 0 alerts",
     "automated_review": "Unavailable: review binary not installed; independent read-only reviewer used",
     "ci": "Pushed resume checkpoint run 38479320655 action_required; GitHub get_job_logs confirms 0 total jobs. Owner approval required. Previous run 38476028615 also had zero jobs; logs download returned 404 because no jobs ran.",
-    "final_validation": "parallel_validation circuit breaker after consecutive timeouts; cannot claim final scan passed",
+    "final_validation": "Resumed parallel_validation explicitly refused execution: validation time limit reached, with instruction not to retry. Latest code/security scan is Blocked, not passed. Independent final read-only review requested; prior session also recorded circuit-breaker timeouts.",
     "public_access": "Resume public navigation failed: browser MCP Transport closed. Previous session log URL returns HTTP 404. Hosting entrypoints and deployed revisions remain unverified."
   },
   "tiers": {
@@ -99,7 +103,7 @@
     "Approved Stripe product prices and sandbox credentials not verified",
     "Hosted SQLite backup and ownership evidence unavailable",
     "GitHub Actions requires approval before the new regression workflow can run",
-    "Final parallel validation was circuit-breaker blocked in prior session; must retry for resumed changes",
+    "Latest parallel_validation could not execute because session validation time limit was reached; run final review/security validation in an authorized fresh session before release",
     "FastAPI live providers: OPENAI_API_KEY, GOOGLE_MAPS_API_KEY and optional WALKSCORE_API_KEY missing",
     "Stripe sandbox: configure STRIPE_SECRET_KEY (test only), STRIPE_PREMIUM_PRICE_ID, STRIPE_PREMIUM_PLUS_PRICE_ID, STRIPE_WEBHOOK_SECRET and enable approved portal plan changes; deliver sandbox subscription.updated events to registered /billing/webhook",
     "Live acceptance: configure HTTPS NESTAI_LIVE_API_BASE_URL and dedicated NESTAI_LIVE_FREE/PREMIUM/PLUS_EMAIL and _PASSWORD securely; seed apartment samples; explicitly authorize NESTAI_RUN_LIVE_TESTS=1 and NESTAI_LIVE_ALLOW_ACCOUNT_OPERATIONS=1",
