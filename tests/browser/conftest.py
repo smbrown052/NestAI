@@ -9,6 +9,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 from uuid import uuid4
 
@@ -21,12 +22,21 @@ ROOT = Path(__file__).resolve().parents[2]
 API = ROOT / "services" / "api"
 
 
+def browser_text(page):
+    from playwright.sync_api import Error
+
+    try:
+        return page.locator("body").inner_text(timeout=3000)[:6000]
+    except Error as exc:
+        return f"Browser diagnostics unavailable: {exc}"
+
+
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):
     outcome = yield
     report = outcome.get_result()
     if report.when == "call" and report.failed and "page" in item.funcargs:
-        report.sections.append(("Streamlit browser text", item.funcargs["page"].locator("body").inner_text()[:6000]))
+        report.sections.append(("Streamlit browser text", browser_text(item.funcargs["page"])))
         report.sections.append(("Browser failed requests", "\n".join(getattr(item, "browser_failures", []))))
 
 
@@ -86,6 +96,8 @@ def runtime():
     for key in list(env):
         if key.startswith(("STRIPE_", "SMTP_", "SENDGRID_", "RESEND_", "OPENAI_", "GOOGLE_", "WALKSCORE_")):
             env.pop(key)
+    for key in ("NESTAI_DEV_MODE", "NESTAI_OWNER_MODE", "STREAMLIT_SECRETS_FILES"):
+        env.pop(key, None)
     env.update(
         DATABASE_URL=database_url,
         NESTAI_TEST_DATABASE_URL=database_url,
@@ -96,29 +108,33 @@ def runtime():
         NESTAI_PROVIDER_MODE="mock",
         NESTAI_DISABLE_EMAIL="true",
         NESTAI_OWNER_EMAIL="",
+        PYTHON_DOTENV_DISABLED="1",
         PYTHONPATH=str(ROOT),
     )
     subprocess.run(
         [sys.executable, "-m", "alembic", "upgrade", "head"],
         cwd=API, env=env, check=True, capture_output=True, text=True,
     )
-    processes, logs, handles = [], [], []
+    processes, handles = [], []
+    log_dir = Path(tempfile.mkdtemp(prefix="nestai-browser-runtime-"))
+    secrets_file = log_dir / "secrets.toml"
+    secrets_file.write_text("", encoding="utf-8")
     try:
         for name, command, cwd, health in [
             ("api", [sys.executable, "-m", "uvicorn", "main:app", "--host", "127.0.0.1", "--port", str(api_port)], API, api_url + "/health"),
             ("ui", [sys.executable, "-m", "streamlit", "run", str(ROOT / "legacy/streamlit/app.py"),
                     "--server.address=127.0.0.1", f"--server.port={ui_port}",
                     "--server.headless=true", "--server.fileWatcherType=none",
+                    f"--secrets.files={secrets_file}",
                     "--browser.gatherUsageStats=false"], ROOT, ui_url + "/_stcore/health"),
         ]:
-            log = Path(__file__).parent / f".{name}-{uuid4().hex}.log"
-            logs.append(log)
+            log = log_dir / f"{name}.log"
             handle = log.open("w")
             handles.append(handle)
             process = subprocess.Popen(command, cwd=cwd, env=env, stdout=handle, stderr=subprocess.STDOUT)
             processes.append(process)
             _wait(process, health, log)
-        yield {"api": api_url, "ui": ui_url, "database_url": database_url}
+        yield {"api": api_url, "ui": ui_url, "database_url": database_url, "log_dir": str(log_dir)}
     finally:
         for process in reversed(processes):
             if process.poll() is None:
@@ -130,8 +146,7 @@ def runtime():
                     process.wait(timeout=10)
         for handle in handles:
             handle.close()
-        for log in logs:
-            log.unlink(missing_ok=True)
+        print(f"Browser runtime logs preserved at {log_dir}")
 
 
 @pytest.fixture
@@ -167,8 +182,7 @@ def account(runtime):
 def browser():
     from playwright.sync_api import sync_playwright
 
-    scratch = Path(__file__).parent / (".playwright-" + uuid4().hex)
-    scratch.mkdir()
+    scratch = Path(tempfile.mkdtemp(prefix="nestai-browser-downloads-"))
     previous_temp = os.environ.get("TMPDIR")
     os.environ["TMPDIR"] = str(scratch)
     try:
@@ -192,13 +206,11 @@ def page(browser, request):
     expect.set_options(timeout=15000)
     context = browser.new_context(viewport=request.param, accept_downloads=True)
     page = context.new_page()
-    # Shared-runner interface churn can cancel Chromium's localhost asset requests.
-    # Fetch the actual assets through Playwright's independent HTTP transport.
-    page.route("http://127.0.0.1:*/static/**", lambda route: route.fulfill(response=route.fetch()))
     request.node.browser_failures = []
     page.on("requestfailed", lambda failed: request.node.browser_failures.append(
         failed.url + " " + str(failed.failure)
     ))
+    page.on("pageerror", lambda error: request.node.browser_failures.append(str(error)))
     page.set_default_timeout(30000)
     yield page
     context.close()

@@ -126,6 +126,75 @@ def test_paid_plan_switch_without_provider_configuration_fails_closed(page, runt
     healthy(page)
 
 
+@pytest.mark.parametrize("plan", ["free", "premium", "premium_plus"])
+def test_all_account_tabs_and_house_preferences_restore_after_reload(page, runtime, account, plan):
+    user = account(plan)
+    sign_in(page, runtime, user)
+    navigate(page, "Houses")
+    save_example(page, "home_example_1.txt", kind="Rental house")
+    save_example(page, "home_example_2.txt", kind="Rental house")
+    saved_ids = {item["id"] for item in properties(runtime, user)}
+    expect(page.get_by_role("tab", name="Referrals", exact=True)).to_have_count(0)
+    navigate(page, "Profile")
+    for name in ["Account", "Subscription & Pricing", "Preferences"]:
+        page.get_by_role("tab", name=name, exact=True).click()
+        expect(page.get_by_role("tab", name=name, exact=True)).to_have_attribute("aria-selected", "true")
+        healthy(page)
+    select_value(page, "Pet-friendly preference", "Yes")
+    page.get_by_role("button", name="Save preferences", exact=True).click()
+    expect(page.get_by_text("Preferences saved to your account.", exact=True)).to_be_visible()
+    navigate(page, "Houses")
+    page.get_by_text("Decision details", exact=True).click()
+    expect(page.get_by_text("$145/mo less expensive", exact=False).first).to_be_visible()
+    expect(page.get_by_text("25 sq ft less space", exact=False).first).to_be_visible()
+    expect(page.get_by_text("$145/mo more expensive", exact=False)).to_have_count(0)
+    page.reload()
+    idle(page)
+    expect(page.get_by_role("button", name="Log out", exact=True)).to_have_count(0)
+    sign_in(page, runtime, user)
+    assert {item["id"] for item in properties(runtime, user)} == saved_ids
+    navigate(page, "Profile")
+    page.get_by_role("tab", name="Preferences", exact=True).click()
+    expect(page.get_by_role("combobox", name="Pet-friendly preference", exact=True)).to_have_value("Yes")
+    healthy(page)
+
+
+@pytest.mark.parametrize("plan", ["premium", "premium_plus"])
+def test_exact_numeric_request_download_and_reset(page, runtime, account, plan):
+    user = account(plan)
+    sign_in(page, runtime, user)
+    save_example(page, "app_listing_1.txt")
+    save_example(page, "app_listing_2.txt")
+    saved = properties(runtime, user)
+    page.get_by_role("textbox", name="Natural-language request", exact=True).fill(
+        "Only show units under $2,500 per month with at least 700 square feet."
+    )
+    page.get_by_role("button", name="Apply request and numeric filters", exact=True).click()
+    expect(page.get_by_text(re.compile(r"^Applied constraints:.*'rent_lt': 2500.*'min_sqft': 700"))).to_be_visible()
+    inputs = {"property_ids": [item["id"] for item in saved],
+              "constraints": {"rent_lt": 2500, "min_sqft": 700}}
+    response = requests.post(runtime["api"] + "/ranking", headers=user["headers"], json=inputs, timeout=10)
+    assert response.status_code == 200, response.text
+    ranked = response.json()["ranked"]
+    assert ranked and all(row["price_num"] < 2500 and row["sqft_num"] >= 700 for row in ranked)
+    page.get_by_role("button", name="Prepare CSV export", exact=True).click()
+    with page.expect_download() as download:
+        page.get_by_role("button", name="Download comparison CSV", exact=True).click()
+    assert download.value.failure() is None
+    with open(download.value.path(), encoding="utf-8-sig") as handle:
+        rows = list(csv.DictReader(handle))
+    assert [(row["property_id"], row["unit_id"]) for row in rows] == [
+        (row["property_id"], row["unit_id"]) for row in ranked
+    ]
+    assert all(float(row["price"]) < 2500 and float(row["square_feet"]) >= 700 for row in rows)
+    page.get_by_role("button", name="Reset filters", exact=True).click()
+    expect(page.get_by_role("textbox", name="Natural-language request", exact=True)).to_have_value("")
+    expect(page.get_by_text("Applied constraints: None", exact=True)).to_be_visible()
+    expect(page.get_by_role("button", name="Download comparison CSV", exact=True)).to_have_count(0)
+    assert sum(len(item["units"]) for item in properties(runtime, user)) == 42
+    healthy(page)
+
+
 def test_apartment_save_dedup_persists_and_free_has_no_native_downloads(page, runtime, account):
     user = account("free")
     sign_in(page, runtime, user)

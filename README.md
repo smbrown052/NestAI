@@ -111,20 +111,20 @@ cd services/api && alembic upgrade head
 | Component | Recommended host | Notes |
 |-----------|-----------------|-------|
 | Streamlit app | [Streamlit Cloud](https://share.streamlit.io/) | Main file path: `legacy/streamlit/app.py` |
-| FastAPI backend | Render | Use `services/api` as root and run migrations during build |
+| FastAPI backend | Render | Use repository root; include `shared/` and legacy parsers |
 | PostgreSQL | Supabase / Neon free tier | Free up to 500 MB |
 | Next.js website | Vercel | Not built yet |
 
 ### Render FastAPI Configuration
 
 Root directory:
-`services/api`
+Repository root (leave Render's Root Directory empty).
 
 Build command:
-`pip install -r requirements.txt && alembic upgrade head`
+`pip install -r services/api/requirements.txt`
 
 Start command:
-`uvicorn main:app --host 0.0.0.0 --port $PORT`
+`uvicorn --app-dir services/api main:app --host 0.0.0.0 --port $PORT`
 
 Required Render environment variables:
 
@@ -217,6 +217,84 @@ retain unassigned records and their event history. Do not infer ownership from
 addresses, timestamps, arbitrary session identifiers or the next signed-in
 account. Recovery requires trustworthy historical evidence and an audited
 privileged process. Do not delete or automatically import unowned data.
+
+### Deployment acceptance checklist (no hosting changes performed)
+
+1. **Revision and entrypoints:** use branch `copilot/implementation-plan-for-mvp`
+   for an authorized acceptance deployment, not an implicit default branch.
+   Streamlit main file is `legacy/streamlit/app.py`. Render must use the same
+   tested revision, repository root, build command and start command above.
+   Record the actual hosting settings and both deployed commit identifiers;
+   local traceback correspondence is not deployment verification.
+2. **Backups and migrations:** take and verify a restorable PostgreSQL backup;
+   separately preserve the hosted legacy `nestai_cache.db` and its SQLite
+   journal/WAL consistently. Retain session-owned homes/events without assigning
+   unproven owners. Rehearse migrations on an isolated restore, then run the
+   authorized pre-deploy command `cd services/api && python -m alembic upgrade head`
+   from the repository checkout with the backend environment loaded. Verify
+   `python -m alembic current` there. Do not use test database variables for
+   production migrations or downgrade/drop tables to roll back application code.
+3. **Streamlit secrets:** set `NESTAI_API_BASE_URL` to the verified HTTPS API.
+   Provider and Stripe secrets belong only in FastAPI. Leave developer/owner
+   preview flags disabled. Reload currently requires explicit reauthentication;
+   saved data must return afterward.
+4. **Render environment:**
+   - Core: `DATABASE_URL`, `ENVIRONMENT=production`, `JWT_SECRET_KEY`,
+     `JWT_ALGORITHM=HS256`, `ACCESS_TOKEN_EXPIRE_MINUTES`,
+     `NESTAI_STREAMLIT_URL` (HTTPS frontend), and `SQL_ECHO=false`.
+     `PORT` is supplied by Render. Leave `NESTAI_OWNER_EMAIL` unset: the current
+     email-only automatic admin promotion does not verify mailbox ownership.
+     Provision administrators through the existing privileged bootstrap CLI.
+   - Providers: `NESTAI_PROVIDER_MODE=live`, `OPENAI_API_KEY`,
+     `OPENAI_MODEL`, `GOOGLE_MAPS_API_KEY`, and `WALKSCORE_API_KEY` if testing
+     Walk Score enrichment. Optional output cap: `NESTAI_AI_MAX_OUTPUT_TOKENS`.
+     Enable the Google APIs actually called by the backend and restrict keys
+     appropriately. Never deploy deterministic mock mode as live acceptance.
+   - Billing: sandbox `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`,
+     `STRIPE_PREMIUM_PRICE_ID`, `STRIPE_PREMIUM_PLUS_PRICE_ID`.
+     Product-default fallback supports `STRIPE_PREMIUM_PRODUCT_ID` and
+     `STRIPE_PREMIUM_PLUS_PRODUCT_ID`, but explicit distinct approved recurring
+     price IDs are preferred. Leave `STRIPE_ALLOW_LIVE` unset/false for acceptance.
+   - Optional quota overrides: `NESTAI_QUOTA_PREMIUM_AI`,
+     `NESTAI_QUOTA_PREMIUM_ENRICHMENT`, `NESTAI_QUOTA_PREMIUM_COMMUTE`,
+     `NESTAI_QUOTA_PREMIUM_REPORTS`, and their `NESTAI_QUOTA_PREMIUM_PLUS_*`
+     counterparts. Keep approved defaults unless deliberately reviewed.
+   - Email: `NESTAI_DISABLE_EMAIL=true` during acceptance to avoid external
+     messages. A separately authorized password-reset delivery check requires
+     `RESEND_API_KEY`; the existing `onboarding@resend.dev` sender has sandbox
+     recipient restrictions. SMTP examples are not substitutes for the active
+     Resend reset-email implementation.
+5. **Stripe sandbox portal:** in the same sandbox as the backend key, activate
+   the default customer-portal configuration, enable subscription updates, and
+   include both approved products/recurring prices. Review proration and
+   cancellation behavior. Existing plan changes require a real sandbox customer
+   and single-item quantity-one subscription created through sandbox checkout,
+   not just a complimentary tier grant. Configure HTTPS `/billing/webhook` for
+   `checkout.session.completed`, `customer.subscription.created`,
+   `customer.subscription.updated`, `customer.subscription.deleted`,
+   `invoice.payment_failed`, and `invoice.paid`. Verify signed event delivery,
+   then `/billing/status` and `/entitlements` after reauthentication; redirects
+   and browser state do not activate a plan.
+   Also enable `checkout.session.async_payment_succeeded` if accepting delayed
+   sandbox payment methods.
+6. **Accounts and CI:** securely provision separate dedicated Free apartment,
+   Free house, Free mixed-limit, Premium and Plus acceptance accounts, plus a
+   second account for isolation checks. Never use customer data or public
+   privileged provisioning. Configure the live-check variables listed above;
+   authorize provider spending explicitly. In GitHub Actions approve the latest
+   `MVP regression` run for the tested revision, wait for the actual regression
+   job (not zero-job `action_required`), and require its successful check.
+   CI uses isolated PostgreSQL and mocks; live checks remain separate.
+7. **Release evidence:** run `make regression` with isolated PostgreSQL, then
+   authorized `make live-smoke` and the deployed desktop/mobile tier journeys.
+   Inspect real downloaded files and provider responses, record deployed
+   revisions and every skipped/blocked check. Missing credentials, hosting access,
+   historical ownership evidence or CI approval are blockers, not passes.
+
+Fresh security review additionally identified that password reset does not revoke
+existing bearer sessions. Remediate session revocation before public release.
+These authentication findings predate the browser-only checkpoint; this limited
+run does not change authentication or activate billing.
 
 ---
 

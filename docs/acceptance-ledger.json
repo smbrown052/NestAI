@@ -1,6 +1,46 @@
 {
   "baseline_revision": "c7a197f0e16e697a150b7286fd29afb1d56c181d",
   "deployment_verified": false,
+  "browser_resume": {
+    "checkpoint": "e24b00ee03ecf7c1be33dd5968361798c638a0e4",
+    "scope": "Browser regression, failure classification, fresh security checks, deployment checklist; no production hosting or real billing changes.",
+    "historical_logs": "The /tmp/nestai-regression-final.log, /tmp/nestai-reset-browser.log and /tmp/nestai-regression-checkpoint.log files are absent in this fresh sandbox. Historical classifications below cite the committed ledger, not independently inspected original traces.",
+    "failure_classification": [
+      {
+        "failure": "Reset retained Maximum rent 2600 after backend filters cleared",
+        "classification": "Application defect, fixed before this run",
+        "evidence": "Checkpoint ledger resume_checks.priority_and_artifact_integration documents a failing strengthened unit test and corrected reset callback assigning explicit defaults. No reimplementation in this run."
+      },
+      {
+        "failure": "Historical mobile TextInput dynamic module failure with net::ERR_NETWORK_CHANGED",
+        "classification": "Transport/environment failure reported by previous checkpoint; original trace unavailable",
+        "evidence": "Committed test_runs entry for /tmp/nestai-reset-browser.log records failure before sign-in. This does not independently classify the other historical sign-in timeouts."
+      },
+      {
+        "failure": "Other historical sign-in timeouts",
+        "classification": "Undetermined; do not assume transport",
+        "evidence": "Only aggregate prior counts survive; individual failed operations and raw logs are unavailable."
+      },
+      {
+        "failure": "Fresh first rerun aborted during mobile Free house journey",
+        "classification": "Transport/environment failure plus test diagnostic defect",
+        "evidence": "/tmp/nestai-browser-resume.log: Route.fetch GET localhost /static/js/_baseFlatten.IOj0lc7G.js raised read ECONNRESET. The failure hook then raised from Locator.inner_text, causing pytest INTERNALERROR after 24 passes and masking the original failure.",
+        "fix": "Remove asset transport interception, make browser text diagnostics bounded/nonthrowing, retain runtime logs in /tmp, and add two diagnostics regressions."
+      }
+    ],
+    "local_results": "Strengthened direct-browser suite running; acceptance pending final result.",
+    "security_review": {
+      "status": "Two pre-existing findings; release blocked",
+      "findings": [
+        "High: NESTAI_OWNER_EMAIL grants administrator status based on unverified registration/login email (services/api/app/auth/router.py:65-70,161-168). Leave it unset and use privileged admin bootstrap; removal of automatic promotion requires follow-up.",
+        "Medium: password reset does not revoke existing JWT sessions (services/api/app/auth/router.py:356-362). Session revocation requires follow-up."
+      ],
+      "test_isolation": "Disabled python-dotenv loading and supplied an empty explicit Streamlit secrets file; removed inherited preview flags. No production provider calls are permitted by the deterministic fixture."
+    },
+    "deployment_checklist": "README.md: Deployment acceptance checklist; branch, entrypoints, root/start/migration commands, backups, service-specific variable names, sandbox portal, test accounts and CI approval.",
+    "public_browser": "Blocked: playwright-browser_navigate to https://nest--ai--v1.streamlit.app/ returned MCP Transport closed. This is separate from the local Playwright test subprocess.",
+    "ci": "GitHub MCP: checkpoint e24b00e MVP regression run 38482516394 is action_required; get_job_logs reports total_jobs=0, failed_jobs=0. No CI pass."
+  },
   "latest_checkpoint_revision": "66b8e954149f67abf6991834010685ed57852d46",
   "resume_checkpoint": {
     "revision": "541ac7a5096f9523639b658436efd4efcc1081cb",
