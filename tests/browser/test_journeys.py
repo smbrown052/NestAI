@@ -15,20 +15,27 @@ from sqlalchemy import create_engine, text
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def sidebar_state(sidebar):
+    if sidebar.get_attribute("data-collapsed") is not None:
+        return "data-collapsed", "false", "true"
+    return "aria-expanded", "true", "false"
+
+
 def navigate(page, name):
     idle(page)
     sidebar = page.locator('[data-testid="stSidebar"]')
     expect(sidebar).to_be_attached()
-    if sidebar.get_attribute("aria-expanded") == "false":
+    attribute, expanded, collapsed = sidebar_state(sidebar)
+    if sidebar.get_attribute(attribute) == collapsed:
         page.locator('[data-testid="stExpandSidebarButton"]').click()
-    expect(sidebar).to_have_attribute("aria-expanded", "true")
+    expect(sidebar).to_have_attribute(attribute, expanded)
     button = sidebar.get_by_role("button", name=name, exact=True)
     button.click()
     expect(button).to_have_attribute("kind", "primary")
     idle(page)
     if page.viewport_size["width"] < 600:
         page.locator('[data-testid="stSidebarCollapseButton"]').click()
-        expect(sidebar).to_have_attribute("aria-expanded", "false")
+        expect(sidebar).to_have_attribute(attribute, collapsed)
 
 
 def sign_in(page, runtime, user):
@@ -668,9 +675,10 @@ def test_paid_runtime_advisor_enrichment_commute_and_negotiation(page, runtime, 
         return response.json()["usage"]
 
     sidebar = page.locator('[data-testid="stSidebar"]')
-    if sidebar.get_attribute("aria-expanded") == "false":
+    attribute, expanded, collapsed = sidebar_state(sidebar)
+    if sidebar.get_attribute(attribute) == collapsed:
         page.locator('[data-testid="stExpandSidebarButton"]').click()
-    expect(sidebar).to_have_attribute("aria-expanded", "true")
+    expect(sidebar).to_have_attribute(attribute, expanded)
     sidebar.get_by_role("textbox", name="Ask about your saved properties", exact=True).fill(
         "Explain the confirmed listing costs without inventing market statistics."
     )
@@ -679,7 +687,7 @@ def test_paid_runtime_advisor_enrichment_commute_and_negotiation(page, runtime, 
     assert usage()["ai"] == 1
     if page.viewport_size["width"] < 600:
         page.locator('[data-testid="stSidebarCollapseButton"]').click()
-        expect(sidebar).to_have_attribute("aria-expanded", "false")
+        expect(sidebar).to_have_attribute(attribute, collapsed)
     idle(page)
     page.get_by_role("button", name="Enrich neighborhood", exact=True).click()
     expect(page.locator('[data-testid="stJson"]').filter(has_text="mock")).to_be_visible()
