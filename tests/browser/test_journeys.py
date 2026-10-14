@@ -575,6 +575,48 @@ def test_free_mixed_account_uses_one_shared_property_allowance(page, runtime, ac
     healthy(page)
 
 
+def test_free_restore_after_reload_respects_shared_limit_and_ownership(page, runtime, account):
+    user, other = account("free"), account("free")
+    sign_in(page, runtime, user)
+    save_example(page, "app_listing_1.txt")
+    apartment = properties(runtime, user)[0]
+    page.get_by_role("button", name="Archive property", exact=True).click()
+    expect(page.get_by_text("Save a listing to begin your comparison.", exact=True)).to_be_visible()
+    save_example(page, "home_example_1.txt", kind="Rental house")
+    house = next(item for item in properties(runtime, user) if item["kind"] == "rental_home")
+    page.reload()
+    expect(page.get_by_role("button", name="Log out", exact=True)).to_be_visible()
+    page.get_by_text("Archived properties", exact=True).click()
+    restore = page.get_by_role("button", name="Restore", exact=True)
+    expect(restore).to_be_enabled()
+    assert requests.post(runtime["api"] + f"/properties/{apartment['id']}/restore",
+                         headers=other["headers"], json={}, timeout=10).status_code == 404
+    restore.click()
+    expect(restore).to_have_count(0)
+    saved = properties(runtime, user)
+    assert {item["id"] for item in saved} == {apartment["id"], house["id"]}
+    assert all(not item["is_archived"] for item in saved)
+    assert len(next(item for item in saved if item["id"] == apartment["id"])["units"]) == 29
+
+    # Fill the released slot with a second house, then reject restoration at capacity.
+    assert requests.post(runtime["api"] + f"/properties/{apartment['id']}/archive",
+                         headers=user["headers"], json={}, timeout=10).status_code == 200
+    page.reload()
+    expect(page.get_by_role("button", name="Log out", exact=True)).to_be_visible()
+    save_example(page, "home_example_2.txt", kind="Rental house")
+    page.reload()
+    expect(page.get_by_role("button", name="Log out", exact=True)).to_be_visible()
+    page.get_by_text("Archived properties", exact=True).click()
+    expect(page.get_by_role("button", name="Restore", exact=True)).to_be_disabled()
+    assert requests.post(runtime["api"] + f"/properties/{apartment['id']}/restore",
+                         headers=user["headers"], json={}, timeout=10).status_code == 429
+    after = properties(runtime, user)
+    assert sum(not item["is_archived"] for item in after) == 2
+    assert next(item for item in after if item["id"] == apartment["id"])["is_archived"]
+    assert properties(runtime, other) == []
+    healthy(page)
+
+
 def test_feedback_browser_submission_reaches_durable_admin_store(page, runtime, account):
     user, admin = account("free"), account("free", admin=True)
     title = "Browser feedback " + uuid4().hex

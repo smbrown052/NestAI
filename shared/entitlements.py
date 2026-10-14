@@ -37,7 +37,7 @@ def features_for(plan: str, overrides: dict[str, bool] | None = None) -> dict[st
     paid = plan in {"premium", "premium_plus", "beta"}
     features = {
         "basic_comparison": True,
-        "restore": paid,
+        "restore": True,
         "natural_filter": paid,
         "lifestyle": paid,
         "advisor": paid,

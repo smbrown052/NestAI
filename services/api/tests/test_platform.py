@@ -358,8 +358,6 @@ def test_property_fee_patch_archive_restore_and_quota_preservation(api):
     assert client.get("/entitlements", headers=headers[0]).json()["usage"]["properties"] == 0
     assert client.post("/ranking", headers=headers[0], json={}).json()["ranked"] == []
     assert client.post("/properties/" + prop["id"] + "/restore", headers=headers[1], json={}).status_code == 404
-    assert client.post("/properties/" + prop["id"] + "/restore", headers=headers[0], json={}).status_code == 403
-    paid(api)
     response = client.post("/properties/" + prop["id"] + "/restore", headers=headers[0], json={})
     assert response.status_code == 200 and response.json()["is_archived"] is False
     assert client.post("/ranking", headers=headers[0], json={}).json()["ranked"][0]["monthly_total"] == 2180
@@ -378,13 +376,11 @@ def test_active_property_limit_archive_and_implicit_restore(api, monkeypatch):
     assert updated.status_code == 200 and updated.json()["is_archived"] is True
     assert updated.json()["units"][0]["id"] == "0012"
     assert client.post("/properties", headers=headers[0], json={
-        **payload, "idempotency_key": "implicit-restore", "parsed": {"is_archived": False}}).status_code == 403
+        **payload, "idempotency_key": "implicit-restore", "parsed": {"is_archived": False}}).status_code == 429
     assert client.post("/properties", headers=headers[0], json={
         "kind": "home", "external_id": "third", "idempotency_key": "third", "parsed": {"address": "Third"}}).status_code == 429
     assert client.post("/properties", headers=headers[0], json={
         **payload, "idempotency_key": "invalid-archive", "parsed": {"is_archived": "false"}}).status_code == 422
-    paid(api)
-    monkeypatch.setenv("NESTAI_QUOTA_PREMIUM_PROPERTIES", "2")
     assert client.post(f"/properties/{first['id']}/restore", headers=headers[0], json={}).status_code == 429
     assert client.post("/properties", headers=headers[0], json={
         **payload, "idempotency_key": "paid-implicit", "parsed": {"is_archived": False}}).status_code == 429

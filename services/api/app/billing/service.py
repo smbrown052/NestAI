@@ -1,7 +1,10 @@
 """Stripe-only billing. No local event can activate a subscription."""
 
+from collections.abc import Mapping
 from datetime import datetime, timezone
+from decimal import Decimal
 import json
+import math
 import os
 from urllib.parse import urlparse
 
@@ -15,11 +18,27 @@ from app.db.models.user import User
 
 
 def plain(value):
-    if isinstance(value, dict):
+    """Normalize SDK containers recursively without losing decimal precision."""
+    if value is None or isinstance(value, (str, bool, int)):
         return value
-    if hasattr(value, "to_dict"):
-        return value.to_dict()
-    return value.to_dict_recursive()
+    if isinstance(value, Decimal):
+        if not value.is_finite():
+            raise ValueError("Non-finite Stripe decimal")
+        return str(value)
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("Non-finite Stripe number")
+        return value
+    from stripe import StripeObject
+    if isinstance(value, StripeObject):
+        value = value.to_dict()
+    if isinstance(value, Mapping):
+        if any(not isinstance(key, str) for key in value):
+            raise TypeError("Stripe object keys must be strings")
+        return {key: plain(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [plain(item) for item in value]
+    raise TypeError(f"Unsupported Stripe value type: {type(value).__name__}")
 
 
 def stripe_client():
@@ -203,9 +222,20 @@ def process_webhook(db: Session, raw: bytes, signature: str) -> dict:
     if not secret:
         raise HTTPException(503, "Stripe webhook is not configured")
     try:
-        event = plain(stripe.Webhook.construct_event(raw, signature, secret))
+        event = stripe.Webhook.construct_event(raw, signature, secret)
     except (ValueError, stripe.SignatureVerificationError):
         raise HTTPException(400, "Invalid Stripe webhook signature") from None
+    try:
+        return _process_verified_webhook(db, plain(event))
+    except (TypeError, ValueError):
+        db.rollback()
+        raise HTTPException(502, "Stripe event processing failed; retry webhook") from None
+    except Exception:
+        db.rollback()
+        raise
+
+
+def _process_verified_webhook(db: Session, event: dict) -> dict:
     if not isinstance(event.get("id"), str) or not isinstance(event.get("type"), str) or not isinstance(
         (event.get("data") or {}).get("object"), dict
     ):

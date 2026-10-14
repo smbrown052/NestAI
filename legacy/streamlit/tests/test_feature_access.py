@@ -80,6 +80,16 @@ class TestDefaults:
         assert caps["can_use_ai_chat"] is True
         assert caps["can_use_lifestyle_score"] is True
 
+    def test_restore_uses_its_own_shared_feature_not_export_access(self):
+        from shared.entitlements import features_for
+
+        features = features_for("free")
+        assert features["restore"] is True and features["exports"] is False
+        caps = fa.capabilities_from_features(features)
+        assert caps["can_restore_archived_property"] is True
+        assert caps["can_export"] is False
+        assert fa.capabilities_from_features({**features, "restore": False})["can_restore_archived_property"] is False
+
     def test_default_plan_is_free(self):
         _reset()
         assert fa.get_plan() == fa.PLAN_FREE

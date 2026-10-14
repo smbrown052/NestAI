@@ -633,10 +633,14 @@ def render_account_view(client, auth, screen):
     render_property_controls(client, active)
     archived = [item for item in properties if item.get("is_archived", False)]
     if archived:
+        limit = st.session_state["account_entitlements"].get("quotas", {}).get("saved_property_limit")
+        at_limit = limit is not None and len(active) >= limit
         with st.expander("Archived properties"):
+            if at_limit:
+                st.caption("Archive an active property before restoring another; your saved-property limit is reached.")
             for item in archived:
                 st.write(item.get("name") or item.get("address") or item["id"])
-                if st.button("Restore", key=f"restore_{item['id']}", disabled=not capability("can_restore_archived_property")):
+                if st.button("Restore", key=f"restore_{item['id']}", disabled=at_limit or not capability("can_restore_archived_property")):
                     if api_call(client, "POST", f"/properties/{item['id']}/restore", {}) is not None:
                         st.rerun()
     st.caption("Legacy session-owned house records are preserved locally, but are not automatically assigned to any account.")

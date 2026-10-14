@@ -45,7 +45,7 @@ _CREDITS_TIER_MAP = {
 
 CAPABILITY_FEATURES = {
     "can_compare_multiple_properties": "basic_comparison",
-    "can_restore_archived_property": "exports",
+    "can_restore_archived_property": "restore",
     "can_use_natural_language_filtering": "natural_filter",
     "can_use_lifestyle_score": "lifestyle",
     "can_use_ai_explanations": "advisor",
@@ -104,7 +104,7 @@ _PLAN_INPUT_MAP = {
 # Feature → minimum plan required (for upgrade prompts)
 _FEATURE_REQUIRED_PLAN: dict[str, str] = {
     "can_compare_multiple_properties": PLAN_PREMIUM,
-    "can_restore_archived_property": PLAN_PREMIUM,
+    "can_restore_archived_property": PLAN_FREE,
     "can_use_natural_language_filtering": PLAN_PREMIUM,
     "can_use_lifestyle_score": PLAN_PREMIUM,
     "can_use_ai_explanations": PLAN_PREMIUM,

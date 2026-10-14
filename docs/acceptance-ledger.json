@@ -1,6 +1,35 @@
 {
   "baseline_revision": "c7a197f0e16e697a150b7286fd29afb1d56c181d",
   "deployment_verified": false,
+  "stripe_basil_and_free_restore_remediation": {
+    "baseline_revision": "0c118984a71c9851776fff0152eb13b4f3453a5a",
+    "baseline_ci": "Verified MVP regression run 38577721006 attempt 2 succeeded on the baseline commit; not evidence for these new fixes.",
+    "scope": "Local fixes and isolated validation only; no deployment, production migration, paid provider calls or live billing activation.",
+    "independent_reproductions": {
+      "sdk": "Installed Stripe SDK 16.0.0; signed fixtures declare API version 2025-07-30.basil and use actual Stripe Webhook.construct_event.",
+      "invoice_paid": "Baseline plain() left SDK Decimal at data.object.lines.data[0].pricing.unit_amount_decimal. json.dumps(event) for BillingEvent.raw_payload raised TypeError before marker persistence.",
+      "subscription_created": "Separately reproduced baseline TypeError for SDK Decimal at data.object.items.data[0].price.unit_amount_decimal. This is an independent fixture reproduction, not an inspected live subscription traceback.",
+      "precision": "1234.5678901234567890123400 preserved exactly as a decimal string, including trailing zeros.",
+      "free_restore": "Shared backend contract wrongly set restore=paid; frontend incorrectly mapped restore to exports. Corrected restore to all plans and mapped the compatibility capability to restore, preserving two active Free properties, server ownership and locked slot checks."
+    },
+    "fixes": [
+      "Strict recursive conversion of actual Stripe objects, string-keyed mappings and lists to JSON-safe containers; finite Decimal values become exact strings. Reject unsupported types/nonfinite numbers instead of default=str.",
+      "Original raw-body signature verification precedes conversion. Failed conversion or downstream processing explicitly rolls back; event markers and account changes commit together.",
+      "Retain existing unique-event idempotency and current Stripe subscription lookup under account locking; old events do not override current subscription state or add credits.",
+      "Free Restore enabled below active-property limit and disabled with a capacity explanation at limit; API independently rejects over-limit and cross-account requests.",
+      "User-requested tier correction: Free now restores owned archived properties within its existing allowance. Paid exports and every other paid feature remain unchanged."
+    ],
+    "local_results": {
+      "unit": "426 passed via existing make unit isolated-process target; /tmp/nestai-unit-final.log.",
+      "api": "Billing implementation agent completed full SQLite/PostgreSQL API suite: 177 passed, 4 intentional SQLite-only concurrency skips; PostgreSQL counterparts passed. Focused new signed Stripe suite: 34 passed. .git/stripe-api-validation.log and .git/stripe-webhook-tests.log are temporary local evidence, not committed artifacts.",
+      "api_coverage": "Signed checkout/invoice/subscription nested Decimal payloads, exact serialization, unsupported/nonfinite rejection, retry same event after normalization failure, rollback after account mutation, duplicate events without credit changes, stale invoice after upgrade, downgrade, cancellation, failed payment, recovery and invalid signatures.",
+      "restore": "Affected API restore tests 5 passed, 1 intentional SQLite-only concurrency skip; frontend feature-access suite passed. New actual Streamlit/FastAPI/PostgreSQL desktop/mobile mixed-account restore journeys: 2 passed; /tmp/nestai-restore-browser.log. Reload with active house/archived apartment restores below limit, retains all 29 units/ownership, rejects another account and blocks restore at capacity.",
+      "full_browser": "Complete 49-case regression running; /tmp/nestai-browser-all.log. Final result pending."
+    },
+    "security": "Final review, CodeQL and secret scanning pending.",
+    "deployed_billing_acceptance": "Blocked until failed sandbox invoice/subscription events are resent successfully to an authorized corrected deployment and current subscription/account entitlements are verified. Local signed fixtures do not prove deployed Stripe acceptance.",
+    "migrations_and_configuration": "No schema migration or new configuration variable required. Existing backend Stripe sandbox key, webhook secret and distinct Premium/Plus price IDs remain required; keep STRIPE_ALLOW_LIVE unset/false."
+  },
   "reload_and_readability_remediation": {
     "baseline_revision": "7e8ad53b615c0cccde5732714fe93429d95ce3c1",
     "scope": "Local implementation and isolated regressions only. No production hosting changes, production migrations, merge, real billing, paid provider calls or deployed acceptance claimed.",

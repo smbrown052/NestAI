@@ -195,6 +195,10 @@ must not consume successful-operation quota. Legacy credits and complimentary
 grants remain separate and must not be silently converted or discarded.
 Downgrades preserve saved records. CSV and decision report downloads require
 Premium or Plus, including native table-download controls.
+Archiving and restoring owned properties are available on all plans, including
+Free. Restore uses the same active-property allowance as saving (two for Free);
+archived properties do not consume slots. The API enforces ownership and checks
+the limit under the account lock even if a stale browser shows an available slot.
 
 Provider execution belongs in FastAPI. Configure `OPENAI_API_KEY`,
 `GOOGLE_MAPS_API_KEY` and `WALKSCORE_API_KEY` there, not only in Streamlit secrets.
@@ -203,6 +207,22 @@ Billing additionally needs `STRIPE_SECRET_KEY`, `STRIPE_PREMIUM_PRICE_ID`,
 `NESTAI_STREAMLIT_URL`. Use Stripe sandbox credentials for all test operations;
 never create real charges or send real feedback emails during tests. Optional
 integration failures must not prevent authentication, saving or ranking.
+
+Webhook verification uses the original request bytes and `Stripe-Signature`
+before converting SDK objects for storage. The conversion recursively preserves
+finite `Decimal` amounts as exact strings, including Basil invoice pricing and
+subscription item prices; unsupported types fail rather than being stringified.
+The event marker and subscription updates commit together. Processing failures
+roll back the marker so Stripe can resend the same event ID; successful duplicate
+deliveries cannot add credits. Subscription state is retrieved from Stripe under
+the account lock rather than inferred from event arrival order.
+
+Billing acceptance remains **Blocked** until an authorized sandbox operator
+resends the previously failed invoice/subscription events to the corrected
+deployment, confirms successful deliveries (including duplicates), and verifies
+the matching account's `/billing/status` and `/entitlements` against the current
+sandbox subscription. Local signed SDK fixtures do not establish deployed billing
+acceptance. Keep `STRIPE_ALLOW_LIVE` unset/false throughout sandbox validation.
 
 **Price reconciliation remains required:** existing UI advertises $12/$25,
 the legacy mock service advertised $19/$49, and older documentation advertises
