@@ -15,16 +15,18 @@
     ],
     "migration": "Additive 0010_browser_sessions after 0009_auth_version; upgrade schema before backend/frontend code. No existing account/listing data reassignment.",
     "local_tests": {
-      "backend": "143 passed, 4 intentional SQLite-only concurrency skips; PostgreSQL counterparts ran. After cache-header hardening, affected authentication/platform suites: 133 passed, 4 corresponding SQLite-only skips.",
+      "backend": "Final full backend run on 990d583: 143 passed, 4 intentional SQLite-only concurrency skips; PostgreSQL counterparts ran. /tmp/nestai-api-final.log",
       "frontend_authentication": "37 existing auth-service tests passed; 12 new storage lifecycle/account-switch tests passed.",
       "readable_ui": "UI implementation agent reported 54 affected UI/decision tests passing; accepted without rerunning its completed suites.",
       "affected_browser": "8 passed on real desktop/mobile Chromium, migrated isolated PostgreSQL, FastAPI and deployed Streamlit source path; mixed saves/reload, filtered CSV/report identities, reset defaults, logout and password-reset revocation. /tmp/nestai-browser-affected2.log",
-      "complete_browser": "Final complete run pending. Earlier full run: 37 passed, 10 failed; /tmp/nestai-browser-full.log. Fixed reset notice loss, synchronized logout tests before navigation, corrected native range-input assertions. Explicit ERR_NETWORK_CHANGED was independently captured for one sign-in failure; no blanket transport classification.",
+      "complete_browser": "47 passed, zero failed/skipped in 488.10 seconds on code revision 990d5831fefc2ef3998d9d353c5ad38c4662df4f; /tmp/nestai-browser-clean.log. Full real desktop/mobile Chromium suite with migrated isolated PostgreSQL, actual API and legacy/streamlit/app.py, no asset interception or retry masking. Earlier full run: 37 passed, 10 failed; /tmp/nestai-browser-full.log. Fixed reset notice loss, synchronized logout tests before navigation, corrected native range-input assertions. Subsequent run: 46 passed, one explicit ERR_NETWORK_CHANGED asset failure before sign-in; /tmp/nestai-browser-final.log. Unchanged full rerun passed all 47; prior failures retained as evidence.",
+      "browser_coverage": "Mixed two-unit apartment and rental-house saves, automatic reload restoration, profile ownership and unchanged quota, accurate room ranges, exact rent/area request and price priority, eligible comparison options and matching CSV/report identities, reset restoring all three listings/default slider values, logout/reset preventing restoration and new-password login. Readable previews/report headings/sensitivity charts exercised at 1440x1000 and 390x844; screenshot evidence /tmp/nestai-readable-1440.png and /tmp/nestai-readable-390.png. All-tier access/gates and existing provider-fixture journeys pass.",
+      "ci": "Initial push run 38575486361 on 990d583 returned action_required with zero jobs; not a passing run. Final evidence/runner-recipe checkpoint CI must be checked independently. Makefile now includes the completed readable UI unit suite in the isolated-process regression target.",
       "providers": "Deterministic local fixtures only; genuine provider and Stripe sandbox acceptance remain Blocked."
     },
     "security": {
-      "specialist": "Read-only restoration security specialist reported no vulnerabilities. Independent code review found account-switch credential retention; fixed with revocation and a regression test.",
-      "automated": "Pending post-commit parallel validation."
+      "specialist": "Read-only restoration security specialist reported no vulnerabilities, including follow-up on final auth code. Independent code review found account-switch credential retention; fixed with revocation and a regression test. Final independent review found no significant issues.",
+      "automated": "Fresh post-commit parallel validation on code revision 990d5831fefc2ef3998d9d353c5ad38c4662df4f executed Python and Actions CodeQL analysis: zero alerts. Automated code-review binary unavailable; no automated-review execution claimed. Changed files passed secret scanning."
     },
     "deployed_acceptance": "Blocked: matching deployed revisions, migration and actual isolated-account/provider/Stripe journeys have not been verified for this change."
   },
