@@ -318,7 +318,11 @@ Do not apply these instructions to production until deployment is authorized:
 2. Take an access-restricted custom-format PostgreSQL backup (`pg_dump -Fc` using
    securely supplied libpq connection settings), checksum it and verify its archive
    with `pg_restore --list`. Preserve required roles/extensions separately through
-   the hosting backup facility. Take a consistent SQLite online backup using
+   the hosting backup facility. Supply `PGHOST`, `PGPORT`, `PGUSER`, `PGDATABASE`
+   and the provider-required `PGSSLMODE`, with `PGPASSFILE` in restricted secret
+   storage (or securely injected `PGPASSWORD`); do not place passwords in commands
+   or pass the SQLAlchemy `postgresql+psycopg2` URL directly to `pg_dump`.
+   Take a consistent SQLite online backup using
    `sqlite3.Connection.backup`, or stop writers before copying the database and
    associated WAL/journal. Keep original ownership/event data unchanged.
 3. Restore PostgreSQL into a **new isolated database**, using
