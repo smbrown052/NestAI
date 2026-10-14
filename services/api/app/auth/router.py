@@ -50,25 +50,8 @@ from .schemas import (
     ResetPasswordRequest,
 )
 
-_OWNER_EMAIL_ENV = "NESTAI_OWNER_EMAIL"
-
-
-def _owner_email() -> str | None:
-    value = normalize_email(os.environ.get(_OWNER_EMAIL_ENV, ""))
-    return value or None
-
-
 router = APIRouter(prefix="/auth", tags=["auth"])
 _RESET_TOKEN_TTL_SECONDS = 60 * 60
-
-
-def _sync_owner_admin(user: User, db: Session) -> User:
-    owner_email = _owner_email()
-    if owner_email and normalize_email(user.email) == owner_email and not user.is_admin:
-        user.is_admin = True
-        db.commit()
-        db.refresh(user)
-    return user
 
 
 def _dev_reset_link(token: str) -> str | None:
@@ -158,14 +141,12 @@ def register_user(payload: RegisterRequest, db: Session = Depends(get_db)):
         if invite and invite.referrer_user_id:
             referrer_id = invite.referrer_user_id
 
-    is_admin = normalized_email == (_owner_email() or "")
-
     user = User(
         email=normalized_email,
         hashed_password=hash_password(payload.password),
         display_name=payload.display_name.strip() or None,
         is_active=True,
-        is_admin=is_admin,
+        is_admin=False,
         tier=FREE_PLAN,
         active_plan=FREE_PLAN,
         requested_plan=None,
@@ -230,9 +211,7 @@ def register_user(payload: RegisterRequest, db: Session = Depends(get_db)):
 
     db.commit()
     db.refresh(user)
-    user = _sync_owner_admin(user, db)
-
-    token = create_access_token({"sub": str(user.id), "email": user.email})
+    token = create_access_token({"sub": str(user.id), "email": user.email, "auth_version": user.auth_version})
     user_data = _serialize_user(user).model_dump(mode="json")
     active = current_plan(user)
     response = {
@@ -257,7 +236,7 @@ def register_user(payload: RegisterRequest, db: Session = Depends(get_db)):
 @router.post("/login", response_model=AccessTokenResponse)
 def login_user(payload: LoginRequest, db: Session = Depends(get_db)) -> AccessTokenResponse:
     normalized_email = normalize_email(payload.email)
-    user = db.query(User).filter(User.email == normalized_email).first()
+    user = db.query(User).filter(User.email == normalized_email).with_for_update().first()
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -272,9 +251,7 @@ def login_user(payload: LoginRequest, db: Session = Depends(get_db)) -> AccessTo
             detail="Incorrect password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    user = _sync_owner_admin(user, db)
-
-    token = create_access_token({"sub": str(user.id), "email": user.email})
+    token = create_access_token({"sub": str(user.id), "email": user.email, "auth_version": user.auth_version})
     return AccessTokenResponse(access_token=token)
 
 
@@ -284,7 +261,7 @@ def forgot_password(
     db: Session = Depends(get_db),
 ) -> ForgotPasswordResponse:
     normalized_email = normalize_email(payload.email)
-    user = db.query(User).filter(User.email == normalized_email).first()
+    user = db.query(User).filter(User.email == normalized_email).with_for_update().first()
     reset_link = None
 
     if user and user.is_active:
@@ -338,23 +315,31 @@ def forgot_password(
 @router.post("/reset-password")
 def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db)):
     token_hash = hash_reset_token(payload.token)
-    now = datetime.now(timezone.utc)
     reset_token = (
         db.query(PasswordResetToken)
         .filter(PasswordResetToken.token_hash == token_hash)
-        .filter(PasswordResetToken.used_at.is_(None))
-        .filter(PasswordResetToken.expires_at >= now)
         .first()
     )
     if not reset_token:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Reset link is invalid or expired")
 
-    user = db.query(User).filter(User.id == reset_token.user_id).first()
+    # Use the same account lock order as login and reset-link issuance.
+    user = db.query(User).filter(User.id == reset_token.user_id).with_for_update().first()
     if not user or not user.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Inactive account")
 
-    user.hashed_password = hash_password(payload.password)
-    reset_token.used_at = now
+    now = datetime.now(timezone.utc)
+    consumed = db.query(PasswordResetToken).filter(
+        PasswordResetToken.id == reset_token.id,
+        PasswordResetToken.used_at.is_(None),
+        PasswordResetToken.expires_at > now,
+    ).update({"used_at": now}, synchronize_session=False)
+    if consumed != 1:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Reset link is invalid or expired")
+    db.query(User).filter(User.id == user.id).update({
+        "hashed_password": hash_password(payload.password),
+        "auth_version": User.auth_version + 1,
+    }, synchronize_session=False)
     db.query(PasswordResetToken).filter(
         PasswordResetToken.user_id == user.id,
         PasswordResetToken.used_at.is_(None),

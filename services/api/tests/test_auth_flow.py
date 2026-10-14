@@ -1,6 +1,8 @@
 import os
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 os.environ["DATABASE_URL"] = "sqlite://"
 os.environ["ENVIRONMENT"] = "test"
@@ -29,11 +31,11 @@ class AuthFlowTests(unittest.TestCase):
         Base.metadata.drop_all(bind=engine)
         Base.metadata.create_all(bind=engine)
 
-    def test_register_trims_lowercases_and_sets_owner_admin(self) -> None:
+    def test_register_trims_lowercases_without_owner_admin(self) -> None:
         response = self.client.post(
             "/auth/register",
             json={
-                "email": "  OWNER@Example.com  ",
+                "email": "  SMBROWN.052@GMAIL.COM  ",
                 "password": "StrongPassword123!",
                 "display_name": " Owner ",
             },
@@ -41,7 +43,7 @@ class AuthFlowTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 201, response.text)
         body = response.json()
-        self.assertEqual(body["email"], "owner@example.com")
+        self.assertEqual(body["email"], "smbrown.052@gmail.com")
         self.assertEqual(body["display_name"], "Owner")
         self.assertFalse(body["is_admin"])
         self.assertTrue(body["is_active"])
@@ -128,7 +130,7 @@ class AuthFlowTests(unittest.TestCase):
         self.assertEqual(inactive.status_code, 403, inactive.text)
         self.assertEqual(inactive.json()["detail"], "Inactive account")
 
-    def test_existing_owner_with_legacy_hash_can_login_and_becomes_admin(self) -> None:
+    def test_existing_owner_with_legacy_hash_can_login_without_promotion(self) -> None:
         db = SessionLocal()
         try:
             db.add(
@@ -160,14 +162,33 @@ class AuthFlowTests(unittest.TestCase):
         self.assertEqual(me_response.status_code, 200, me_response.text)
         me_body = me_response.json()
         self.assertEqual(me_body["email"], "smbrown.052@gmail.com")
-        self.assertTrue(me_body["is_admin"])
+        self.assertFalse(me_body["is_admin"])
         self.assertTrue(me_body["is_active"])
+        self.assertEqual(self.client.get(
+            "/admin/users", headers={"Authorization": "Bearer " + token},
+        ).status_code, 403)
 
     def test_forgot_password_and_reset_password_flow(self) -> None:
-        self.client.post(
+        registered = self.client.post(
             "/auth/register",
             json={"email": "resetme@example.com", "password": "StrongPassword123!"},
         )
+
+        old_tokens = [registered.json()["access_token"]]
+        for _ in range(2):
+            old_tokens.append(self.client.post("/auth/login", json={
+                "email": "resetme@example.com", "password": "StrongPassword123!",
+            }).json()["access_token"])
+        other = self.client.post("/auth/register", json={
+            "email": "other@example.com", "password": "StrongPassword123!",
+        }).json()["access_token"]
+        with SessionLocal() as db:
+            db.query(User).filter(User.email == "resetme@example.com").update({"is_admin": True})
+            db.commit()
+        for token in old_tokens:
+            self.assertEqual(self.client.get("/admin/users", headers={
+                "Authorization": "Bearer " + token,
+            }).status_code, 200)
 
         forgot_response = self.client.post(
             "/auth/forgot-password",
@@ -192,6 +213,16 @@ class AuthFlowTests(unittest.TestCase):
             json={"token": token, "password": "EvenStrongerPassword456!"},
         )
         self.assertEqual(reset_response.status_code, 200, reset_response.text)
+        for old_token in old_tokens:
+            for endpoint in ("/auth/me", "/admin/users", "/billing/status", "/properties", "/entitlements"):
+                response = self.client.get(endpoint, headers={"Authorization": "Bearer " + old_token})
+                self.assertEqual(response.status_code, 401, (endpoint, response.text))
+        self.assertEqual(self.client.get("/auth/me", headers={
+            "Authorization": "Bearer " + other,
+        }).status_code, 200)
+        self.assertEqual(self.client.post("/auth/login", json={
+            "email": "resetme@example.com", "password": "StrongPassword123!",
+        }).status_code, 401)
 
         reused_response = self.client.post(
             "/auth/reset-password",
@@ -204,6 +235,81 @@ class AuthFlowTests(unittest.TestCase):
             json={"email": "resetme@example.com", "password": "EvenStrongerPassword456!"},
         )
         self.assertEqual(login_response.status_code, 200, login_response.text)
+        fresh_token = login_response.json()["access_token"]
+        self.assertEqual(self.client.get("/auth/me", headers={
+            "Authorization": "Bearer " + fresh_token,
+        }).status_code, 200)
+        with SessionLocal() as db:
+            self.assertEqual(db.query(User).filter(User.email == "resetme@example.com").one().auth_version, 1)
+
+    def test_expired_and_replaced_reset_tokens_do_not_change_credentials(self) -> None:
+        user = self.client.post("/auth/register", json={
+            "email": "expired@example.com", "password": "StrongPassword123!",
+        }).json()
+        first = self.client.post("/auth/forgot-password", json={
+            "email": user["email"],
+        }).json()["reset_link"].split("reset_token=")[1]
+        second = self.client.post("/auth/forgot-password", json={
+            "email": user["email"],
+        }).json()["reset_link"].split("reset_token=")[1]
+        with SessionLocal() as db:
+            db.query(PasswordResetToken).filter(PasswordResetToken.used_at.is_(None)).update({
+                "expires_at": datetime.now(timezone.utc) - timedelta(seconds=1),
+            })
+            db.commit()
+        for token in (first, second, "invalid-token"):
+            self.assertEqual(self.client.post("/auth/reset-password", json={
+                "token": token, "password": "EvenStrongerPassword456!",
+            }).status_code, 400)
+        with SessionLocal() as db:
+            self.assertEqual(db.get(User, user["id"]).auth_version, 0)
+        self.assertEqual(self.client.get("/auth/me", headers={
+            "Authorization": "Bearer " + user["access_token"],
+        }).status_code, 200)
+
+    def test_invalid_session_versions_and_refresh_tokens_are_rejected(self) -> None:
+        from app.auth.security import create_access_token
+        from app.core.dependencies import get_current_user as core_user
+        from app.auth.dependencies import get_current_user
+        self.assertIs(core_user, get_current_user)
+        user = self.client.post("/auth/register", json={
+            "email": "versions@example.com", "password": "StrongPassword123!",
+        }).json()
+        for version in (None, "0", True, -1, 1):
+            token = create_access_token({"sub": str(user["id"]), "auth_version": version})
+            self.assertEqual(self.client.get("/auth/me", headers={
+                "Authorization": "Bearer " + token,
+            }).status_code, 401)
+        import jwt
+        for claims in ({"sub": str(user["id"])}, {"sub": str(user["id"]), "auth_version": 0, "type": "refresh"}):
+            token = jwt.encode({
+                "type": "access", "exp": datetime.now(timezone.utc) + timedelta(minutes=5), **claims,
+            }, os.environ["JWT_SECRET_KEY"], algorithm="HS256")
+            self.assertEqual(self.client.get("/auth/me", headers={
+                "Authorization": "Bearer " + token,
+            }).status_code, 401)
+
+    def test_failed_reset_transaction_preserves_password_sessions_and_token(self) -> None:
+        user = self.client.post("/auth/register", json={
+            "email": "rollback@example.com", "password": "StrongPassword123!",
+        }).json()
+        token = self.client.post("/auth/forgot-password", json={
+            "email": user["email"],
+        }).json()["reset_link"].split("reset_token=")[1]
+        with patch("app.auth.router.hash_password", side_effect=RuntimeError("hashing failed")):
+            with self.assertRaises(RuntimeError):
+                self.client.post("/auth/reset-password", json={
+                    "token": token, "password": "EvenStrongerPassword456!",
+                })
+        with SessionLocal() as db:
+            self.assertEqual(db.get(User, user["id"]).auth_version, 0)
+            self.assertIsNone(db.query(PasswordResetToken).one().used_at)
+        self.assertEqual(self.client.get("/auth/me", headers={
+            "Authorization": "Bearer " + user["access_token"],
+        }).status_code, 200)
+        self.assertEqual(self.client.post("/auth/reset-password", json={
+            "token": token, "password": "EvenStrongerPassword456!",
+        }).status_code, 200)
 
     def test_admin_routes_require_logged_in_admin(self) -> None:
         self.client.post(
@@ -226,6 +332,9 @@ class AuthFlowTests(unittest.TestCase):
             "/auth/register",
             json={"email": "smbrown.052@gmail.com", "password": "StrongPassword123!"},
         )
+        with SessionLocal() as db:
+            db.query(User).filter(User.email == "smbrown.052@gmail.com").update({"is_admin": True})
+            db.commit()
         owner_login = self.client.post(
             "/auth/login",
             json={"email": "smbrown.052@gmail.com", "password": "StrongPassword123!"},

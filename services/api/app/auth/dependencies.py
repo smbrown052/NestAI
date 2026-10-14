@@ -54,4 +54,11 @@ def get_current_user(
         )
     if not user.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account is disabled")
+    version = payload.get("auth_version")
+    if type(version) is not int or version != user.auth_version:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session expired; sign in again",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     return user

@@ -21,6 +21,7 @@ class User(Base):
     display_name: Mapped[str | None] = mapped_column(String(120))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    auth_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
     # Legacy compatibility field. Keep it aligned with active_plan.
     tier: Mapped[str] = mapped_column(String(32), default="free", nullable=False)
     active_plan: Mapped[str] = mapped_column(String(32), default="free", nullable=False)

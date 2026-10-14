@@ -242,9 +242,15 @@ privileged process. Do not delete or automatically import unowned data.
    - Core: `DATABASE_URL`, `ENVIRONMENT=production`, `JWT_SECRET_KEY`,
      `JWT_ALGORITHM=HS256`, `ACCESS_TOKEN_EXPIRE_MINUTES`,
      `NESTAI_STREAMLIT_URL` (HTTPS frontend), and `SQL_ECHO=false`.
-     `PORT` is supplied by Render. Leave `NESTAI_OWNER_EMAIL` unset: the current
-     email-only automatic admin promotion does not verify mailbox ownership.
-     Provision administrators through the existing privileged bootstrap CLI.
+     `PORT` is supplied by Render. Leave `NESTAI_OWNER_EMAIL` unset: it is no longer
+     used to grant privileges. Public registration/login never promote an account.
+     In an authorized backend operator shell, use `python -m app.cli.seed_admin`
+     with securely supplied `ADMIN_BOOTSTRAP_EMAIL` and `ADMIN_BOOTSTRAP_PASSWORD`
+     (at least 12 characters), then remove those variables. Bootstrap creates a
+     new operator-controlled account and refuses to promote an existing non-admin.
+     Audit previously email-promoted administrators against trusted operator
+     evidence; do not blindly revoke legitimate administrators or assume these
+     previously stored flags become safe just because automatic promotion stopped.
    - Providers: `NESTAI_PROVIDER_MODE=live`, `OPENAI_API_KEY`,
      `OPENAI_MODEL`, `GOOGLE_MAPS_API_KEY`, and `WALKSCORE_API_KEY` if testing
      Walk Score enrichment. Optional output cap: `NESTAI_AI_MAX_OUTPUT_TOKENS`.
@@ -291,10 +297,68 @@ privileged process. Do not delete or automatically import unowned data.
    revisions and every skipped/blocked check. Missing credentials, hosting access,
    historical ownership evidence or CI approval are blockers, not passes.
 
-Fresh security review additionally identified that password reset does not revoke
-existing bearer sessions. Remediate session revocation before public release.
-These authentication findings predate the browser-only checkpoint; this limited
-run does not change authentication or activate billing.
+### Authentication remediation and safe deployment order
+
+Migration `0009_auth_version` adds `users.auth_version` with a non-null database
+default of zero; it preserves accounts, listings, credits and administrator flags.
+Registration/login issue the account version in each access token. All bearer
+paths (including administrator endpoints) reject absent, malformed or stale
+versions. Deploying the new code therefore requires **every existing user to sign
+in again**, even if their old token has not expired. Successful password resets
+atomically consume all outstanding reset links, change the password and increment
+the version. Old sessions then fail; new-password login restores saved data.
+There is no refresh-token issuer, endpoint or stored refresh-token model in this
+application; refresh-type JWTs are rejected, not treated as access sessions.
+
+Do not apply these instructions to production until deployment is authorized:
+
+1. Record each service's current revision/settings and current Alembic revision.
+   Confirm the new code revision passes `MVP regression`. Schedule maintenance and
+   disable automatic deployments so the API cannot start before the schema is ready.
+2. Take an access-restricted custom-format PostgreSQL backup (`pg_dump -Fc` using
+   securely supplied libpq connection settings), checksum it and verify its archive
+   with `pg_restore --list`. Preserve required roles/extensions separately through
+   the hosting backup facility. Take a consistent SQLite online backup using
+   `sqlite3.Connection.backup`, or stop writers before copying the database and
+   associated WAL/journal. Keep original ownership/event data unchanged.
+3. Restore PostgreSQL into a **new isolated database**, using
+   `pg_restore --exit-on-error --no-owner --no-acl`; verify the recorded Alembic
+   revision and table counts. Test migrations and login/reset recovery there.
+   Restore SQLite into a new file and check `PRAGMA integrity_check` and counts.
+   A sandbox backup is not a backup of the hosted production database.
+4. With all API writers stopped, run `python -m alembic upgrade head` from
+   `services/api` in the full repository checkout, using the authorized backend
+   database connection. Verify `python -m alembic current` reports
+   `0009_auth_version`. This is an additive schema change; never assign historical
+   SQLite ownership as part of migration.
+5. Start Render on the exact tested revision, with repository root, build
+   `pip install -r services/api/requirements.txt` and start
+   `uvicorn --app-dir services/api main:app --host 0.0.0.0 --port $PORT`.
+   Check health, fresh login, revoked-token rejection and preserved listings.
+   Then deploy Streamlit on the same revision with `legacy/streamlit/app.py` and
+   the verified HTTPS `NESTAI_API_BASE_URL`.
+6. Execute dedicated-account desktop/mobile journeys, actual provider responses,
+   actual downloaded files and sandbox checkout/portal/webhook transitions.
+   Keep deployed acceptance Blocked until these pass; never activate real billing.
+
+**Rollback:** if migration fails, keep writers stopped and verify PostgreSQL's
+transaction rolled back before retrying. For an application defect, prefer a
+forward fix or a rollback artifact **retaining authentication revocation and
+removal of email-only promotion**, leaving the additive column in place.
+Redeploying pre-remediation authentication would reactivate stolen tokens and the
+admin vulnerability; do not do that. If a data restore is necessary, restore into
+a new isolated database, verify integrity, reconcile writes made after the backup,
+then obtain explicit approval before switching connections. A pre-reset backup
+also restores old passwords/versions: retain newer password/reset state or rotate
+the signing key and require fresh account recovery before reopening. Do not
+`alembic downgrade` production or drop preserved tables for a code rollback.
+
+**Verification access:** repository files are not hosting-console evidence.
+Without authorized Streamlit/Render settings access, deployed commit identifiers,
+environment key inventories and remote database/filesystem access, actual hosting
+configuration and production backups remain unverified. Do not label required
+variables as missing from production merely because they are absent in the agent
+sandbox. Provide names/status only, never secret values.
 
 ---
 

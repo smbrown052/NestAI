@@ -1,6 +1,59 @@
 {
   "baseline_revision": "c7a197f0e16e697a150b7286fd29afb1d56c181d",
   "deployment_verified": false,
+  "authentication_remediation": {
+    "baseline_revision": "62edee53a4dd9adca8b78145a90a629d225192e4",
+    "baseline_ci": "Verified GitHub MVP regression run 38486536016 attempt 2 completed successfully on 62edee5; this is not evidence for the new authentication code.",
+    "scope": "Authentication remediation, local regression/security, read-only deployment discovery and available backups only. No production migration, hosting change, merge or real billing activation.",
+    "fixes": [
+      "Public registration always creates non-admin accounts; removed email-only login/registration promotion. NESTAI_OWNER_EMAIL remains unset/ignored for privileges. Existing administrator flags are preserved and require a trusted operator audit.",
+      "Privileged bootstrap import fixed; creates a new operator-controlled admin and refuses existing non-admin accounts instead of promoting by email.",
+      "Additive 0009_auth_version migration after 0008_beta_grants adds non-null users.auth_version default zero, preserving users/data/credits/grants.",
+      "All current bearer authentication paths, including administrator and compatibility dependencies, enforce typed account-version equality. Missing-version legacy tokens require fresh sign-in on deployment.",
+      "Password reset locks the account, conditionally consumes exactly one unexpired unused token, updates password, increments version and consumes all outstanding reset links in the same transaction. Login and forgot-password use the same account lock ordering.",
+      "No refresh-token issuer, endpoint or persisted refresh-token model exists; refresh-type tokens are rejected. No new refresh feature was introduced."
+    ],
+    "tests": {
+      "affected_authentication": "18 passed before adding bootstrap/concurrency tests; /tmp/nestai-auth-affected.log",
+      "intermediate_fixture_failure": "PG migration test's new raw user fixture omitted required referral_code. Corrected the fixture; not an application migration failure. Intermediate result 135 passed, 1 failed, 4 skipped; /tmp/nestai-auth-api.log.",
+      "full_unit": "393 passed; each legacy test file ran in a separate process via make regression.",
+      "full_api": "139 passed, 4 intentional SQLite-only concurrency skips; corresponding PostgreSQL variants including reset single-use concurrency passed.",
+      "full_browser_initial": "44 passed, 1 failed in 356.37 seconds; /tmp/nestai-auth-regression.log. Failure before listing input in desktop paid-provider journey: Locator.input_value could not find Listing type; captured local Streamlit JS requests explicitly failed with net::ERR_NETWORK_CHANGED, including Selectbox/TextArea/Metric chunks. Transport/environment failure, not inferred from timeout. Both new desktop/mobile reset journeys passed.",
+      "browser_rerun": "Full 45-test rerun running without retries or asset interception; /tmp/nestai-auth-browser-rerun.log. Preserve initial failure regardless of rerun outcome.",
+      "coverage": "Owner-email signup/login cannot promote; explicit admins retained; registration/multiple login tokens fail after reset on auth/admin/billing/platform routes; unrelated users unaffected; new-password login restores data; old password fails; reset expiry/replacement/reuse/rollback; malformed/missing/stale versions and refresh-type rejection; real PostgreSQL concurrent redemption permits one winner; additive migration defaults; desktop/mobile UI password reset and saved-data restoration."
+    },
+    "security": {
+      "specialist_review": "Fresh read-only security specialist found no remaining vulnerabilities in the remediation diff; read-only code reviewer found no significant issues. Previously promoted administrator accounts still need operator audit.",
+      "codeql": "Pending post-commit scan of accumulated branch.",
+      "secrets": "Pending pre-commit scan."
+    },
+    "hosting": {
+      "actual_streamlit_branch_entrypoint_revision": "Unverified: browser MCP navigation returned Transport closed; web_fetch public app failed DNS address lookup. No authenticated Streamlit hosting settings access.",
+      "actual_render_branch_root_entrypoint_revision": "Unverified: no Render API credential/service identifier, hosting-console access or known API URL available. GitHub CLI deployment metadata request also lacked GH_TOKEN. Local source correspondence is not hosting evidence.",
+      "required_settings": "Both services must use the tested authentication revision on copilot/implementation-plan-for-mvp. Streamlit legacy/streamlit/app.py. Render repository root, build pip install -r services/api/requirements.txt, start uvicorn --app-dir services/api main:app --host 0.0.0.0 --port $PORT."
+    },
+    "backups": {
+      "production_postgresql": "Blocked: remote DATABASE_URL/backup facility and database access unavailable; no production backup created.",
+      "hosted_sqlite": "Blocked: hosted filesystem access unavailable; no hosted backup created.",
+      "local_sqlite": "Created /tmp/nestai-auth-backups/local-legacy-cache.sqlite using SQLite online backup from repository-local legacy/streamlit/data/nestai_cache.db; isolated restore local-legacy-cache-restored.sqlite passed integrity_check and all six table counts matched. SHA256 c166b099e10cf18b306de55e989739e067aff7d4808a60252bf5bf7a4453ab3d. This is not hosted recovery evidence.",
+      "isolated_postgresql": "Pending local test-database dump/restore rehearsal.",
+      "retention": "Sandbox /tmp artifacts are access-restricted temporary evidence, not durable disaster-recovery storage. Transfer authorized production backups to approved encrypted storage outside the runner.",
+      "procedure": "README.md Authentication remediation and safe deployment order documents consistent dumps, isolated restore verification, migration-before-code order and security-preserving rollback."
+    },
+    "configuration_inventory": {
+      "status": "Names below are absent from the agent process and unavailable for deployed acceptance. Hosted service variable presence cannot be determined without authorized key-name inventories; no secret values inspected or reported.",
+      "streamlit": ["NESTAI_API_BASE_URL"],
+      "render_core": ["DATABASE_URL", "ENVIRONMENT", "JWT_SECRET_KEY", "JWT_ALGORITHM", "ACCESS_TOKEN_EXPIRE_MINUTES", "NESTAI_STREAMLIT_URL", "SQL_ECHO"],
+      "providers": ["NESTAI_PROVIDER_MODE", "OPENAI_API_KEY", "OPENAI_MODEL", "GOOGLE_MAPS_API_KEY"],
+      "optional_walkscore": ["WALKSCORE_API_KEY"],
+      "stripe_sandbox": ["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "STRIPE_PREMIUM_PRICE_ID", "STRIPE_PREMIUM_PLUS_PRICE_ID"],
+      "email": ["NESTAI_DISABLE_EMAIL", "RESEND_API_KEY"],
+      "live_runner": ["NESTAI_RUN_LIVE_TESTS", "NESTAI_LIVE_API_BASE_URL", "NESTAI_LIVE_FREE_EMAIL", "NESTAI_LIVE_FREE_PASSWORD", "NESTAI_LIVE_PREMIUM_EMAIL", "NESTAI_LIVE_PREMIUM_PASSWORD", "NESTAI_LIVE_PLUS_EMAIL", "NESTAI_LIVE_PLUS_PASSWORD", "NESTAI_LIVE_ALLOW_ACCOUNT_OPERATIONS"],
+      "guards": "Leave NESTAI_OWNER_EMAIL unset, STRIPE_ALLOW_LIVE unset/false, preview flags disabled. Render supplies PORT. OPENAI_MODEL/JWT_ALGORITHM/token expiry/SQL_ECHO have defaults; RESEND_API_KEY is required only for separately authorized actual reset-mail delivery."
+    },
+    "new_commit_ci": "Pending push; check new authentication revision, not just baseline 62edee5. If action_required, owner must open latest MVP regression run and approve it, then require completed success with an actual regression job.",
+    "deployed_acceptance": "Blocked until authorized hosted revisions/settings, production backup restore evidence, provider/Stripe sandbox configuration, administrator audit and actual isolated-account desktop/mobile journeys pass."
+  },
   "browser_resume": {
     "checkpoint": "e24b00ee03ecf7c1be33dd5968361798c638a0e4",
     "scope": "Browser regression, failure classification, fresh security checks, deployment checklist; no production hosting or real billing changes.",
@@ -45,7 +98,7 @@
     "tested_code_revision": "07239213102d9d0d1d4819a2fd1c36341010702c",
     "fresh_decision_tests": "34 passed, 0 failed; /tmp/nestai-decision-resume.log. Full make regression was not rerun in this browser-only resume.",
     "security_review": {
-      "status": "Two pre-existing findings; release blocked",
+      "status": "Historical findings remediated locally in authentication_remediation; deployed authentication remains unverified",
       "findings": [
         "High: NESTAI_OWNER_EMAIL grants administrator status based on unverified registration/login email (services/api/app/auth/router.py:65-70,161-168). Leave it unset and use privileged admin bootstrap; removal of automatic promotion requires follow-up.",
         "Medium: password reset does not revoke existing JWT sessions (services/api/app/auth/router.py:356-362). Session revocation requires follow-up."

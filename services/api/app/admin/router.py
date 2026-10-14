@@ -19,7 +19,8 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials, HTTPBearer, HTTPAu
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field, StrictInt, StrictBool
 
-from app.auth.security import hash_password, verify_password, decode_access_token, normalize_email
+from app.auth.security import hash_password, verify_password, normalize_email
+from app.auth.dependencies import get_current_user
 from app.db.session import get_db
 from app.db.models.user import User
 from app.db.models.feedback import FeedbackReport
@@ -93,13 +94,7 @@ def require_admin(
     user: User | None = None
 
     if bearer and bearer.scheme.lower() == "bearer":
-        try:
-            payload = decode_access_token(bearer.credentials)
-            user_id = payload.get("sub")
-            if user_id is not None:
-                user = db.query(User).filter(User.id == int(user_id)).first()
-        except Exception:
-            user = None
+        user = get_current_user(bearer, db)
 
     if user is None and basic is not None:
         candidate = db.query(User).filter(User.email == normalize_email(basic.username)).first()

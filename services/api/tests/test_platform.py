@@ -1197,7 +1197,10 @@ def test_additive_migration_preserves_unowned_and_credits(monkeypatch):
             assert conn.execute(text("SELECT credits_remaining FROM credit_balances")).scalar() == 88
             assert conn.execute(text("SELECT user_id FROM properties WHERE session_id='legacy-unowned'")).scalar() is None
             assert conn.execute(text("SELECT count(*) FROM account_properties")).scalar() == 0
-            assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0008_beta_grants"
+            assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0009_auth_version"
+            assert conn.execute(text("SELECT auth_version FROM users")).scalar() == 0
+            conn.execute(text("INSERT INTO users (email, hashed_password, referral_code) VALUES ('new-default@example.com', 'hash', 'new-default-code')"))
+            assert conn.execute(text("SELECT auth_version FROM users WHERE email='new-default@example.com'")).scalar() == 0
         command.downgrade(cfg, "ae05715be4e2")
         with admin.begin() as conn:
             conn.execute(text(f'SET search_path TO "{schema}"'))
@@ -1206,3 +1209,39 @@ def test_additive_migration_preserves_unowned_and_credits(monkeypatch):
         with admin.begin() as conn:
             conn.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
         admin.dispose()
+
+
+def test_concurrent_password_reset_consumes_token_once_and_revokes_sessions(api):
+    client, factory, headers, ids, dialect = api
+    if dialect != "postgres":
+        pytest.skip("Reset account-lock concurrency requires PostgreSQL")
+    from app.auth.security import hash_password, hash_reset_token, verify_password
+    from app.db.models.password_reset_token import PasswordResetToken
+    raw_token = uuid4().hex
+    with factory() as db:
+        db.add(PasswordResetToken(user_id=ids[0], token_hash=hash_reset_token(raw_token),
+                                  expires_at=datetime.now(timezone.utc) + timedelta(minutes=5)))
+        db.get(User, ids[0]).hashed_password = hash_password("OriginalPassword123!")
+        db.commit()
+
+    def reset(password):
+        response = client.post("/auth/reset-password", json={"token": raw_token, "password": password})
+        return response.status_code, password
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(reset, ["FirstNewPassword123!", "SecondNewPassword123!"]))
+    assert sorted(code for code, _ in results) == [200, 400]
+    winner = next(password for code, password in results if code == 200)
+    with factory() as db:
+        user = db.get(User, ids[0])
+        assert user.auth_version == 1
+        assert verify_password(winner, user.hashed_password)
+        assert db.query(PasswordResetToken).one().used_at is not None
+    for endpoint in ("/auth/me", "/properties", "/billing/status"):
+        assert client.get(endpoint, headers=headers[0]).status_code == 401
+    assert client.get("/auth/me", headers=headers[1]).status_code == 200
+    login = client.post("/auth/login", json={"email": "user1@example.com", "password": winner})
+    assert login.status_code == 200
+    assert client.get("/auth/me", headers={
+        "Authorization": "Bearer " + login.json()["access_token"],
+    }).status_code == 200

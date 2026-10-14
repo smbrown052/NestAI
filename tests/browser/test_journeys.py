@@ -108,6 +108,39 @@ def test_signup_and_all_navigation(page, runtime):
     expect(page.get_by_role("textbox", name="Display name", exact=True)).to_have_value("Signup Browser Updated")
 
 
+def test_password_reset_revokes_old_session_and_restores_saved_data(page, runtime, account):
+    user = account("free")
+    sign_in(page, runtime, user)
+    save_example(page, "app_listing_1.txt")
+    saved_ids = {item["id"] for item in properties(runtime, user)}
+    forgot = requests.post(runtime["api"] + "/auth/forgot-password",
+                           json={"email": user["email"]}, timeout=10)
+    assert forgot.status_code == 200, forgot.text
+    reset_link = forgot.json()["reset_link"]
+    assert reset_link
+    page.goto(reset_link)
+    page.get_by_role("textbox", name="New password", exact=True).fill("BrowserNewPassword-9274!")
+    page.get_by_role("button", name="Reset password", exact=True).click()
+    expect(page.get_by_text("Password reset successfully. Please sign in.", exact=True)).to_be_visible()
+    assert requests.get(runtime["api"] + "/properties", headers=user["headers"], timeout=10).status_code == 401
+    assert requests.post(runtime["api"] + "/auth/login", json={
+        "email": user["email"], "password": user["password"],
+    }, timeout=10).status_code == 401
+    page.get_by_role("textbox", name="Email", exact=True).fill(user["email"])
+    page.get_by_role("textbox", name="Password", exact=True).fill("BrowserNewPassword-9274!")
+    page.get_by_role("button", name="Sign In", exact=True).click()
+    expect(page.get_by_role("button", name="Log out", exact=True)).to_be_visible()
+    navigate(page, "Apartment Search")
+    expect(page.locator('[data-testid="stTable"] tbody tr')).to_have_count(29)
+    login = requests.post(runtime["api"] + "/auth/login", json={
+        "email": user["email"], "password": "BrowserNewPassword-9274!",
+    }, timeout=10)
+    assert login.status_code == 200
+    user["headers"] = {"Authorization": "Bearer " + login.json()["access_token"]}
+    assert {item["id"] for item in properties(runtime, user)} == saved_ids
+    healthy(page)
+
+
 @pytest.mark.parametrize("plan", ["premium", "premium_plus"])
 def test_paid_plan_switch_without_provider_configuration_fails_closed(page, runtime, account, plan):
     user = account(plan)

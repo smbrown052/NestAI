@@ -68,6 +68,7 @@ def create_access_token(
     expires_at = now + (expires_delta or timedelta(minutes=DEFAULT_TOKEN_EXPIRE_MINUTES))
     header = {"alg": JWT_ALGORITHM, "typ": "JWT"}
     payload = {
+        "auth_version": 0,
         **claims,
         "iat": int(now.timestamp()),
         "exp": int(expires_at.timestamp()),

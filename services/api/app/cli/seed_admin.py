@@ -37,6 +37,8 @@ def _require_env(name: str) -> str:
 
 
 def main() -> None:
+    from app.auth.security import hash_password, normalize_email
+
     email = normalize_email(_require_env("ADMIN_BOOTSTRAP_EMAIL"))
     password = _require_env("ADMIN_BOOTSTRAP_PASSWORD")
 
@@ -48,7 +50,6 @@ def main() -> None:
         sys.exit(1)
 
     # Import here so the module can be imported without a live DB for testing.
-    from app.auth.security import hash_password, normalize_email
     from app.db.session import SessionLocal
     from app.db.models.user import User
     from app.db.models.credits import CreditBalance
@@ -58,9 +59,9 @@ def main() -> None:
         existing = db.query(User).filter(User.email == email).first()
         if existing:
             if not existing.is_admin:
-                existing.is_admin = True
-                db.commit()
-                print(f"✅  Existing user {email!r} promoted to admin.")
+                print("ERROR: Account already exists without administrator privileges; "
+                      "verify ownership through an audited operator process.", file=sys.stderr)
+                sys.exit(1)
             else:
                 print(f"ℹ️   Admin account {email!r} already exists. No changes made.")
             return
