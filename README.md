@@ -236,7 +236,7 @@ privileged process. Do not delete or automatically import unowned data.
    production migrations or downgrade/drop tables to roll back application code.
 3. **Streamlit secrets:** set `NESTAI_API_BASE_URL` to the verified HTTPS API.
    Provider and Stripe secrets belong only in FastAPI. Leave developer/owner
-   preview flags disabled. Reload currently requires explicit reauthentication;
+   preview flags disabled. Reload restores authentication within the same tab;
    saved data must return afterward.
 4. **Render environment:**
    - Core: `DATABASE_URL`, `ENVIRONMENT=production`, `JWT_SECRET_KEY`,
@@ -333,7 +333,7 @@ Do not apply these instructions to production until deployment is authorized:
 4. With all API writers stopped, run `python -m alembic upgrade head` from
    `services/api` in the full repository checkout, using the authorized backend
    database connection. Verify `python -m alembic current` reports
-   `0009_auth_version`. This is an additive schema change; never assign historical
+   `0010_browser_sessions` (verify `alembic heads` before deployment). This is an additive schema change; never assign historical
    SQLite ownership as part of migration.
 5. Start Render on the exact tested revision, with repository root, build
    `pip install -r services/api/requirements.txt` and start
@@ -363,6 +363,24 @@ environment key inventories and remote database/filesystem access, actual hostin
 configuration and production backups remain unverified. Do not label required
 variables as missing from production merely because they are absent in the agent
 sandbox. Provide names/status only, never secret values.
+
+### Reload authentication
+
+Streamlit uses a dedicated opaque restoration credential in tab-scoped
+`sessionStorage`, not a bearer JWT in a URL or persistent `localStorage`.
+The API stores only its SHA-256 hash in the additive `0010_browser_sessions`
+table. Deploy that migration before the matching backend/frontend code.
+The credential expires seven days after issuance; logout revokes it, and a
+password reset deletes all account restoration credentials atomically with
+the password/version update. Restored access tokens still enforce `auth_version`.
+Saved properties, preferences and usage remain account-owned database records.
+
+This is reload continuity, not a permanent sign-in guarantee: storage restrictions,
+expiry or closing the tab can require sign-in. Browser storage is script-readable,
+not an HttpOnly cookie; keep HTTPS and same-origin script protections enabled.
+An API outage blocks restoration without discarding the credential. Logout
+always clears local authentication/storage, but server revocation requires API
+availability; a password reset revokes all outstanding account sessions.
 
 ---
 

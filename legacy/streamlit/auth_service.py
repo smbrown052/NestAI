@@ -275,7 +275,10 @@ class StreamlitAuthManager:
         session_state = self._session_state
         previous = session_state.get("auth_user") or {}
         if previous.get("id") != user.get("id"):
-            self._clear_account_state()
+            if previous.get("id") is not None:
+                self.clear_authenticated()
+            else:
+                self._clear_account_state()
         session_state["auth_token"] = token
         session_state["auth_user"] = user
         session_state["auth_error"] = None
@@ -286,7 +289,8 @@ class StreamlitAuthManager:
     def _clear_account_state(self) -> None:
         """Clear account-derived data and widgets without touching local storage."""
         state = self._session_state
-        keep = {"main_nav", "api_available", "api_last_health_check"}
+        keep = {"main_nav", "api_available", "api_last_health_check",
+                "browser_auth_command", "browser_auth_credential", "browser_auth_storage"}
         for key in list(state):
             if key not in keep:
                 del state[key]
@@ -305,6 +309,11 @@ class StreamlitAuthManager:
 
     def clear_authenticated(self) -> None:
         session_state = self._session_state
+        from uuid import uuid4
+        credential = session_state.pop("browser_auth_credential", None)
+        if credential:
+            self.api_client.request("POST", "/auth/revoke-browser-session", json={"credential": credential})
+        session_state["browser_auth_command"] = {"action": "clear", "operation": uuid4().hex}
         self._clear_account_state()
         session_state["auth_token"] = None
         session_state["auth_user"] = None

@@ -40,6 +40,13 @@ def sign_in(page, runtime, user):
     expect(page.get_by_role("button", name="Log out", exact=True)).to_be_visible()
 
 
+def sign_out(page):
+    idle(page)
+    page.get_by_role("button", name="Log out", exact=True).click()
+    expect(page.get_by_role("button", name="Sign in", exact=True)).to_be_visible()
+    idle(page)
+
+
 def healthy(page):
     expect(page.locator('[data-testid="stException"]')).to_have_count(0)
     expect(page.get_by_text("Account services are temporarily unavailable.", exact=True)).to_have_count(0)
@@ -74,6 +81,7 @@ def save_example(page, fixture_name, kind="Apartment"):
     text = (ROOT / "legacy/streamlit/data" / fixture_name).read_text()
     page.get_by_role("textbox", name="Paste listing text", exact=True).fill(text)
     page.get_by_role("button", name="Parse listing", exact=True).click()
+    expect(page.get_by_role("heading", name="Parsed listing preview", exact=True)).to_be_visible()
     page.get_by_role("button", name="Save parsed property", exact=True).click()
     expect(page.get_by_role("button", name="Save parsed property", exact=True)).to_have_count(0)
     idle(page)
@@ -100,12 +108,136 @@ def test_signup_and_all_navigation(page, runtime):
     page.get_by_role("textbox", name="Display name", exact=True).fill("Signup Browser Updated")
     page.get_by_role("button", name="Save profile", exact=True).click()
     expect(page.get_by_text("Profile saved.", exact=True)).to_be_visible()
-    page.get_by_role("button", name="Log out", exact=True).click()
+    sign_out(page)
     expect(page.get_by_role("button", name="Log out", exact=True)).to_have_count(0)
     sign_in(page, runtime, {"email": email, "password": "BrowserRegression-9274!"})
     navigate(page, "Profile")
     expect(page.get_by_text(email, exact=True)).to_be_visible()
     expect(page.get_by_role("textbox", name="Display name", exact=True)).to_have_value("Signup Browser Updated")
+
+
+def test_mixed_saved_reload_restores_authentication_and_revocation(page, runtime, account):
+    import hashlib
+    from datetime import datetime, timedelta, timezone
+
+    user = account("premium_plus")
+    sign_in(page, runtime, user)
+    listing = (
+        "Reload Apartments\n123 Main St, Arlington, VA 22201\nPricing & Floor Plans\n"
+        "A1\n$2,400\n1 Bed\n1 Bath\n750 Sq Ft\n"
+        "Unit\n0012\nprice\n$2,400\nsquare feet\n750\navailabilityNow\n"
+        "B2\n$2,600\n2 Bed\n2 Bath\n950 Sq Ft\n"
+        "Unit\n0013\nprice\n$2,600\nsquare feet\n950\navailabilityNow\n"
+    )
+    page.get_by_role("textbox", name="Paste listing text", exact=True).fill(listing)
+    page.get_by_role("button", name="Parse listing", exact=True).click()
+    expect(page.locator('[data-testid="stJson"]')).to_have_count(0)
+    page.get_by_role("button", name="Save parsed property", exact=True).click()
+    expect(page.get_by_role("button", name="Save parsed property", exact=True)).to_have_count(0)
+    save_example(page, "home_example_1.txt", kind="Rental house")
+    saved = properties(runtime, user)
+    assert len(saved) == 2
+    assert sorted(len(item["units"]) for item in saved) == [0, 2]
+    saved_ids = {item["id"] for item in saved}
+    usage = requests.get(runtime["api"] + "/entitlements", headers=user["headers"], timeout=10).json()["usage"]
+    assert usage["analyses"] == 2
+    page.reload()
+    expect(page.get_by_role("button", name="Log out", exact=True)).to_be_visible()
+    expect(page.get_by_role("heading", name="Saved comparison", exact=True)).to_be_visible()
+    assert {item["id"] for item in properties(runtime, user)} == saved_ids
+    assert requests.get(runtime["api"] + "/entitlements", headers=user["headers"], timeout=10).json()["usage"] == usage
+    navigate(page, "Profile")
+    expect(page.get_by_text(user["email"], exact=True)).to_be_visible()
+    navigate(page, "Apartment Search")
+    select_value(page, "Property", "Reload Apartments")
+    expect(page.get_by_text(re.compile(r"1.*2 beds.*1.*2 baths"))).to_be_visible()
+
+    request_text = "Rent under $2500 and at least 700 square feet. Prioritize price."
+    page.get_by_role("textbox", name="Natural-language request", exact=True).fill(request_text)
+    page.get_by_role("button", name="Apply request and numeric filters", exact=True).click()
+    expect(page.get_by_text(re.compile(r"^Applied constraints:.*2500.*700"))).to_be_visible()
+    parsed = requests.post(runtime["api"] + "/requests", headers=user["headers"],
+                           json={"request": request_text}, timeout=10).json()
+    ranking = requests.post(runtime["api"] + "/ranking", headers=user["headers"], json={
+        "property_ids": list(saved_ids), "constraints": parsed["constraints"], "priorities": parsed["priorities"],
+    }, timeout=10).json()["ranked"]
+    assert len(ranking) == 2
+    assert all(row["price_num"] < 2500 and row["sqft_num"] >= 700 for row in ranking)
+    details = page.get_by_role("combobox", name="Listing details", exact=True)
+    details.click()
+    details.press("ArrowDown")
+    expect(page.get_by_role("option")).to_have_text([
+        f"{row.get('property') or row.get('address') or row['property_id']} · "
+        f"{row.get('unit') or row.get('unit_id') or 'Home'}" for row in ranking
+    ])
+    details.press("Escape")
+    page.get_by_role("button", name="Prepare CSV export", exact=True).click()
+    with page.expect_download() as download:
+        page.get_by_role("button", name="Download comparison CSV", exact=True).click()
+    with open(download.value.path(), encoding="utf-8-sig") as handle:
+        rows = list(csv.DictReader(handle))
+    assert [(row["property_id"], row["unit_id"] or None) for row in rows] == [
+        (row["property_id"], row.get("unit_id")) for row in ranking
+    ]
+    page.get_by_role("button", name="Generate decision report", exact=True).click()
+    with page.expect_download() as report_download:
+        page.get_by_role("button", name="Download report", exact=True).click()
+    with open(report_download.value.path(), encoding="utf-8") as handle:
+        report = json.load(handle)
+    assert report["comparison"]["ranked"] == ranking
+    expect(page.get_by_role("heading", name="Decision report", exact=True)).to_be_visible()
+    expect(page.get_by_role("heading", name="Top recommendation", exact=True).first).to_be_visible()
+    expect(page.locator('[data-testid="stJson"]')).to_have_count(0)
+    page.get_by_role("button", name="View advanced analytics", exact=True).click()
+    expect(page.get_by_role("heading", name="Advanced analytics", exact=True).last).to_be_visible()
+    expect(page.get_by_role("heading", name="Priority sensitivity", exact=True).last).to_be_visible()
+    expect(page.locator('[data-testid="stJson"]')).to_have_count(0)
+    idle(page)
+    page.screenshot(path=f"/tmp/nestai-readable-{page.viewport_size['width']}.png", full_page=True)
+    page.get_by_role("button", name="Reset filters", exact=True).click()
+    expect(page.get_by_text("Applied constraints: None", exact=True)).to_be_visible()
+    expect(page.get_by_text("Applied priorities: Default priorities", exact=True)).to_be_visible()
+    for name in ("price", "space", "commute", "walkability", "pets"):
+        expect(page.get_by_role("group", name=name.title(), exact=True).get_by_role("slider")).to_have_value("1")
+    unfiltered = requests.post(runtime["api"] + "/ranking", headers=user["headers"],
+                               json={"property_ids": list(saved_ids)}, timeout=10).json()["ranked"]
+    assert len(unfiltered) == 3
+    page.get_by_role("button", name="Prepare CSV export", exact=True).click()
+    with page.expect_download() as reset_download:
+        page.get_by_role("button", name="Download comparison CSV", exact=True).click()
+    with open(reset_download.value.path(), encoding="utf-8-sig") as handle:
+        restored_rows = list(csv.DictReader(handle))
+    assert [(row["property_id"], row["unit_id"] or None) for row in restored_rows] == [
+        (row["property_id"], row.get("unit_id")) for row in unfiltered
+    ]
+
+    sign_out(page)
+    expect(page.get_by_role("button", name="Sign in", exact=True)).to_be_visible()
+    page.reload()
+    expect(page.get_by_role("button", name="Sign in", exact=True)).to_be_visible()
+    expect(page.get_by_role("button", name="Log out", exact=True)).to_have_count(0)
+    sign_in(page, runtime, user)
+    raw_reset = uuid4().hex
+    engine = create_engine(runtime["database_url"])
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("""
+                INSERT INTO password_reset_tokens (user_id, token_hash, expires_at, created_at)
+                VALUES (:user_id, :token_hash, :expires_at, now())
+            """), {"user_id": user["id"], "token_hash": hashlib.sha256(raw_reset.encode()).hexdigest(),
+                   "expires_at": datetime.now(timezone.utc) + timedelta(minutes=10)})
+    finally:
+        engine.dispose()
+    reset = requests.post(runtime["api"] + "/auth/reset-password", json={
+        "token": raw_reset, "password": "ResetBrowserPassword123!",
+    }, timeout=10)
+    assert reset.status_code == 200
+    page.reload()
+    expect(page.get_by_role("button", name="Sign in", exact=True)).to_be_visible()
+    expect(page.get_by_role("button", name="Log out", exact=True)).to_have_count(0)
+    user["password"] = "ResetBrowserPassword123!"
+    sign_in(page, runtime, user)
+    healthy(page)
 
 
 def test_password_reset_revokes_old_session_and_restores_saved_data(page, runtime, account):
@@ -182,9 +314,8 @@ def test_all_account_tabs_and_house_preferences_restore_after_reload(page, runti
     expect(page.get_by_text("25 sq ft less space", exact=False).first).to_be_visible()
     expect(page.get_by_text("$145/mo more expensive", exact=False)).to_have_count(0)
     page.reload()
+    expect(page.get_by_role("button", name="Log out", exact=True)).to_be_visible()
     idle(page)
-    expect(page.get_by_role("button", name="Log out", exact=True)).to_have_count(0)
-    sign_in(page, runtime, user)
     assert {item["id"] for item in properties(runtime, user)} == saved_ids
     navigate(page, "Profile")
     page.get_by_role("tab", name="Preferences", exact=True).click()
@@ -241,7 +372,7 @@ def test_apartment_save_dedup_persists_and_free_has_no_native_downloads(page, ru
     expect(page.locator('[data-testid="stDataFrame"]')).to_have_count(0)
     expect(page.locator('[data-testid="stDataFrame"] button[aria-label*="Download"]')).to_have_count(0)
     expect(page.locator('[data-testid="stDownloadButton"]')).to_have_count(0)
-    page.get_by_role("button", name="Log out", exact=True).click()
+    sign_out(page)
     sign_in(page, runtime, user)
     assert sum(len(item["units"]) for item in properties(runtime, user)) == 42
     expect(page.get_by_role("heading", name="Saved comparison", exact=True)).to_be_visible()
@@ -251,17 +382,16 @@ def test_apartment_save_dedup_persists_and_free_has_no_native_downloads(page, ru
     budget.fill("3500")
     page.get_by_role("button", name="Save preferences", exact=True).click()
     expect(page.get_by_text("Preferences saved to your account.", exact=True)).to_be_visible()
-    page.get_by_role("button", name="Log out", exact=True).click()
+    sign_out(page)
     sign_in(page, runtime, user)
     navigate(page, "Profile")
     page.get_by_role("tab", name="Preferences", exact=True).click()
     expect(page.get_by_role("spinbutton", name="Max monthly budget ($)", exact=True)).to_have_value("3500")
-    # A new WebSocket is not permanent authentication; durable account data is.
+    # A new WebSocket restores the tab through a server-revocable credential.
     saved_ids = {item["id"] for item in properties(runtime, user)}
     page.reload()
+    expect(page.get_by_role("button", name="Log out", exact=True)).to_be_visible()
     idle(page)
-    expect(page.get_by_role("button", name="Log out", exact=True)).to_have_count(0)
-    sign_in(page, runtime, user)
     expect(page.get_by_role("heading", name="Saved comparison", exact=True)).to_be_visible()
     expect(page.locator('[data-testid="stTable"]').first.locator("tbody tr")).to_have_count(42)
     assert {item["id"] for item in properties(runtime, user)} == saved_ids
@@ -269,7 +399,7 @@ def test_apartment_save_dedup_persists_and_free_has_no_native_downloads(page, ru
     page.get_by_role("tab", name="Preferences", exact=True).click()
     expect(page.get_by_role("spinbutton", name="Max monthly budget ($)", exact=True)).to_have_value("3500")
     healthy(page)
-    page.get_by_role("button", name="Log out", exact=True).click()
+    sign_out(page)
     isolated_user = account("free")
     sign_in(page, runtime, isolated_user)
     expect(page.get_by_text("Save a listing to begin your comparison.", exact=True)).to_be_visible()
@@ -417,7 +547,7 @@ def test_free_house_account_and_shared_limit(page, runtime, account):
     assert {item["parsed"]["monthly_rent"] for item in saved} == {2245, 2100}
     expect(page.locator('[data-testid="stDataFrame"]')).to_have_count(0)
     expect(page.locator('[data-testid="stDownloadButton"]')).to_have_count(0)
-    page.get_by_role("button", name="Log out", exact=True).click()
+    sign_out(page)
     sign_in(page, runtime, user)
     navigate(page, "Houses")
     expect(page.get_by_role("button", name="Archive property", exact=True)).to_be_visible()
@@ -476,7 +606,7 @@ def test_feedback_browser_submission_reaches_durable_admin_store(page, runtime, 
         assert stored["user_contact_allowed"] is False
     finally:
         engine.dispose()
-    page.get_by_role("button", name="Log out", exact=True).click()
+    sign_out(page)
     sign_in(page, runtime, user)
     response = requests.get(runtime["api"] + "/admin/feedback", headers=admin["headers"], timeout=10)
     assert response.status_code == 200

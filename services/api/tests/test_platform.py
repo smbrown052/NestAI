@@ -1197,7 +1197,7 @@ def test_additive_migration_preserves_unowned_and_credits(monkeypatch):
             assert conn.execute(text("SELECT credits_remaining FROM credit_balances")).scalar() == 88
             assert conn.execute(text("SELECT user_id FROM properties WHERE session_id='legacy-unowned'")).scalar() is None
             assert conn.execute(text("SELECT count(*) FROM account_properties")).scalar() == 0
-            assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0009_auth_version"
+            assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0010_browser_sessions"
             assert conn.execute(text("SELECT auth_version FROM users")).scalar() == 0
             conn.execute(text("INSERT INTO users (email, hashed_password, referral_code) VALUES ('new-default@example.com', 'hash', 'new-default-code')"))
             assert conn.execute(text("SELECT auth_version FROM users WHERE email='new-default@example.com'")).scalar() == 0

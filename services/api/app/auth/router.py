@@ -6,8 +6,9 @@ from datetime import datetime, timedelta, timezone
 import os
 import secrets
 from email_service import send_password_reset_email
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
+from pydantic import BaseModel, Field
 
 from app.auth.plans import (
     BETA_PLAN,
@@ -33,6 +34,7 @@ from app.core.config import get_settings
 from app.db.models.referral import Referral
 from app.db.models.password_reset_token import PasswordResetToken
 from app.db.models.user import User
+from app.db.models.browser_session import BrowserSession
 from app.db.models.beta_access import BetaAccess
 from app.db.session import get_db
 
@@ -52,6 +54,59 @@ from .schemas import (
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 _RESET_TOKEN_TTL_SECONDS = 60 * 60
+
+
+class BrowserCredential(BaseModel):
+    credential: str = Field(min_length=32, max_length=256)
+
+
+@router.post("/browser-session")
+def create_browser_session(response: Response, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    response.headers["Cache-Control"] = "no-store"
+    # Serialise issuance with password reset, then recheck the authenticated version.
+    version = current_user.auth_version
+    user = db.query(User).filter(User.id == current_user.id).with_for_update().populate_existing().one()
+    if user.auth_version != version:
+        raise HTTPException(401, "Session expired; sign in again")
+    now = datetime.now(timezone.utc)
+    db.query(BrowserSession).filter(
+        BrowserSession.user_id == user.id, BrowserSession.expires_at <= now,
+    ).delete(synchronize_session=False)
+    raw = secrets.token_urlsafe(48)
+    db.add(BrowserSession(token_hash=hash_reset_token(raw), user_id=user.id,
+                          auth_version=user.auth_version, expires_at=now + timedelta(days=7)))
+    db.commit()
+    return {"credential": raw}
+
+
+@router.post("/restore")
+def restore_browser_session(payload: BrowserCredential, response: Response, db: Session = Depends(get_db)):
+    response.headers["Cache-Control"] = "no-store"
+    session = db.get(BrowserSession, hash_reset_token(payload.credential))
+    if session is None:
+        raise HTTPException(401, "Session expired; sign in again")
+    user = db.query(User).filter(User.id == session.user_id).with_for_update().first()
+    expires = session.expires_at
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=timezone.utc)
+    if (not user or not user.is_active or expires <= datetime.now(timezone.utc)
+            or user.auth_version != session.auth_version):
+        raise HTTPException(401, "Session expired; sign in again")
+    # Re-read after the account lock in case logout revoked the credential.
+    if db.query(BrowserSession).filter(BrowserSession.token_hash == session.token_hash).first() is None:
+        raise HTTPException(401, "Session expired; sign in again")
+    token = create_access_token({"sub": str(user.id), "email": user.email, "auth_version": user.auth_version})
+    return {"access_token": token, "user": _serialize_user(user).model_dump(mode="json")}
+
+
+@router.post("/revoke-browser-session")
+def revoke_browser_session(payload: BrowserCredential, db: Session = Depends(get_db)):
+    session = db.get(BrowserSession, hash_reset_token(payload.credential))
+    if session:
+        db.query(User).filter(User.id == session.user_id).with_for_update().first()
+        db.query(BrowserSession).filter(BrowserSession.token_hash == session.token_hash).delete(synchronize_session=False)
+        db.commit()
+    return {"message": "Browser session revoked"}
 
 
 def _dev_reset_link(token: str) -> str | None:
@@ -344,6 +399,7 @@ def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db))
         PasswordResetToken.user_id == user.id,
         PasswordResetToken.used_at.is_(None),
     ).update({"used_at": now}, synchronize_session=False)
+    db.query(BrowserSession).filter(BrowserSession.user_id == user.id).delete(synchronize_session=False)
     db.commit()
     return {"message": "Password updated successfully"}
 

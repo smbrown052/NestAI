@@ -1,6 +1,33 @@
 {
   "baseline_revision": "c7a197f0e16e697a150b7286fd29afb1d56c181d",
   "deployment_verified": false,
+  "reload_and_readability_remediation": {
+    "baseline_revision": "7e8ad53b615c0cccde5732714fe93429d95ce3c1",
+    "scope": "Local implementation and isolated regressions only. No production hosting changes, production migrations, merge, real billing, paid provider calls or deployed acceptance claimed.",
+    "user_reported_test_deployment_smoke": "User confirmed profile, apartment/house saving, saved-data recovery after manual sign-in, quota 500 to 498, natural constraints/priorities and filtered Plus reports/analytics on nestai-mvp-test.streamlit.app before these changes. This is not deployed verification of this new code.",
+    "root_causes_and_fixes": [
+      "Streamlit WebSocket state was the only authentication persistence. Added a dedicated opaque tab-scoped sessionStorage credential backed by hashed, expiring, revocable API records; never put bearer JWTs in URLs or localStorage.",
+      "Browser credential issuance/restoration and password reset serialize on the account; resets remove all restoration records and preserve auth_version checks. Logout revokes the current credential; identity switching revokes the previous account's credential.",
+      "Password reset entered while automatically authenticated lost its success notice on subsequent stale-token cleanup. Clear authentication before posting the success notice.",
+      "Parse previews, decision reports and advanced analytics used primary dictionary/JSON rendering. Replaced them with listing facts, unit tables, factual strengths/tradeoffs/unknowns, recommendation sections and sensitivity tables/charts; retained structured downloads.",
+      "Property controls read building-level beds/baths instead of normalized unit values. Added unit-derived min/max summaries, studio handling and genuinely unknown fallback.",
+      "Free landing benefits were static paid-feature promises. Added copy derived from the centralized entitlement contract without changing tier benefits."
+    ],
+    "migration": "Additive 0010_browser_sessions after 0009_auth_version; upgrade schema before backend/frontend code. No existing account/listing data reassignment.",
+    "local_tests": {
+      "backend": "143 passed, 4 intentional SQLite-only concurrency skips; PostgreSQL counterparts ran. After cache-header hardening, affected authentication/platform suites: 133 passed, 4 corresponding SQLite-only skips.",
+      "frontend_authentication": "37 existing auth-service tests passed; 12 new storage lifecycle/account-switch tests passed.",
+      "readable_ui": "UI implementation agent reported 54 affected UI/decision tests passing; accepted without rerunning its completed suites.",
+      "affected_browser": "8 passed on real desktop/mobile Chromium, migrated isolated PostgreSQL, FastAPI and deployed Streamlit source path; mixed saves/reload, filtered CSV/report identities, reset defaults, logout and password-reset revocation. /tmp/nestai-browser-affected2.log",
+      "complete_browser": "Final complete run pending. Earlier full run: 37 passed, 10 failed; /tmp/nestai-browser-full.log. Fixed reset notice loss, synchronized logout tests before navigation, corrected native range-input assertions. Explicit ERR_NETWORK_CHANGED was independently captured for one sign-in failure; no blanket transport classification.",
+      "providers": "Deterministic local fixtures only; genuine provider and Stripe sandbox acceptance remain Blocked."
+    },
+    "security": {
+      "specialist": "Read-only restoration security specialist reported no vulnerabilities. Independent code review found account-switch credential retention; fixed with revocation and a regression test.",
+      "automated": "Pending post-commit parallel validation."
+    },
+    "deployed_acceptance": "Blocked: matching deployed revisions, migration and actual isolated-account/provider/Stripe journeys have not been verified for this change."
+  },
   "authentication_remediation": {
     "baseline_revision": "62edee53a4dd9adca8b78145a90a629d225192e4",
     "baseline_ci": "Verified GitHub MVP regression run 38486536016 attempt 2 completed successfully on 62edee5; this is not evidence for the new authentication code.",

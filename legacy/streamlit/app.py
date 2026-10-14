@@ -57,6 +57,7 @@ from credits import get_tier, has_feature, can_enrich_building, consume_analysis
 from cache import get_geocode, _address_key
 from feedback import submit_feedback, send_feedback_email
 from feature_access import get_effective_plan, get_quota, get_plan
+from shared.entitlement_copy import free_plan_summary
 from plan_ui import render_plan_sidebar, render_pricing_cards, render_upgrade_prompt
 from ui_state import get_account_type_options, get_navigation_options, plan_display_name
 from ui_theme import feature_pill, inject_global_styles, metric_card_html, normalize_plan, render_badge, tier_class
@@ -534,7 +535,10 @@ for key, default in {
         st.session_state[key] = default
 
 auth.initialize()
+from browser_auth import sync_browser_session, persist_browser_session
+sync_browser_session(auth)
 auth.restore_from_session()
+persist_browser_session(auth)
 auth.sync_user_tier()
 if auth.is_authenticated():
     hydrate_account(api_client)
@@ -953,6 +957,7 @@ if active_screen == "Reset Password":
     if reset_submit:
         response = auth.reset_password(reset_token, new_password)
         if response.status_code == 200:
+            auth.clear_authenticated()
             st.session_state.auth_notice = "Password reset successfully. Please sign in."
             st.session_state["dev_reset_link"] = None
             st.session_state.main_nav = "Login"
@@ -1098,9 +1103,7 @@ if active_screen == "Home":
                 unsafe_allow_html=True,
             )
 
-    st.info(
-        "Free accounts can fully compare and enrich their first 2 properties."
-    )
+    st.info(free_plan_summary())
 
     st.stop()
 

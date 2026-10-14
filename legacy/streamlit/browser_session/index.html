@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Browser session</title>
+<body>
+<script>
+"use strict";
+const storageKey = "nestai.browser-session.v1";
+let handled = null;
+function send(type, data = {}) {
+  window.parent.postMessage({isStreamlitMessage: true, type, ...data}, "*");
+}
+window.addEventListener("message", event => {
+  if (event.source !== window.parent || event.data.type !== "streamlit:render") return;
+  const args = event.data.args;
+  if (handled === args.operation) return;
+  handled = args.operation;
+  let credential = null, available = true;
+  try {
+    if (args.action === "write") sessionStorage.setItem(storageKey, args.credential);
+    if (args.action === "clear") sessionStorage.removeItem(storageKey);
+    credential = sessionStorage.getItem(storageKey);
+  } catch (_) {
+    available = false;
+  }
+  send("streamlit:setComponentValue", {
+    value: {operation: args.operation, credential, available},
+    dataType: "json"
+  });
+  send("streamlit:setFrameHeight", {height: 0});
+});
+send("streamlit:componentReady", {apiVersion: 1});
+</script>
+</body>
+</html>

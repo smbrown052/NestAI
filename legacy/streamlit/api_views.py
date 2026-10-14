@@ -12,6 +12,7 @@ import streamlit as st
 
 from feature_access import capability, capabilities_from_features
 from plan_ui import render_pricing_cards, render_upgrade_prompt
+from shared.constraints import number
 
 
 def api_call(client, method, path, payload=None, *, quiet=False, raw=False):
@@ -78,7 +79,7 @@ def hydrate_account(client):
 
 
 def clear_comparison_downloads():
-    for key in ("account_export", "account_report", "account_export_scope"):
+    for key in ("account_export", "account_report", "account_export_scope", "account_analytics"):
         st.session_state.pop(key, None)
 
 
@@ -114,6 +115,192 @@ def number_label(value, noun):
         return f"{amount:g} {noun}" if amount == 1 else f"{amount:g} {noun}s"
     except (TypeError, ValueError):
         return f"{noun.title()}s unknown"
+
+
+def listing_facts(item):
+    """Flatten API records without changing their stored parsed payload."""
+    return {**item.get("parsed", {}), **{key: value for key, value in item.items() if key != "parsed"}}
+
+
+def fact_number(item, *keys):
+    for key in keys:
+        value = item.get(key)
+        if key in {"beds", "bedrooms"} and str(value).strip().lower() == "studio":
+            return 0.0
+        parsed = number(value)
+        if parsed is not None and parsed >= 0:
+            return parsed
+    return None
+
+
+def room_summary(item, noun):
+    """Apartment summaries use known unit counts, not absent building totals."""
+    item = listing_facts(item)
+    keys = ("beds_num", "beds", "bedrooms") if noun == "bed" else ("baths_num", "baths", "bathrooms")
+    values = [
+        value for unit in item.get("units", [])
+        if (value := fact_number(listing_facts(unit), *keys)) is not None
+    ]
+    if not values:
+        return number_label(fact_number(item, *keys), noun)
+    low, high = min(values), max(values)
+    return number_label(low, noun) if low == high else f"{low:g}–{high:g} {noun}s"
+
+
+def listing_name(item):
+    return next((str(item[key]) for key in
+                 ("display_name", "property_title", "property", "address", "property_id", "id")
+                 if item.get(key)), "Unnamed property")
+
+
+def listing_label(item):
+    unit = item.get("unit") or item.get("unit_number") or item.get("unit_id")
+    return f"{listing_name(item)} · {unit}" if unit else listing_name(item)
+
+
+def readable_listing_rows(rows):
+    """Create a display-only projection; retain backend order and identities."""
+    return [{
+        "Rank": row.get("rank"),
+        "Property": listing_name(row),
+        "Unit": row.get("unit") or row.get("unit_number") or row.get("unit_id") or "Home",
+        "Price type": "Purchase" if row.get("price_kind") == "purchase" or row.get("kind") == "home" else "Monthly rent",
+        "Price ($)": fact_number(row, "price_num", "sale_price", "monthly_rent", "rent_price", "price", "unit_price"),
+        "Square feet": fact_number(row, "sqft_num", "square_feet", "sqft", "unit_sqft"),
+        "Bedrooms": number_label(fact_number(row, "beds_num", "beds", "bedrooms"), "bed"),
+        "Bathrooms": number_label(fact_number(row, "baths_num", "baths", "bathrooms"), "bath"),
+        "Monthly total ($)": number(row.get("monthly_total")),
+        "Score": number(row.get("score")),
+        "Confidence": f"{number(row['confidence']):.0%}" if number(row.get("confidence")) is not None else "Unknown",
+    } for row in rows]
+
+
+def render_listing_preview(parsed):
+    item = listing_facts(parsed)
+    st.subheader("Parsed listing preview")
+    st.write(listing_name(item))
+    if item.get("address"):
+        st.caption(item["address"])
+    columns = st.columns(3)
+    columns[0].metric("Bedrooms", room_summary(item, "bed"))
+    columns[1].metric("Bathrooms", room_summary(item, "bath"))
+    units = item.get("units", [])
+    columns[2].metric("Parsed units", len(units))
+    if units:
+        st.caption("Bedroom and bathroom ranges reflect known unit values; missing unit facts remain unknown.")
+        st.markdown("#### Available units")
+        unit_rows = [{**item, **listing_facts(unit)} for unit in units]
+        table = pd.DataFrame(readable_listing_rows(unit_rows))
+        table["Floor plan"] = [row.get("floorplan") or "Unknown" for row in unit_rows]
+        table["Availability"] = [row.get("availability") or row.get("available_date") or "Unknown" for row in unit_rows]
+        display_frame(table[["Unit", "Floor plan", "Price ($)", "Square feet", "Bedrooms", "Bathrooms", "Availability"]].fillna("Unknown"))
+    else:
+        price = fact_number(item, "sale_price", "monthly_rent", "rent_price", "price_num")
+        area = fact_number(item, "square_feet", "sqft_num", "sqft")
+        columns = st.columns(2)
+        columns[0].metric("Purchase price" if item.get("sale_price") is not None else "Monthly rent",
+                          f"${price:,.0f}" if price is not None else "Unknown")
+        columns[1].metric("Square feet", f"{area:g}" if area is not None else "Unknown")
+    facts = [{"Detail": label, "Value": str(item[key])} for key, label in [
+        ("property_type", "Listing type"), ("pets_policy", "Pet policy"),
+        ("availability", "Availability"), ("available_date", "Available date"),
+        ("description", "Description"),
+    ] if item.get(key) is not None and item.get(key) != ""]
+    if facts:
+        display_frame(pd.DataFrame(facts))
+    amenities = [{"Amenity": key[4:].replace("_", " ").title(),
+                  "Status": "Yes" if value is True else "No" if value is False else "Unknown"}
+                 for key, value in item.items() if key.startswith("has_")]
+    if amenities:
+        with st.expander("Amenities"):
+            display_frame(pd.DataFrame(amenities))
+    for warning in item.get("warnings", []):
+        st.warning(warning)
+
+
+def render_tradeoffs(comparison):
+    for key, label in [("advantages", "Strengths"), ("compromises", "Tradeoffs"), ("unknowns", "Unknown facts")]:
+        st.markdown(f"#### {label}")
+        entries = comparison.get(key, [])
+        if entries:
+            for entry in entries:
+                st.write(f"• {entry}")
+        else:
+            st.caption("None identified from known facts.")
+
+
+def render_score_components(components):
+    display_frame(pd.DataFrame([{
+        "Priority": key.title(), "Known fact": "Yes" if value.get("known") else "No — neutral assumption",
+        "Value": value.get("value") if value.get("value") is not None else "Unknown",
+        "Weight": value.get("weight"), "Score contribution": value.get("contribution"),
+    } for key, value in components.items()]))
+
+
+def render_ranked_summary(comparison):
+    rows = comparison.get("ranked", [])
+    if not rows:
+        st.info("No eligible listings in this snapshot.")
+        return
+    winner = rows[0]
+    with st.container(border=True):
+        st.markdown("#### Top recommendation")
+        st.write(listing_label(winner))
+        columns = st.columns(3)
+        score, confidence = number(winner.get("score")), number(winner.get("confidence"))
+        columns[0].metric("Decision score", f"{score:.1f}/100" if score is not None else "Unknown")
+        columns[1].metric("Known-input confidence", f"{confidence:.0%}" if confidence is not None else "Unknown")
+        columns[2].metric("Eligible listings", len(rows))
+        st.caption(f"{room_summary(winner, 'bed')} · {room_summary(winner, 'bath')}")
+        if winner.get("comparison"):
+            st.caption("Compared with the next-ranked alternative")
+            render_tradeoffs(winner["comparison"])
+        for preference in winner.get("unmet_preferences", []):
+            st.warning(preference)
+    st.markdown("#### Ranked listings")
+    display_frame(pd.DataFrame(readable_listing_rows(rows)).fillna("Unknown"))
+    for warning in comparison.get("warnings", []):
+        st.caption(warning)
+    if winner.get("components"):
+        with st.expander("Recommendation score breakdown"):
+            render_score_components(winner["components"])
+
+
+def render_analytics(analytics):
+    st.subheader("Advanced analytics")
+    render_ranked_summary(analytics.get("baseline", {}))
+    st.markdown("#### Priority sensitivity")
+    st.caption("Each scenario increases one priority weight; a different winner indicates a priority-sensitive decision.")
+    scenarios = [{
+        "Priority increased": scenario.get("priority", "").title(),
+        "Recommended listing": listing_label(scenario["winner"]) if scenario.get("winner") else "No eligible listing",
+        "Winner score": number(scenario["winner"].get("score")) if scenario.get("winner") else None,
+    } for scenario in analytics.get("sensitivity", [])]
+    if scenarios:
+        frame = pd.DataFrame(scenarios)
+        display_frame(frame.fillna("Unknown"))
+        chart = frame.dropna(subset=["Winner score"])
+        if not chart.empty:
+            st.bar_chart(chart.set_index("Priority increased")[["Winner score"]])
+    else:
+        st.info("No sensitivity scenarios available.")
+
+
+def render_decision_report(report):
+    st.subheader("Decision report")
+    try:
+        snapshot = json.loads(report["content"])
+    except (KeyError, TypeError, ValueError):
+        st.warning("The report preview is unavailable. The original report download is unchanged.")
+        return
+    if not isinstance(snapshot, dict):
+        st.warning("The report preview is unavailable. The original report download is unchanged.")
+        return
+    st.caption(f"Report level: {str(snapshot.get('report_level', 'premium')).title()}")
+    render_ranked_summary(snapshot.get("comparison", {}))
+    if snapshot.get("analytics"):
+        render_analytics(snapshot["analytics"])
+    st.caption(snapshot.get("disclaimer", "Listing facts and decision scores are not independent verification."))
 
 
 def render_advisor(client):
@@ -221,7 +408,7 @@ def render_add_listing(client, screen):
                     st.session_state["account_pending_listing"] = result
         pending = st.session_state.get("account_pending_listing")
         if pending:
-            st.write(pending["parsed"])
+            render_listing_preview(pending["parsed"])
             if st.button("Save parsed property"):
                 saved = api_call(client, "POST", "/properties", {
                     "kind": pending["kind"], "parsed": pending["parsed"], "idempotency_key": str(uuid.uuid4()),
@@ -239,7 +426,7 @@ def render_property_controls(client, properties):
     options = {item["id"]: item for item in properties}
     selected = st.selectbox("Property", list(options), format_func=lambda key: options[key].get("display_name") or options[key].get("property_title") or options[key].get("property") or options[key].get("address") or str(key))
     item = options[selected]
-    st.caption(f"{number_label(item.get('bedrooms'), 'bed')} · {number_label(item.get('bathrooms'), 'bath')}")
+    st.caption(f"{room_summary(item, 'bed')} · {room_summary(item, 'bath')}")
     with st.form("property_fees"):
         fees = item.get("fees", {})
         st.caption("Monthly recurring fees apply only to this property.")
@@ -366,9 +553,9 @@ def render_comparison(client, properties):
         if detail.get("comparison"):
             st.caption("Next-ranked alternative relative to this listing")
             st.write(detail["comparison"].get("compromise_summary", "Comparison unavailable"))
-            st.write(detail["comparison"])
+            render_tradeoffs(detail["comparison"])
         if capability("can_use_ai_explanations") and detail.get("components"):
-            st.write("Score components:", detail["components"])
+            render_score_components(detail["components"])
     if capability("can_export"):
         scope = st.selectbox("CSV export scope", ["listings", "units", "properties"], format_func=lambda value: {
             "listings": "Visible comparison listings", "units": "Apartment units",
@@ -389,7 +576,7 @@ def render_comparison(client, properties):
             st.session_state["account_report"] = report
     if capability("can_generate_ai_reports") and st.session_state.get("account_report"):
         report = st.session_state["account_report"]
-        st.code(report["content"], language="json")
+        render_decision_report(report)
         if capability("can_export"):
             download = api_call(client, "GET", f"/reports/{report['report_id']}/download", raw=True)
             if download is not None:
@@ -398,7 +585,9 @@ def render_comparison(client, properties):
     if entitlements.get("plan") == "premium_plus" and st.button("View advanced analytics"):
         analytics = api_call(client, "POST", "/analytics", {"property_ids": ids, "constraints": constraints, "priorities": priorities, "idempotency_key": str(uuid.uuid4())})
         if analytics is not None:
-            st.write(analytics)
+            st.session_state["account_analytics"] = analytics
+    if entitlements.get("plan") == "premium_plus" and st.session_state.get("account_analytics"):
+        render_analytics(st.session_state["account_analytics"])
 
 
 def render_account_view(client, auth, screen):
